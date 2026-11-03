@@ -1,0 +1,340 @@
+use php_compiler::compile_source;
+
+#[test]
+fn nl2br_preserves_newlines_and_supports_xhtml_named_and_callback_calls() {
+    let source = r#"<?php
+        echo nl2br(string: "é\r\nA\n\rB\rC"), "|";
+        echo nl2br("x\ny", use_xhtml: false), "|";
+        echo implode(',', array_map('nl2br', ["a\rb", "c\nd"], [false, true])), "|";
+        echo function_exists('nl2br');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "é<br />\r\nA<br />\n\rB<br />\rC|x<br>\ny|a<br>\rb,c<br />\nd|1");
+}
+
+#[test]
+fn wordwrap_supports_width_break_modes_named_arguments_and_callbacks() {
+    let source = r#"<?php
+        $wrapped = wordwrap(string: 'The quick brown fox jumped over the lazy dog.', width: 20, break: '|');
+        $cut = wordwrap(string: 'A very long woooooooooooord.', width: 8, break: "\n", cut_long_words: true);
+        $uncut = wordwrap('A very long woooooooooooord.', 8);
+        $mapped = array_map('wordwrap', ['one two three'], [5], ['|'], [false]);
+        echo $wrapped, ':', str_replace("\n", '/', $cut), ':', str_replace("\n", '/', $uncut), ':', $mapped[0], ':', function_exists('wordwrap'), ':';
+        try { wordwrap('text', 4, ''); } catch (ValueError $error) { echo get_class($error), ':'; }
+        try { wordwrap('text', 0, "\n", true); } catch (ValueError $error) { echo get_class($error); }
+        echo ':', str_replace("\n", '/', wordwrap('é', 1, "\n", true));
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "The quick brown fox|jumped over the lazy|dog.:A very/long/wooooooo/ooooord.:A very/long/woooooooooooord.:one|two|three:1:ValueError:ValueError:�/�");
+}
+
+#[test]
+fn substr_replace_supports_signed_offsets_lengths_arrays_and_callbacks() {
+    let source = r#"<?php
+        $string = 'ABCDEFGH:/MNRPQR/';
+        echo substr_replace($string, 'bob', 0), ':';
+        echo substr_replace($string, 'bob', 0, 0), ':';
+        echo substr_replace(string: $string, replace: 'bob', offset: -7, length: -1), ':';
+        echo substr_replace('abcdef', 'X', 2, -1), ':';
+        $input = ['A: XXX', 'B: XXX', 'C: XXX'];
+        echo implode(';', substr_replace($input, ['AAA', 'BBB', 'CCC'], 3, [1, 2, 3])), ':';
+        echo implode(';', substr_replace(['a' => 'abcdef', 'b' => 'uvwxyz'], '!', [1, -1], 1)), ':';
+        echo array_map('substr_replace', ['abcdef'], ['X'], [2], [2])[0], ':';
+        echo function_exists('substr_replace'), ':';
+        try { substr_replace('abc', 'x', [0]); } catch (TypeError $error) { echo get_class($error); }
+        class StringableReplacement { public function __toString(): string { return 'Q'; } }
+        echo ':', substr_replace('abc', new StringableReplacement(), 1, 1);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "bob:bobABCDEFGH:/MNRPQR/:ABCDEFGH:/bob/:abXf:A: AAAXX;B: BBBX;C: CCC:a!cdef;uvwxy!:abXef:1:TypeError:aQc");
+}
+
+#[test]
+fn substr_compare_supports_named_arguments_callbacks_and_php_value_errors() {
+    let source = r#"<?php
+        echo substr_compare('abcde', 'bc', 1, 2), ':';
+        echo substr_compare('abcde', 'de', -2, 2), ':';
+        echo substr_compare(haystack: 'abcde', needle: 'BC', offset: 1, length: 2, case_insensitive: true), ':';
+        echo substr_compare('abcde', 'bcg', 1, 2), ':';
+        echo substr_compare('abcde', 'abc', 0), ':';
+        echo substr_compare('abc', 'x', 10, 0), ':';
+        echo array_map('substr_compare', ['abc', 'abc'], ['b', 'B'], [1, 1], [1, 1], [false, true])[0], ':';
+        echo function_exists('substr_compare'), ':';
+        try { substr_compare('abc', 'x', 4); } catch (ValueError $error) { echo get_class($error), ':'; }
+        try { substr_compare('abc', 'x', 1, -1); } catch (ValueError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:0:0:0:1:0:0:1:ValueError:ValueError");
+}
+
+#[test]
+fn strtok_keeps_token_state_skips_repeated_delimiters_and_resets() {
+    let source = r#"<?php
+        echo strtok(string: ';alpha;;beta;', token: ';'), ':', strtok(';'), ':', strtok(';') === false, ':';
+        echo strtok('left|right', '|'), ':', strtok('|'), ':';
+        $first = array_map('strtok', ['red,blue', 'green,yellow'], [',', ',']);
+        echo implode('|', $first), ':', function_exists('strtok'), ':';
+        echo strtok("a\tb\nc", "\t\n"), ':', strtok("\t\n");
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "alpha:beta:1:left:right:red|green:1:a:b");
+}
+
+#[test]
+fn levenshtein_supports_weighted_costs_named_arguments_bytes_and_callbacks() {
+    let source = r#"<?php
+        echo levenshtein('kitten', 'sitting'), ':';
+        echo levenshtein(string1: 'a', string2: 'b', replacement_cost: 4), ':';
+        echo levenshtein(string1: 'ab', string2: 'a', insertion_cost: 5, replacement_cost: 1, deletion_cost: 2), ':';
+        echo levenshtein('a', 'ab', 5, 1, 2), ':';
+        echo levenshtein('é', 'e'), ':';
+        echo implode('|', array_map('levenshtein', ['abc', 'kitten'], ['abd', 'sitting'])), ':';
+        echo function_exists('levenshtein');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3:2:2:5:2:1|3:1");
+}
+
+#[test]
+fn similar_text_returns_ordered_matches_and_writes_percent_by_reference() {
+    let source = r#"<?php
+        $percent = 0;
+        $matches = similar_text('bafoobar', 'barfoo', $percent);
+        echo $matches, ':', round($percent, 6), ':';
+        $matches = similar_text(string1: 'barfoo', string2: 'bafoobar', percent: $percent);
+        echo $matches, ':', round($percent, 6), ':';
+        echo similar_text('', ''), ':', function_exists('similar_text'), ':';
+        echo implode('|', array_map('similar_text', ['abc', 'kitten'], ['abd', 'sitting'])), ':';
+        try { similar_text('a', 'b', 0); } catch (TypeError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "5:71.428571:3:42.857143:0:1:2|4:TypeError");
+}
+
+#[test]
+fn gettimeofday_returns_php_fields_float_mode_and_callback_results() {
+    let source = r#"<?php
+        $parts = gettimeofday();
+        $mapped = array_map('gettimeofday', [false, true]);
+        echo is_array($parts), ':', count($parts), ':';
+        echo array_key_exists('sec', $parts), ':', array_key_exists('usec', $parts), ':';
+        echo array_key_exists('minuteswest', $parts), ':', array_key_exists('dsttime', $parts), ':';
+        echo is_float(gettimeofday(as_float: true)), ':', is_array($mapped[0]), ':', is_float($mapped[1]), ':';
+        echo function_exists('gettimeofday');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:4:1:1:1:1:1:1:1:1");
+}
+
+#[test]
+fn basename_and_dirname_support_path_components_named_args_and_callbacks() {
+    let source = r#"<?php
+        echo basename('/etc/sudoers.d', '.d'), ':', basename('/etc/'), ':', basename('/'), ':', basename('.'), ':';
+        echo basename(path: '/x/report.txt', suffix: '.txt'), ':';
+        echo dirname('/usr/local/lib', 2), ':', dirname(path: 'config/app.php'), ':', dirname(''), ':', dirname('/'), ':';
+        echo function_exists('basename'), ':', function_exists('dirname'), ':';
+        echo array_map('basename', ['/a/one.txt', '/b/two.php'])[0], ':';
+        echo array_map('dirname', ['/a/b/file.txt'], [2])[0], ':';
+        try { dirname('/tmp/file', 0); } catch (ValueError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "sudoers:etc::.:report:/usr:config:.:/:1:1:one.txt:/a:ValueError");
+}
+
+#[test]
+fn pathinfo_returns_path_parts_and_supports_named_flags_and_callbacks() {
+    let source = r#"<?php
+        $parts = pathinfo('/www/htdocs/inc/lib.inc.php');
+        echo $parts['dirname'], '|', $parts['basename'], '|', $parts['extension'], '|', $parts['filename'], ':';
+        echo pathinfo(path: 'file.tar.gz', flags: PATHINFO_FILENAME), ':';
+        $dotfile = pathinfo('/foo/.env');
+        echo $dotfile['filename'], ':', $dotfile['extension'], ':';
+        echo array_key_exists('extension', pathinfo('README')), ':';
+        echo array_map('pathinfo', ['/a/x.txt'], [PATHINFO_EXTENSION])[0], ':';
+        echo PATHINFO_ALL, ':', function_exists('pathinfo'), ':';
+        try { pathinfo('file.txt', 3); } catch (ValueError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "/www/htdocs/inc|lib.inc.php|php|lib.inc:file.tar::env::txt:15:1:ValueError");
+}
+
+#[test]
+fn strip_tags_removes_markup_and_comments_with_allowed_tags_named_args_and_callbacks() {
+    let source = r#"<?php
+        $html = '<p>Hello <b class="x">world</b><!-- hidden --><i>!</i></p>';
+        echo strip_tags(string: $html, allowed_tags: '<b>'), ':';
+        echo strip_tags('<a href="/">link</a><br/>tail'), ':';
+        echo array_map('strip_tags', ['<b>A</b>', '<i>B</i>'], ['<b>', ''])[0], ':';
+        echo function_exists('strip_tags');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Hello <b class=\"x\">world</b>!:linktail:<b>A</b>:1");
+}
+
+#[test]
+fn stripcslashes_decodes_c_escapes_and_dispatches_as_a_callback() {
+    let source = r#"<?php
+        $decoded = stripcslashes(string: 'A\\nB\\x21\\101\\q');
+        echo str_replace("\n", '|', $decoded), ':', array_map('stripcslashes', ['x\\t', 'y\\101'])[1], ':';
+        echo function_exists('stripcslashes');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "A|B!Aq:yA:1");
+}
+
+#[test]
+fn addcslashes_supports_control_escapes_ranges_named_args_and_callbacks() {
+    let source = r#"<?php
+        echo addcslashes(string: 'foo[]', characters: 'A..z'), ':';
+        echo str_replace("\n", '|', addcslashes("A\nB", "\n")), ':';
+        echo implode('|', array_map('addcslashes', ['abc', 'xyz'], ['a', 'z'])), ':';
+        echo function_exists('addcslashes');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "\\f\\o\\o\\[\\]:A\\nB:\\abc|xy\\z:1");
+}
+
+#[test]
+fn str_getcsv_parses_quoted_fields_and_binds_named_controls() {
+    let source = r#"<?php
+        $fields = str_getcsv(string: 'one,"two,three","a""b"', escape: '');
+        echo implode('|', $fields), ':';
+        echo implode('|', str_getcsv('left;right', separator: ';', enclosure: "'", escape: '')), ':';
+        echo str_getcsv('')[0] === null, ':', function_exists('str_getcsv');
+        try { str_getcsv('a,b', separator: '::'); }
+        catch (ValueError $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "one|two,three|a\"b:left|right:1:1:ValueError");
+}
+
+#[test]
+fn str_getcsv_warns_when_escape_uses_its_deprecated_default() {
+    let source = "<?php\n$fields = str_getcsv('a,b');\nerror_reporting(0);\nstr_getcsv('c,d');";
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(result.diagnostics[0].message, "str_getcsv(): the $escape parameter must be provided as its default value will change");
+    assert_eq!(result.diagnostics[0].source_line, Some(2));
+}
+
+#[test]
+fn hex2bin_decodes_and_warns_for_invalid_hex_through_direct_and_callback_calls() {
+    let source = r#"<?php
+        echo hex2bin(string: '4869'), ':', implode(',', array_map('hex2bin', ['4142'])), ':';
+        $odd = hex2bin('abc');
+        $invalid = array_map('hex2bin', ['0g']);
+        echo ($odd === false), ':', ($invalid[0] === false), ':', function_exists('hex2bin');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "Hi:AB:1:1:1");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].message, "hex2bin(): Hexadecimal input string must have an even length");
+    assert_eq!(result.diagnostics[1].message, "hex2bin(): Input string must be hexadecimal string");
+}
+
+#[test]
+fn chr_wraps_to_a_byte_and_deprecates_out_of_range_values() {
+    let source = r#"<?php
+        echo chr(codepoint: 65), ':', chr(-159), ':', implode('', array_map('chr', [833])), ':', function_exists('chr');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "A:a:A:1");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result.diagnostics.iter().all(|item| item.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics.iter().all(|item| item.message == "chr(): Providing a value not in-between 0 and 255 is deprecated, this is because a byte value must be in the [0, 255] interval. The value used will be constrained using % 256"));
+}
+
+#[test]
+fn count_chars_supports_all_byte_modes_and_callback_dispatch() {
+    let source = r#"<?php
+        $all = count_chars(string: 'aba');
+        $used = count_chars('aba', mode: 1);
+        $unused = count_chars('aba', 2);
+        $unique = count_chars('aba', 3);
+        $absent = count_chars('aba', 4);
+        $mapped = array_map('count_chars', ['aba'], [1]);
+        echo count($all), ':', $all[97], ':', $all[98], ':';
+        echo count($used), ':', count($unused), ':', $unique, ':';
+        echo (strpos($absent, 'a') === false), ':', count($mapped[0]), ':', function_exists('count_chars');
+        try { count_chars('x', 5); } catch (ValueError $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "256:2:1:2:254:ab:1:2:1:ValueError");
+}
+
+#[test]
+fn supported_magic_constants_follow_function_class_and_closure_context() {
+    let source = r#"<?php
+        namespace Demo;
+        function identifyFunction() { return __FUNCTION__ . ':' . __CLASS__ . ':' . __METHOD__; }
+        class MagicExample {
+            public function identifyMethod() {
+                $closure = fn() => __CLASS__ . ':' . __FUNCTION__ . ':' . __METHOD__;
+                return __CLASS__ . ':' . __FUNCTION__ . ':' . __METHOD__ . ':' . $closure();
+            }
+        }
+        echo identifyFunction(), ':', (new MagicExample())->identifyMethod(), ':', __CLASS__, ':', __FUNCTION__, ':', __METHOD__, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "identifyFunction:::Demo\\MagicExample:identifyMethod:Demo\\MagicExample::identifyMethod:Demo\\MagicExample:{closure}:Demo\\MagicExample::{closure}:::\n");
+}
+
+#[test]
+fn str_pad_supports_named_arguments_constants_and_array_callbacks() {
+    let source = r#"<?php
+        echo str_pad('PHP', 8), ':', str_pad('PHP', 8, '-', STR_PAD_LEFT), ':';
+        echo str_pad(string: 'PHP', length: 8, pad_type: STR_PAD_BOTH, pad_string: '-'), "\n";
+        echo str_pad('é', 4), ':', implode(',', array_map('str_pad', ['A', 'BC'], [3, 5], ['.', '.'])), "\n";
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "PHP     :-----PHP:--PHP---\né  :A..,BC...\n");
+}
+
+#[test]
+fn string_comparisons_reverse_named_arguments_and_callbacks() {
+    let source = r#"<?php
+        echo strcmp(string1: 'A', string2: 'b'), ':', strcasecmp('PHP', 'php'), ':';
+        echo strncmp(string1: 'abc', string2: 'abd', length: 2), ':', strncasecmp('PHPx', 'phpy', 3), ':';
+        echo strrev(string: 'stressed'), ':', function_exists('strncasecmp') ? 'yes' : 'no', "\n";
+        echo implode(',', array_map('strrev', ['abc', '123'])), "\n";
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "-1:0:0:0:desserts:yes\ncba,321\n");
+}
+
+#[test]
+fn strtr_supports_named_arguments_and_array_callbacks() {
+    let source = r#"<?php
+        echo strtr(string: 'hello', from: 'el', to: 'ip'), ':';
+        echo strtr('ababa', ['a' => 'X', 'ab' => 'Y']), ':';
+        echo implode(',', array_map('strtr', ['abc', 'def'], ['abc', 'def'], ['ABC', 'DEF'])), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hippo:YYX:ABC,DEF\n");
+}
+
+#[test]
+fn strtr_rejects_named_arguments_for_the_alternative_overload() {
+    let source = r#"<?php
+        echo strtr(replace_pairs: ['ab' => 'X', 'a' => 'Y'], string: 'ababa'), "\n";
+    "#;
+    let error = compile_source(source).unwrap().execute().unwrap_err();
+    assert!(error.contains("unknown named parameter '$replace_pairs'"), "{error}");
+}
+
+#[test]
+fn reverse_string_search_and_substring_count_support_named_arguments() {
+    let source = r#"<?php
+        echo strrpos(haystack: 'banana', needle: 'na'), ':';
+        echo strripos('PHP php', 'PHP'), ':';
+        echo substr_count(haystack: 'banana', needle: 'ana'), ':';
+        echo substr_count('banana', 'a', offset: 2, length: 3), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:4:1:1\n");
+}
+
+#[test]
+fn strstr_and_chr_alias_support_named_calls_and_callbacks() {
+    let source = r#"<?php
+        echo strstr(haystack: 'name@example.test', needle: '@'), ':';
+        echo strchr('name@example.test', '@', before_needle: true), ':';
+        echo implode(',', array_map('strstr', ['a-b', 'c-d'], ['-', '-'])), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "@example.test:name:-b,-d\n");
+}
+
+#[test]
+fn str_shuffle_uses_named_string_argument_and_preserves_ascii_bytes() {
+    let source = r#"<?php
+        $shuffled = str_shuffle(string: 'aabbccddeeff');
+        $characters = str_split($shuffled);
+        sort($characters);
+        echo strlen($shuffled), ':', implode('', $characters), ':', function_exists('str_shuffle'), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "12:aabbccddeeff:1\n");
+}

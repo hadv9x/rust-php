@@ -1,0 +1,21 @@
+[package]
+name = "php-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PHP command line runtime and HTTP server written in Rust"
+
+[[bin]]
+name = "php-rust"
+path = "src/main.rs"
+
+[[bin]]
+name = "php-rust-server"
+path = "src/server.rs"
+
+[dependencies]
+php-compiler.workspace = true
+php-runtime.workspace = true
+tokio.workspace = true
+libc.workspace = true
+php-db.workspace = true

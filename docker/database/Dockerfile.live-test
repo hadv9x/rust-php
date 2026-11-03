@@ -1,0 +1,41 @@
+FROM rust:1-bookworm
+
+ARG ORACLE_IC_VERSION=23.26.4.0.0
+ARG ORACLE_IC_BUILD=2326400
+ARG ORACLE_IC_DIR=instantclient_23_26
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LD_LIBRARY_PATH=/opt/oracle/${ORACLE_IC_DIR} \
+    ODBCINI=/etc/odbc.ini
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg unzip \
+        libpq5 libmariadb3 libmongoc-1.0-0 libbson-1.0-0 \
+        unixodbc libaio1 libnsl2 \
+    && curl -fsSLo /tmp/packages-microsoft-prod.deb \
+        https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/packages-microsoft-prod.deb \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && mkdir -p /opt/oracle \
+    && curl -fsSLo /tmp/instantclient-basic.zip \
+        "https://download.oracle.com/otn_software/linux/instantclient/${ORACLE_IC_BUILD}/instantclient-basic-linux.x64-${ORACLE_IC_VERSION}.zip" \
+    && curl -fsSLo /tmp/instantclient-odbc.zip \
+        "https://download.oracle.com/otn_software/linux/instantclient/${ORACLE_IC_BUILD}/instantclient-odbc-linux.x64-${ORACLE_IC_VERSION}.zip" \
+    && echo "cab59aa3b411b3b50898e456fa9aabfe48d67e25cbc1bb23303800390ce7de26  /tmp/instantclient-basic.zip" | sha256sum -c - \
+    && echo "766527c4af446862986297e3aa169ed42582b8ab55a17d4b901280e814f70d8a  /tmp/instantclient-odbc.zip" | sha256sum -c - \
+    && unzip -q /tmp/instantclient-basic.zip -d /opt/oracle \
+    && unzip -oq /tmp/instantclient-odbc.zip -d /opt/oracle \
+    && echo "/opt/oracle/${ORACLE_IC_DIR}" > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig \
+    && test -f "/opt/oracle/${ORACLE_IC_DIR}/libsqora.so.23.1" \
+    && printf '\n[Oracle]\nDescription=Oracle Instant Client ODBC\nDriver=/opt/oracle/%s/libsqora.so.23.1\n' "${ORACLE_IC_DIR}" >> /etc/odbcinst.ini \
+    && odbcinst -q -d -n Oracle \
+    && rm -rf /var/lib/apt/lists/* /tmp/*.deb /tmp/*.zip
+
+WORKDIR /workspace
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+ENTRYPOINT ["cargo", "test", "--locked", "-p", "php-db", "--test", "live_databases", "--", "--nocapture"]

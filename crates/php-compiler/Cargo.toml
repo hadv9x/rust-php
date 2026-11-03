@@ -1,0 +1,15 @@
+[package]
+name = "php-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Compiler from PHP syntax trees to php-rust bytecode"
+
+[[test]]
+name = "compiler"
+path = "../../tests/crates/php-compiler/compiler.rs"
+
+[dependencies]
+php-syntax.workspace = true
+php-runtime.workspace = true
+php-db.workspace = true

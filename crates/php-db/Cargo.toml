@@ -1,0 +1,13 @@
+[package]
+name = "php-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Database connection configuration and bounded connection pool primitives"
+
+[[test]]
+name = "live_databases"
+path = "../../tests/crates/php-db/live_databases.rs"
+
+[dependencies]
+libc.workspace = true

@@ -1,0 +1,39 @@
+[Unit]
+Description=php-rust asynchronous PHP subset server
+After=network.target
+
+[Service]
+Type=simple
+User=php-rust
+Group=php-rust
+WorkingDirectory=/srv/php-app
+ExecStart=/usr/local/bin/php-rust-server --config /etc/php-rust/php-rust.ini
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=35
+KillSignal=SIGTERM
+
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/srv/php-app/public/uploads
+
+MemoryHigh=384M
+MemoryMax=512M
+OOMPolicy=stop
+CPUQuota=200%
+TasksMax=256
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

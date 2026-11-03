@@ -1,0 +1,35 @@
+; Copy to php-rust.ini and adjust for this deployment.
+; Command-line flags override environment variables, which override this file.
+
+root = public
+bind = 127.0.0.1:3000
+max_in_flight = 128
+max_input_time = 15
+post_max_size = 2M
+upload_max_filesize = 2M
+max_input_vars = 1000
+max_execution_steps = 10000000
+max_execution_time = 30
+default_mimetype = text/html
+default_charset = UTF-8
+max_output_bytes = 8388608
+session.cookie_secure = off
+log = info
+
+; Named SQL connection pools. DSNs with semicolons must be quoted.
+; [database.primary]
+; dsn = "pgsql:host=127.0.0.1;port=5432;dbname=app"
+; username = ${DB_USER}
+; password = ${DB_PASSWORD}
+; pool_min = 0
+; pool_max = 20
+; pool_acquire_timeout_secs = 5
+; pool_idle_timeout_secs = 600
+; max_result_rows = 1000000
+; max_column_bytes = 8388608
+;
+; MySQL/MariaDB use mysql: / mariadb: DSNs with host, port and dbname fields.
+; SQL Server uses sqlsrv:Server=...;Database=... and a Microsoft ODBC driver.
+; Oracle uses oci:dbname=... and an Oracle ODBC driver.
+; MongoDB uses a mongodb:// URI and the libmongoc runtime.
+

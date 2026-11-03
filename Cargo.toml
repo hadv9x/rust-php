@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/php-syntax",
+    "crates/php-runtime",
+    "crates/php-compiler",
+    "crates/php-cli",
+    "crates/php-db",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+php-syntax = { path = "crates/php-syntax" }
+php-runtime = { path = "crates/php-runtime" }
+php-db = { path = "crates/php-db" }
+php-compiler = { path = "crates/php-compiler" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "io-util", "time"] }
+libc = "0.2"

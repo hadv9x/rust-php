@@ -1,0 +1,141 @@
+name: rust-php-databases
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: rustphp_test
+      POSTGRES_USER: rustphp
+      POSTGRES_PASSWORD: rustphp_dev_password
+    ports:
+      - "${PHP_RUST_TEST_POSTGRESQL_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustphp -d rustphp_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rustphp_dev_password
+      MYSQL_DATABASE: rustphp_test
+      MYSQL_USER: rustphp
+      MYSQL_PASSWORD: rustphp_dev_password
+    ports:
+      - "${PHP_RUST_TEST_MYSQL_PORT:-13306}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: rustphp_dev_password
+      MARIADB_DATABASE: rustphp_test
+      MARIADB_USER: rustphp
+      MARIADB_PASSWORD: rustphp_dev_password
+    ports:
+      - "${PHP_RUST_TEST_MARIADB_PORT:-13307}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+  mongodb:
+    image: mongo:7.0
+    command: ["mongod", "--port", "27018", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${PHP_RUST_TEST_MONGODB_PORT:-27018}:27018"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --host localhost --port 27018 --quiet --eval
+          'try { rs.status() } catch (e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27018"}]}) }'
+          >/dev/null 2>&1;
+          mongosh --host localhost --port 27018 --quiet --eval
+          'quit(rs.status().myState === 1 ? 0 : 1)' >/dev/null 2>&1
+      interval: 3s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - mongodb-data-v7:/data/db
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: [sqlserver]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: rustphp_dev_password_2026!
+    ports:
+      - "${PHP_RUST_TEST_SQLSERVER_PORT:-11433}:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    profiles: [oracle]
+    environment:
+      ORACLE_PASSWORD: rustphp_dev_password
+    ports:
+      - "${PHP_RUST_TEST_ORACLE_PORT:-11521}:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+
+  live-tests:
+    image: rust-php-live-db-tests
+    profiles: [live-tests]
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: docker/database/Dockerfile.live-test
+    network_mode: host
+    environment:
+      PHP_RUST_REQUIRE_LIVE_DBS: "1"
+      PHP_RUST_TEST_POSTGRESQL_DSN: "pgsql:host=127.0.0.1;port=${PHP_RUST_TEST_POSTGRESQL_PORT:-15432};dbname=rustphp_test"
+      PHP_RUST_TEST_POSTGRESQL_USERNAME: rustphp
+      PHP_RUST_TEST_POSTGRESQL_PASSWORD: rustphp_dev_password
+      PHP_RUST_TEST_MYSQL_DSN: "mysql:host=127.0.0.1;port=${PHP_RUST_TEST_MYSQL_PORT:-13306};dbname=rustphp_test"
+      PHP_RUST_TEST_MYSQL_USERNAME: rustphp
+      PHP_RUST_TEST_MYSQL_PASSWORD: rustphp_dev_password
+      PHP_RUST_TEST_MARIADB_DSN: "mariadb:host=127.0.0.1;port=${PHP_RUST_TEST_MARIADB_PORT:-13307};dbname=rustphp_test"
+      PHP_RUST_TEST_MARIADB_USERNAME: rustphp
+      PHP_RUST_TEST_MARIADB_PASSWORD: rustphp_dev_password
+      PHP_RUST_TEST_MONGODB_DSN: "mongodb://127.0.0.1:${PHP_RUST_TEST_MONGODB_PORT:-27018}/?replicaSet=rs0"
+      PHP_RUST_TEST_SQLSERVER_DSN: "sqlsrv:server=127.0.0.1,${PHP_RUST_TEST_SQLSERVER_PORT:-11433};database=master;encrypt=no;trustservercertificate=yes"
+      PHP_RUST_TEST_SQLSERVER_USERNAME: sa
+      PHP_RUST_TEST_SQLSERVER_PASSWORD: rustphp_dev_password_2026!
+      PHP_RUST_TEST_SQLSERVER_ODBC_DRIVER: "ODBC Driver 18 for SQL Server"
+      PHP_RUST_TEST_ORACLE_DSN: "${PHP_RUST_TEST_ORACLE_DSN:-}"
+      PHP_RUST_TEST_ORACLE_USERNAME: "${PHP_RUST_TEST_ORACLE_USERNAME:-system}"
+      PHP_RUST_TEST_ORACLE_PASSWORD: "${PHP_RUST_TEST_ORACLE_PASSWORD:-rustphp_dev_password}"
+      PHP_RUST_TEST_ORACLE_ODBC_DRIVER: Oracle
+
+volumes:
+  postgres-data:
+  mysql-data:
+  mariadb-data:
+  mongodb-data-v7:
+  sqlserver-data:
+  oracle-data:

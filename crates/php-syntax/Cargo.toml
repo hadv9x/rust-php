@@ -1,0 +1,6 @@
+[package]
+name = "php-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PHP lexer, parser, and abstract syntax tree"

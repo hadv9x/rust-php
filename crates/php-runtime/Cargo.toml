@@ -1,0 +1,10 @@
+[package]
+name = "php-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bytecode and virtual machine for php-rust"
+
+[dependencies]
+php-db.workspace = true
+libc.workspace = true
