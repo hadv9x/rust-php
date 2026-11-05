@@ -7,6 +7,7 @@ This page records what repository automation provides and which GitHub settings 
 - [x] Rust workspace tests, checks, and release build on pushes and pull requests: [CI workflow](../.github/workflows/ci.yml).
 - [x] Scheduled and pull-request Cargo dependency advisory scan: [dependency audit](../.github/workflows/dependency-audit.yml).
 - [x] Weekly Dependabot updates for Cargo dependencies and GitHub Actions: [Dependabot configuration](../.github/dependabot.yml).
+- [x] Tag-triggered Linux/Docker/source release with checksums: [release workflow](../.github/workflows/release.yml) and [release guide](release-process.md).
 - [x] MIT license, contribution guide, security reporting instructions, and pull request checklist.
 
 ## Not yet enforced by CI
@@ -15,7 +16,7 @@ This page records what repository automation provides and which GitHub settings 
 - [ ] Run every `examples/*.php` file in CI. Some examples need server state, environment setup, or external services; first make the runnable subset explicit and deterministic.
 - [ ] Cross-platform build/test matrix. The release package currently targets Linux x86_64; support targets should be selected and tested before advertising them.
 - [ ] A declared and tested MSRV. `Cargo.toml` does not currently set `rust-version`.
-- [ ] Tagged release workflow, checksummed release artifacts, and provenance attestations. Linux packaging is currently a maintainer-run script.
+- [ ] Provenance attestations and releases for targets beyond Linux x86_64.
 
 ## GitHub repository settings for maintainers
 

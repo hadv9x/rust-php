@@ -6,7 +6,7 @@ version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$root/Cargo.toml" | head -n 1)
 [ -n "$version" ] || { echo "could not read package version" >&2; exit 1; }
 
 cd "$root"
-cargo build -p php-cli --release
+cargo build -p php-cli --release --locked
 stage="$root/target/package/php-rust-$version-linux-x86_64"
 rm -rf "$stage"
 mkdir -p "$stage"

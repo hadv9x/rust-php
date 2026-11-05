@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish release assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # action SHA
+        with:
+          toolchain: stable
+
+      - name: Verify tag matches workspace version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$tag_version" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test tagged source
+        run: cargo test --workspace --locked
+
+      - name: Build Linux x86_64 package
+        run: ./scripts/package-linux.sh
+
+      - name: Build Docker image and archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./scripts/docker-build.sh "$VERSION"
+          docker save "php-rust:$VERSION" | gzip -1 > "dist/php-rust-$VERSION-docker.tar.gz"
+
+      - name: Create source archive and checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git archive --format=tar.gz --prefix="php-rust-$VERSION/" HEAD -o "dist/php-rust-$VERSION-source.tar.gz"
+          cd dist
+          sha256sum \
+            "php-rust-$VERSION-linux-x86_64.tar.gz" \
+            "php-rust-$VERSION-source.tar.gz" \
+            "php-rust-$VERSION-docker.tar.gz" \
+            > SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/php-rust-$VERSION-linux-x86_64.tar.gz" \
+            "dist/php-rust-$VERSION-source.tar.gz" \
+            "dist/php-rust-$VERSION-docker.tar.gz" \
+            dist/SHA256SUMS \
+            --verify-tag \
+            --title "php-rust $VERSION" \
+            --generate-notes

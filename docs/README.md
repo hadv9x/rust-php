@@ -27,6 +27,7 @@ Use this page to find the documentation for each part of the project.
 - [Compiler architecture](compiler-architecture.md) — project layers, bytecode flow, and design references.
 - [Runtime and bytecode](runtime-and-bytecode.md) — VM execution, values, arrays, objects, and errors.
 - [CLI and installation](cli-and-installation.md) — commands, local installation, and Linux package usage.
+- [Release process](release-process.md) — version tags, GitHub Release assets, and checksum verification.
 - [Build, install, and test](testing.md) — reproducible build/test commands and an installed-server HTTP smoke test and load script.
 - [Web server](web-server.md) — HTTP hosting, request globals, front-controller behavior, and current limits.
 - [Database connections](database.md) — configured pools, SQL drivers, and the current PDO surface.

@@ -112,3 +112,7 @@ Scripts are provided to build a versioned Docker image and run the HTTP server a
 ```
 
 The Laravel smoke workflow is an integration check, not a claim of broad Laravel or PHP compatibility. See [testing](docs/testing.md) for details.
+
+## Release
+
+To publish a version, push a matching `vX.Y.Z` tag. GitHub Actions tests the tagged source and creates a GitHub Release with the Linux package, Docker image, source archive, and checksums. Follow the [release process](docs/release-process.md).
