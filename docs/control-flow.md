@@ -11,12 +11,13 @@ Control-flow syntax is split by feature. Loop parsing is in [`php-syntax/src/par
 - `foreach` over arrays, generators, PDO statements, and user `Iterator`/`IteratorAggregate` objects, with optional keys and by-reference array value binding (`&$value`)
 - `switch` with `case`, one `default` arm, fall-through, and `break`, using braces or `: ... endswitch;`
 - `match` expressions with strict comparison, multiple condition values, one default arm, and catchable `UnhandledMatchError` when nothing matches
+- `goto` labels within one compiled context, including loop/switch exits; jumps into loop/switch regions and jumps across sibling regions are rejected. Leaving `try` with `goto` executes its `finally` block.
 - `break` and `continue`, including positive numeric nesting levels
 - Prefix/postfix increment and decrement on variables, nested array offsets, instance properties, and static properties
-- Prefix/postfix increment on ASCII alphanumeric strings, including carry across digits and letter ranges (`z` to `aa`, `9` to `10`); numeric strings use numeric arithmetic and empty strings increment to `"1"`
+- Prefix/postfix increment on ASCII alphanumeric strings, including carry across digits and letter ranges (`z` to `aa`, `9` to `10`); numeric strings use numeric arithmetic, empty strings increment to `"1"`, and non-ASCII strings remain unchanged as nonnumeric strings
 - Braced and single-statement loop bodies
 
-Run [`examples/loops.php`](../examples/loops.php) for loops and numeric loop targets. See [`examples/foreach-reference.php`](../examples/foreach-reference.php) for by-reference iteration and [`examples/string-increment.php`](../examples/string-increment.php) for alphanumeric string increments. Run [`examples/switch.php`](../examples/switch.php) for brace syntax and [`examples/switch-alternate.php`](../examples/switch-alternate.php) for alternate syntax.
+Run [`examples/loops.php`](../examples/loops.php) for loops and numeric loop targets. See [`examples/foreach-reference.php`](../examples/foreach-reference.php) for by-reference iteration and [`examples/string-increment.php`](../examples/string-increment.php) for alphanumeric string increments. Run [`examples/switch.php`](../examples/switch.php) for brace syntax, [`examples/switch-alternate.php`](../examples/switch-alternate.php) for alternate syntax, and [`examples/goto.php`](../examples/goto.php) for labels and finally behavior.
 
 ```php
 for ($i = 0; $i < 4; $i++) {
@@ -32,7 +33,7 @@ for ($i = 0; $i < 4; $i++) {
 ## Current limits
 
 - `for` initializer/update clauses support simple variable assignments and expressions; assignment expressions are not general PHP expressions.
-- PHP 8.3 deprecation diagnostics for empty, nonnumeric, and non-alphanumeric increment/decrement operations are not emitted. Decrement on nonnumeric strings is a no-op except that an empty string becomes `-1`.
+- Increment/decrement emit source-located warning/deprecation diagnostics for booleans, null, empty strings, and nonnumeric strings under the PHP 8.3/8.5 compatibility baseline. Nonnumeric string increment is ASCII-only; a non-ASCII string remains unchanged and is treated as nonnumeric. Decrement on nonnumeric strings is a no-op except that an empty string becomes `-1`.
 - User iterator support follows the `Iterator` methods and resolves nested `IteratorAggregate::getIterator()` results. Aggregate methods must return a supported Traversable value. By-reference iteration accepts array paths rooted at variables; offset expressions are evaluated once.
 - Switch case expressions use the parser's supported expression subset.
 - `match` compares with PHP strict identity and evaluates the subject once. The `UnhandledMatchError` message is simplified and does not include PHP's full value rendering.

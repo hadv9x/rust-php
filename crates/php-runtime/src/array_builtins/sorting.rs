@@ -1,6 +1,7 @@
 //! Array ordering and sorting builtins.
 
 use crate::{ArrayKey, Value};
+use std::ffi::CString;
 use super::common::*;
 
 #[derive(Clone, Copy)]
@@ -72,21 +73,34 @@ pub(super) fn compare_values(left: &Value, right: &Value, flags: i64) -> Result<
 
 pub(super) fn compare_for_sort(left: &Value, right: &Value, flags: i64, stringify: &mut dyn FnMut(&Value) -> Result<String, String>) -> Result<std::cmp::Ordering, String> {
     match flags & 7 {
-        2 | 5 => {
+        2 => {
             let left = stringify(left)?;
             let right = stringify(right)?;
             Ok(if flags & 8 != 0 { ascii_case_fold(&left).cmp(&ascii_case_fold(&right)) } else { left.cmp(&right) })
         }
+        5 => Ok(locale_string_order(&stringify(left)?, &stringify(right)?)),
         6 => Ok(natural_order(&stringify(left)?, &stringify(right)?, flags & 8 != 0)),
         _ => compare_values(left, right, flags),
     }
 }
 
+/// Compare NUL-free strings using the process's active LC_COLLATE locale.
+/// PHP's locale sort mode delegates to the active C locale; retain byte order
+/// for embedded-NUL strings because `strcoll` accepts NUL-terminated inputs.
+fn locale_string_order(left: &str, right: &str) -> std::cmp::Ordering {
+    let (Ok(left_c), Ok(right_c)) = (CString::new(left), CString::new(right)) else {
+        return left.as_bytes().cmp(right.as_bytes());
+    };
+    let comparison = unsafe { libc::strcoll(left_c.as_ptr(), right_c.as_ptr()) };
+    comparison.cmp(&0)
+}
+
 fn compare_regular(left: &Value, right: &Value, flags: i64, state: &mut CompareState, depth: usize) -> std::cmp::Ordering {
     match flags & 7 {
         1 => left.number().partial_cmp(&right.number()).unwrap_or(std::cmp::Ordering::Equal),
-        2 | 5 if flags & 8 != 0 => ascii_case_fold(&left.show()).cmp(&ascii_case_fold(&right.show())),
-        2 | 5 => left.show().cmp(&right.show()),
+        2 if flags & 8 != 0 => ascii_case_fold(&left.show()).cmp(&ascii_case_fold(&right.show())),
+        2 => left.show().cmp(&right.show()),
+        5 => locale_string_order(&left.show(), &right.show()),
         6 if flags & 8 != 0 => natural_order(&left.show(), &right.show(), true),
         6 => natural_order(&left.show(), &right.show(), false),
         _ => {
@@ -131,7 +145,10 @@ fn compare_regular(left: &Value, right: &Value, flags: i64, state: &mut CompareS
                 if std::rc::Rc::ptr_eq(a, b) { return std::cmp::Ordering::Equal; }
                 let (left_class, left_properties, left_order) = { let object = a.borrow(); (object.class_name.to_ascii_lowercase(), object.properties.clone(), object.property_order.clone()) };
                 let (right_class, right_properties, right_order) = { let object = b.borrow(); (object.class_name.to_ascii_lowercase(), object.properties.clone(), object.property_order.clone()) };
-                if left_class != right_class { return left_class.cmp(&right_class); }
+                // PHP treats objects from unrelated classes as incomparable. For stable
+                // builtin sorts and extrema, keep their encounter order instead of
+                // inventing a lexical order from implementation class names.
+                if left_class != right_class { return std::cmp::Ordering::Equal; }
                 let identity = (std::rc::Rc::as_ptr(a) as usize, std::rc::Rc::as_ptr(b) as usize);
                 if !state.compared_objects.insert(identity) { state.recursive = true; return std::cmp::Ordering::Equal; }
                 let ordered_keys = |properties: &std::collections::HashMap<String, Value>, order: &[String]| {
@@ -157,6 +174,10 @@ fn compare_regular(left: &Value, right: &Value, flags: i64, state: &mut CompareS
                 state.compared_objects.remove(&identity);
                 result
             }
+            (Value::Object(_), _) => std::cmp::Ordering::Greater,
+            (_, Value::Object(_)) => std::cmp::Ordering::Less,
+            (Value::Array(_), _) => std::cmp::Ordering::Greater,
+            (_, Value::Array(_)) => std::cmp::Ordering::Less,
             _ => left.show().cmp(&right.show()),
             }
         }
@@ -193,7 +214,7 @@ fn compare_float_to_numeric_string(number: f64, value: NumericString) -> std::cm
 }
 
 /// Sort one or more arrays by lexicographic columns and return every updated input.
-pub(super) fn multisort(args: &[Value]) -> Result<(Value, Vec<(usize, Value)>), String> {
+pub(super) fn multisort(args: &[Value], stringify: &mut dyn FnMut(&Value) -> Result<String, String>) -> Result<(Value, Vec<(usize, Value)>), String> {
     require_count("array_multisort", args, 1, usize::MAX)?;
     let mut columns = Vec::<(usize, Vec<(ArrayKey, Value)>, bool, i64)>::new();
     let mut cursor = 0;
@@ -211,14 +232,18 @@ pub(super) fn multisort(args: &[Value]) -> Result<(Value, Vec<(usize, Value)>), 
         while let Some(argument) = args.get(cursor) {
             if !matches!(argument, Value::Integer(_) | Value::Number(_)) { break; }
             let flag = argument.number() as i64;
-            if !direction_seen && matches!(flag, 3 | 4) {
+            if matches!(flag, 3 | 4) && direction_seen {
+                return Err(format!("TypeError:array_multisort(): Argument #{} has the same sort order as a previous argument", cursor + 1));
+            } else if matches!(flag, 3 | 4) {
                 descending = flag == 3;
                 direction_seen = true;
-            } else if !flags_seen && matches!(flag, 0 | 1 | 2 | 5 | 6 | 10 | 14) {
+            } else if matches!(flag, 0 | 1 | 2 | 5 | 6 | 10 | 14) && flags_seen {
+                return Err(format!("TypeError:array_multisort(): Argument #{} has the same sort flag as a previous argument", cursor + 1));
+            } else if matches!(flag, 0 | 1 | 2 | 5 | 6 | 10 | 14) {
                 flags = flag;
                 flags_seen = true;
             } else {
-                break;
+                return Err(format!("ValueError:array_multisort(): Argument #{} contains an unknown sort flag", cursor + 1));
             }
             cursor += 1;
         }
@@ -235,7 +260,7 @@ pub(super) fn multisort(args: &[Value]) -> Result<(Value, Vec<(usize, Value)>), 
         while current > 0 {
             let mut comparison = std::cmp::Ordering::Equal;
             for (_, values, descending, flags) in &columns {
-                comparison = compare_values(&values[order[current - 1]].1, &values[order[current]].1, *flags)?;
+                comparison = compare_for_sort(&values[order[current - 1]].1, &values[order[current]].1, *flags, stringify)?;
                 if *descending { comparison = comparison.reverse(); }
                 if comparison != std::cmp::Ordering::Equal { break; }
             }
@@ -322,5 +347,19 @@ pub(super) fn user_sort(
         }
     }
     Ok((Value::Bool(true), Some((0, Value::array(items)))))
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn locale_string_order_uses_thread_local_lc_collate() {
+    let locale_name = CString::new("en_US.utf8").unwrap();
+    let locale = unsafe { libc::newlocale(libc::LC_COLLATE_MASK, locale_name.as_ptr(), std::ptr::null_mut()) };
+    if locale.is_null() { return; }
+    let previous = unsafe { libc::uselocale(locale) };
+    assert_eq!(locale_string_order("z", "ä"), std::cmp::Ordering::Greater);
+    unsafe {
+        libc::uselocale(previous);
+        libc::freelocale(locale);
+    }
 }
 

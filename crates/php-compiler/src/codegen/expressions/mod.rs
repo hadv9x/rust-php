@@ -82,7 +82,7 @@ fn isset_operand(generator: &mut CodeGenerator<'_>, expression: &Expr) {
         Expr::Index(array, key) => {
             isset_operand(generator, array);
             generator.expression(key);
-            generator.instructions.push(Op::ArrayGetSilent);
+            generator.instructions.push(Op::ArrayGetIsset);
         }
         _ => generator.expression(expression),
     }
@@ -101,6 +101,18 @@ fn coalesce_operand(generator: &mut CodeGenerator<'_>, expression: &Expr) {
             generator.expression(key);
             generator.instructions.push(Op::ArrayGetSilent);
         }
+        Expr::Property(receiver, property) => {
+            generator.expression(receiver);
+            generator.instructions.push(Op::GetPropertyCoalesce(property.clone(), generator.current_class.clone()));
+        }
+        Expr::DynamicProperty(receiver, property) => {
+            generator.expression(receiver);
+            generator.expression(property);
+            generator.instructions.push(Op::GetDynamicPropertyCoalesce(generator.current_class.clone()));
+        }
+        Expr::StaticProperty(class, property) => generator.instructions.push(Op::GetStaticPropertyCoalesce(
+            class.clone(), property.clone(), generator.current_class.clone(),
+        )),
         _ => generator.expression(expression),
     }
 }
@@ -142,6 +154,7 @@ fn passed_whole_globals_by_reference(name: &str, arguments: &[Expr], program: Op
         "array_pop" | "array_shift" | "array_push" | "array_unshift" | "array_splice" | "array_walk" | "array_walk_recursive"
         | "sort" | "rsort" | "asort" | "arsort" | "ksort" | "krsort" | "natsort" | "natcasesort" | "shuffle"
         | "usort" | "uasort" | "uksort" | "next" | "prev" | "reset" | "end" | "each" => &[0],
+        "extract" => &[0],
         "array_multisort" => return true,
         _ => &[],
     };
@@ -203,6 +216,85 @@ fn method_passes_whole_globals_by_reference(
         let parameter_index = name.and_then(|name| method.parameters.iter().position(|parameter| parameter == name)).unwrap_or(index);
         method.parameter_by_reference.get(parameter_index).copied().unwrap_or(false)
     })
+}
+
+fn statically_known_method_class(receiver: &Expr, current_class: Option<&str>) -> Option<String> {
+    match receiver {
+        Expr::NewObject(class, _, _) => Some(class.clone()),
+        Expr::Variable(variable) if variable == "this" => current_class.map(str::to_string),
+        _ => None,
+    }
+}
+
+fn internal_method_passes_whole_globals_by_reference(class_name: &str, method: &str, arguments: &[Expr]) -> bool {
+    if !class_name.split(['|', '&', '(', ')']).any(|part| {
+        part.trim().trim_start_matches('?').trim_start_matches('\\').eq_ignore_ascii_case("PDOStatement")
+    }) || !matches!(method.to_ascii_lowercase().as_str(), "bindparam" | "bindcolumn") {
+        return false;
+    }
+    arguments.iter().enumerate().any(|(index, argument)| {
+        let (value, name) = match argument {
+            Expr::NamedArgument(name, value) => (value.as_ref(), Some(name.as_str())),
+            Expr::UnpackArgument(_) => return false,
+            value => (value, None),
+        };
+        matches!(value, Expr::Variable(variable) if variable == "GLOBALS")
+            && (name.is_some_and(|name| name.eq_ignore_ascii_case("var")) || name.is_none() && index == 1)
+    })
+}
+
+pub(super) fn assigned_type(expression: &Expr, variable_types: &std::collections::HashMap<String, String>) -> Option<String> {
+    match expression {
+        Expr::NewObject(class, _, _) => Some(class.trim_start_matches('\\').to_ascii_lowercase()),
+        Expr::Variable(variable) => variable_types.get(variable).cloned(),
+        _ => None,
+    }
+}
+
+fn statically_known_receiver_class(receiver: &Expr, current_class: Option<&str>, variable_types: &std::collections::HashMap<String, String>) -> Option<String> {
+    statically_known_method_class(receiver, current_class).or_else(|| match receiver {
+        Expr::Variable(variable) => variable_types.get(variable).cloned(),
+        _ => None,
+    })
+}
+
+fn callable_passes_whole_globals_by_reference(
+    callable: &Expr,
+    arguments: &[Expr],
+    program: Option<&php_syntax::Program>,
+    current_class: Option<&str>,
+    parent_class: Option<&str>,
+) -> bool {
+    match callable {
+        Expr::String(name) => passed_whole_globals_by_reference(name, arguments, program),
+        Expr::Array(entries) if entries.len() == 2 => {
+            let method = match &entries[1].value { Expr::String(method) => method.as_str(), _ => return false };
+            match &entries[0].value {
+                Expr::String(class) => method_passes_whole_globals_by_reference(class, method, arguments, program),
+                receiver => statically_known_method_class(receiver, current_class).is_some_and(|class| {
+                    method_passes_whole_globals_by_reference(&class, method, arguments, program)
+                }),
+            }
+        }
+        Expr::FirstClassCallable(target) => match target {
+            php_syntax::FirstClassCallableTarget::Function(name) => passed_whole_globals_by_reference(name, arguments, program),
+            php_syntax::FirstClassCallableTarget::StaticMethod(class, method) => {
+                let class = match class.as_str() {
+                    "self" | "static" => current_class,
+                    "parent" => parent_class,
+                    _ => Some(class.as_str()),
+                };
+                class.is_some_and(|class| method_passes_whole_globals_by_reference(class, method, arguments, program))
+            }
+            php_syntax::FirstClassCallableTarget::InstanceMethod(receiver, method) => {
+                statically_known_method_class(receiver, current_class).is_some_and(|class| {
+                    method_passes_whole_globals_by_reference(&class, method, arguments, program)
+                })
+            }
+            php_syntax::FirstClassCallableTarget::Value(value) => callable_passes_whole_globals_by_reference(value, arguments, program, current_class, parent_class),
+        },
+        _ => false,
+    }
 }
 
 impl CodeGenerator<'_> {
@@ -272,7 +364,8 @@ impl CodeGenerator<'_> {
                 self.expression(value);
                 let mut target_key_count = 0;
                 let targets = targets.iter().map(|target| super::statements::compile_destructure_target(self, target, &mut target_key_count)).collect();
-                self.instructions.push(Op::ListDestructureKeep(targets, target_key_count, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                let source_variable = match value.as_ref() { Expr::Variable(name) => Some(name.clone()), _ => None };
+                self.instructions.push(Op::ListDestructureKeep(targets, target_key_count, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")), source_variable));
             }
             Expr::Array(_) | Expr::Index(_, _) => self.array_expression(expression),
             Expr::Call(name, arguments) if name == "\0php_throw_expression" => {
@@ -282,6 +375,21 @@ impl CodeGenerator<'_> {
                 }
                 self.expression(&arguments[0]);
                 self.instructions.push(Op::Throw);
+            }
+            Expr::Call(name, arguments) if name.starts_with("\0php_include:") => {
+                if arguments.len() != 1 {
+                    self.errors.push("include expression requires exactly one path".into());
+                    return;
+                }
+                self.expression(&arguments[0]);
+                let mode = match &name["\0php_include:".len()..] {
+                    "include" => php_runtime::bytecode::IncludeMode::Include,
+                    "include_once" => php_runtime::bytecode::IncludeMode::IncludeOnce,
+                    "require" => php_runtime::bytecode::IncludeMode::Require,
+                    "require_once" => php_runtime::bytecode::IncludeMode::RequireOnce,
+                    _ => { self.errors.push("unknown include expression kind".into()); return; }
+                };
+                self.instructions.push(Op::Include(mode));
             }
             Expr::Call(name, arguments) => {
                 if passed_whole_globals_by_reference(name, arguments, self.program) {
@@ -306,8 +414,8 @@ impl CodeGenerator<'_> {
                 let mut generator = CodeGenerator {
                     program: self.program, instructions, current_source_file: self.current_source_file.clone(), parent_class: self.parent_class.clone(), current_class: self.current_class.clone(),
                     current_method: None, current_class_display: self.current_class_display.clone(), current_function: Some("{closure}".into()),
-                    strict_types: self.strict_types,
-                    returns_by_reference: declaration.returns_by_reference, control_stack: Vec::new(), labels: std::collections::HashMap::new(), pending_gotos: Vec::new(), include_return_stack: Vec::new(), errors: Vec::new(),
+                    strict_types: self.strict_types, known_callables: std::collections::HashMap::new(), variable_types: super::declared_parameter_types(&declaration.parameters, &declaration.parameter_types),
+                    returns_by_reference: declaration.returns_by_reference, control_stack: Vec::new(), labels: std::collections::HashMap::new(), pending_gotos: Vec::new(), next_control_id: 0, include_return_stack: Vec::new(), errors: Vec::new(),
                 };
                 generator.statements(&declaration.body);
                 generator.resolve_gotos();
@@ -324,6 +432,7 @@ impl CodeGenerator<'_> {
                     declaration.return_type.clone(), declaration.returns_by_reference, generator.instructions, declaration.is_static, false, false,
                     php_runtime::MemberVisibility::Public, self.current_class.clone(),
                 );
+                function.parameter_default_constant_names = super::declarations::parameter_default_constant_names(&declaration.parameter_defaults);
                 function.strict_types = self.strict_types;
                 function.parameter_attributes = declaration.parameter_attributes.iter().map(|attributes| attributes.iter().map(|attribute| {
                     let arguments = attribute.arguments.iter().map(|argument| match argument {
@@ -336,6 +445,14 @@ impl CodeGenerator<'_> {
                 self.instructions.push(Op::MakeClosure(Box::new(function), captures));
             }
             Expr::Invoke(callee, arguments) => {
+                let resolved = match callee.as_ref() {
+                    Expr::Variable(name) => self.known_callables.get(name).unwrap_or(callee.as_ref()),
+                    _ => callee.as_ref(),
+                };
+                if callable_passes_whole_globals_by_reference(resolved, arguments, self.program, self.current_class.as_deref(), self.parent_class.as_deref()) {
+                    self.errors.push("Cannot re-assign $GLOBALS".into());
+                    return;
+                }
                 self.expression(callee);
                 let (references, argument_names, unpack) = argument_metadata(arguments, self.current_class.clone());
                 self.call_arguments(arguments);
@@ -369,7 +486,16 @@ impl CodeGenerator<'_> {
             },
             Expr::Yield { key, value } => {
                 if let Some(key) = key { self.expression(key); }
-                self.expression(value);
+                if self.returns_by_reference {
+                    if let Some((variable, keys)) = reference_path(value) {
+                        for key in &keys { self.expression(key); }
+                        self.instructions.push(Op::LoadReference(variable, keys.len()));
+                    } else {
+                        self.expression(value);
+                    }
+                } else {
+                    self.expression(value);
+                }
                 self.instructions.push(if key.is_some() { Op::YieldKeyed } else { Op::Yield });
             }
             Expr::YieldFrom(iterable) => {
@@ -461,7 +587,7 @@ impl CodeGenerator<'_> {
                     self.instructions.push(Op::GetProperty(property, self.current_class.clone()));
                     for key in keys {
                         self.expression(key);
-                        self.instructions.push(Op::ArrayGetSilent);
+                        self.instructions.push(Op::ArrayGetIsset);
                     }
                     self.instructions.push(Op::Not);
                     let done = self.instructions.len();
@@ -482,7 +608,7 @@ impl CodeGenerator<'_> {
                     self.instructions.push(Op::GetDynamicProperty(self.current_class.clone()));
                     for key in keys {
                         self.expression(key);
-                        self.instructions.push(Op::ArrayGetSilent);
+                        self.instructions.push(Op::ArrayGetIsset);
                     }
                     self.instructions.push(Op::Not);
                     let done = self.instructions.len();
@@ -500,12 +626,9 @@ impl CodeGenerator<'_> {
                 }
             }
             Expr::MethodCall(object, method, arguments) => {
-                let class = match object.as_ref() {
-                    Expr::Variable(variable) if variable == "this" => self.current_class.as_deref(),
-                    Expr::NewObject(class, _, _) => Some(class.as_str()),
-                    _ => None,
-                };
-                if class.is_some_and(|class| method_passes_whole_globals_by_reference(class, method, arguments, self.program)) {
+                let class = statically_known_receiver_class(object, self.current_class.as_deref(), &self.variable_types);
+                if class.as_deref().is_some_and(|class| method_passes_whole_globals_by_reference(class, method, arguments, self.program)
+                    || internal_method_passes_whole_globals_by_reference(class, method, arguments)) {
                     self.errors.push("Cannot re-assign $GLOBALS".into());
                     return;
                 }
@@ -515,13 +638,10 @@ impl CodeGenerator<'_> {
                 self.instructions.push(Op::CallMethod(method.to_ascii_lowercase(), arguments.len(), references, argument_names, unpack, self.current_class.clone(), self.strict_types));
             }
             Expr::DynamicMethodCall(object, method, arguments) => {
-                let class = match object.as_ref() {
-                    Expr::Variable(variable) if variable == "this" => self.current_class.as_deref(),
-                    Expr::NewObject(class, _, _) => Some(class.as_str()),
-                    _ => None,
-                };
+                let class = statically_known_receiver_class(object, self.current_class.as_deref(), &self.variable_types);
                 let known_method = match method.as_ref() { Expr::String(method) => Some(method.as_str()), _ => None };
-                if class.zip(known_method).is_some_and(|(class, method)| method_passes_whole_globals_by_reference(class, method, arguments, self.program)) {
+                if class.as_deref().zip(known_method).is_some_and(|(class, method)| method_passes_whole_globals_by_reference(class, method, arguments, self.program)
+                    || internal_method_passes_whole_globals_by_reference(class, method, arguments)) {
                     self.errors.push("Cannot re-assign $GLOBALS".into());
                     return;
                 }
@@ -593,7 +713,7 @@ impl CodeGenerator<'_> {
                 self.expression(receiver);
                 self.expression(property);
                 self.expression(value);
-                self.instructions.push(Op::SetDynamicProperty(self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                self.instructions.push(Op::SetDynamicProperty(self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
             }
             Expr::DynamicPropertyCompoundAssignment { receiver, property, operation, value } => {
                 let operation = match operation {
@@ -614,7 +734,7 @@ impl CodeGenerator<'_> {
                 self.expression(receiver);
                 self.expression(property);
                 self.expression(value);
-                self.instructions.push(Op::CompoundAssignDynamicProperty(operation, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                self.instructions.push(Op::CompoundAssignDynamicProperty(operation, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
             }
             Expr::StaticProperty(class, property) => {
                 let class = match class.as_str() {
@@ -688,7 +808,7 @@ impl CodeGenerator<'_> {
                     self.expression(receiver);
                     for key in keys { self.expression(key); }
                     self.instructions.push(Op::IncrementPropertyArrayPath(property.clone(), keys.len(), *delta, true,
-                        self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                        self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::StaticPropertyArrayPath { class, property, keys } => {
                     for key in keys { self.expression(key); }
@@ -698,7 +818,7 @@ impl CodeGenerator<'_> {
                 php_syntax::IncrementTarget::DynamicPropertyArrayPath { receiver, property, keys } => {
                     self.expression(receiver); self.expression(property);
                     for key in keys { self.expression(key); }
-                    self.instructions.push(Op::IncrementDynamicPropertyArrayPath(keys.len(), *delta, true, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementDynamicPropertyArrayPath(keys.len(), *delta, true, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::DynamicStaticPropertyArrayPath { class, property, keys } => {
                     self.expression(class); self.expression(property);
@@ -707,7 +827,7 @@ impl CodeGenerator<'_> {
                 }
                 php_syntax::IncrementTarget::Property { receiver, property } => {
                     self.expression(receiver);
-                    self.instructions.push(Op::IncrementProperty(property.clone(), *delta, true, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementProperty(property.clone(), *delta, true, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::StaticProperty { class, property } => {
                     let class = match class.as_str() { "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()), "static" => "static".into(), _ => class.to_ascii_lowercase() };
@@ -715,7 +835,7 @@ impl CodeGenerator<'_> {
                 }
                 php_syntax::IncrementTarget::DynamicProperty { receiver, property } => {
                     self.expression(receiver); self.expression(property);
-                    self.instructions.push(Op::IncrementDynamicProperty(*delta, true, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementDynamicProperty(*delta, true, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
             },
             Expr::PreIncrement(target, delta) => match target {
@@ -733,7 +853,7 @@ impl CodeGenerator<'_> {
                     self.expression(receiver);
                     for key in keys { self.expression(key); }
                     self.instructions.push(Op::IncrementPropertyArrayPath(property.clone(), keys.len(), *delta, false,
-                        self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                        self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::StaticPropertyArrayPath { class, property, keys } => {
                     for key in keys { self.expression(key); }
@@ -743,7 +863,7 @@ impl CodeGenerator<'_> {
                 php_syntax::IncrementTarget::DynamicPropertyArrayPath { receiver, property, keys } => {
                     self.expression(receiver); self.expression(property);
                     for key in keys { self.expression(key); }
-                    self.instructions.push(Op::IncrementDynamicPropertyArrayPath(keys.len(), *delta, false, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementDynamicPropertyArrayPath(keys.len(), *delta, false, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::DynamicStaticPropertyArrayPath { class, property, keys } => {
                     self.expression(class); self.expression(property);
@@ -752,7 +872,7 @@ impl CodeGenerator<'_> {
                 }
                 php_syntax::IncrementTarget::Property { receiver, property } => {
                     self.expression(receiver);
-                    self.instructions.push(Op::IncrementProperty(property.clone(), *delta, false, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementProperty(property.clone(), *delta, false, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 php_syntax::IncrementTarget::StaticProperty { class, property } => {
                     let class = match class.as_str() { "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()), "static" => "static".into(), _ => class.to_ascii_lowercase() };
@@ -760,7 +880,7 @@ impl CodeGenerator<'_> {
                 }
                 php_syntax::IncrementTarget::DynamicProperty { receiver, property } => {
                     self.expression(receiver); self.expression(property);
-                    self.instructions.push(Op::IncrementDynamicProperty(*delta, false, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::IncrementDynamicProperty(*delta, false, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
             },
             Expr::Negate(value) => {
@@ -902,7 +1022,7 @@ impl CodeGenerator<'_> {
                         None => self.errors.push("parent used without a parent class in instanceof".into()),
                     },
                     Expr::String(name) if name.eq_ignore_ascii_case("static") => {
-                        self.instructions.push(Op::Load("static_class".into()));
+                        self.instructions.push(Op::Load("\0static_class".into()));
                     }
                     _ => self.expression(class_name),
                 }
@@ -913,6 +1033,18 @@ impl CodeGenerator<'_> {
                     self.errors.push("Cannot re-assign $GLOBALS".into());
                     return;
                 }
+                let known = if operation.is_none() {
+                    match value.as_ref() {
+                        Expr::String(_) | Expr::Array(_) | Expr::FirstClassCallable(_) => Some(value.as_ref().clone()),
+                        Expr::Variable(source) => self.known_callables.get(source).cloned(),
+                        _ => None,
+                    }
+                } else { None };
+                if let Some(known) = known { self.known_callables.insert(variable.clone(), known); }
+                else { self.known_callables.remove(variable); }
+                let assigned_type = operation.is_none().then(|| assigned_type(value, &self.variable_types)).flatten();
+                if let Some(assigned_type) = assigned_type { self.variable_types.insert(variable.clone(), assigned_type); }
+                else { self.variable_types.remove(variable); }
                 if let Some(operation) = operation {
                     if *operation == BinaryOp::Coalesce {
                         self.instructions.push(Op::LoadSilent(variable.clone()));
@@ -951,6 +1083,9 @@ impl CodeGenerator<'_> {
                 self.instructions.push(Op::Store(variable.clone()));
             }
             Expr::ReferenceAssignment { variable, value } => {
+                let assigned_type = assigned_type(value, &self.variable_types);
+                if let Some(assigned_type) = assigned_type { self.variable_types.insert(variable.clone(), assigned_type); }
+                else { self.variable_types.remove(variable); }
                 if variable == "GLOBALS" || matches!(value.as_ref(), Expr::Variable(name) if name == "GLOBALS") {
                     self.errors.push("Cannot create a reference to $GLOBALS itself".into());
                     return;
@@ -971,6 +1106,7 @@ impl CodeGenerator<'_> {
                 self.instructions.push(Op::BindReturnedReferenceExpr(variable.clone()));
             }
             Expr::DynamicVariableAssignment { name, operation, value } => {
+                self.known_callables.clear();
                 self.expression(name);
                 if *operation == Some(BinaryOp::Coalesce) {
                     let branch = self.instructions.len();
@@ -1046,7 +1182,7 @@ impl CodeGenerator<'_> {
                     self.instructions.push(Op::CoalescePropertyJump(0, property.clone(), self.current_class.clone()));
                     self.expression(value);
                     self.instructions.push(Op::CoalesceAssignProperty(
-                        property.clone(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct"),
+                        property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                     ));
                     let end = self.instructions.len();
                     self.instructions[present_branch] = Op::CoalescePropertyJump(end, property.clone(), self.current_class.clone());
@@ -1054,7 +1190,7 @@ impl CodeGenerator<'_> {
                     self.expression(value);
                     match operation {
                         None => self.instructions.push(Op::AssignPropertyExpr(
-                            property.clone(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct"),
+                            property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                         )),
                         Some(operation) => {
                             let operation = match operation {
@@ -1073,7 +1209,7 @@ impl CodeGenerator<'_> {
                                 _ => { self.errors.push("Unsupported property assignment operator".into()); return; }
                             };
                             self.instructions.push(Op::CompoundAssignProperty(
-                                property.clone(), operation, self.current_class.clone(), self.current_method.as_deref() == Some("__construct"),
+                                property.clone(), operation, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                             ));
                         }
                     }
@@ -1086,7 +1222,7 @@ impl CodeGenerator<'_> {
                     let present_branch = self.instructions.len();
                     self.instructions.push(Op::CoalescePropertyArrayJump(0, property.clone(), keys.len(), self.current_class.clone()));
                     self.expression(value);
-                    self.instructions.push(Op::CoalesceAssignPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::CoalesceAssignPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                     let end = self.instructions.len();
                     self.instructions[present_branch] = Op::CoalescePropertyArrayJump(end, property.clone(), keys.len(), self.current_class.clone());
                 } else {
@@ -1107,9 +1243,9 @@ impl CodeGenerator<'_> {
                             BinaryOp::ShiftRight => php_runtime::bytecode::CompoundOperation::ShiftRight,
                             _ => { self.errors.push("Unsupported object property array assignment operator".into()); return; }
                         };
-                        self.instructions.push(Op::CompoundAssignPropertyArray(property.clone(), keys.len(), operation, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                        self.instructions.push(Op::CompoundAssignPropertyArray(property.clone(), keys.len(), operation, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                     } else {
-                        self.instructions.push(Op::AssignPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                        self.instructions.push(Op::AssignPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                     }
                 }
             }
@@ -1117,14 +1253,14 @@ impl CodeGenerator<'_> {
                 self.expression(receiver);
                 for key in keys { self.expression(key); }
                 self.expression(value);
-                self.instructions.push(Op::AppendPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                self.instructions.push(Op::AppendPropertyArray(property.clone(), keys.len(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
             }
             Expr::DynamicPropertyAppendAssignment { receiver, property, keys, value } => {
                 self.expression(receiver);
                 self.expression(property);
                 for key in keys { self.expression(key); }
                 self.expression(value);
-                self.instructions.push(Op::AppendDynamicPropertyArray(keys.len(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                self.instructions.push(Op::AppendDynamicPropertyArray(keys.len(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
             }
             Expr::StaticPropertyArrayAssignment { class, property, keys, operation, value } => {
                 let class = match class.as_str() { "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()), "static" => "static".into(), _ => class.to_ascii_lowercase() };

@@ -1,6 +1,32 @@
 //! Shared conversion and validation helpers for array builtins.
 
-use crate::{ArrayKey, Value};
+use crate::{ArrayKey, DiagnosticLevel, RuntimeDiagnostic, Value};
+
+/// Apply PHP's array-key conversion and report precision loss for fractional floats.
+pub(super) fn array_key(value: &Value, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<ArrayKey, String> {
+    if let Value::Number(number) = value.dereference() {
+        if number.is_nan() {
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Warning,
+                message: "unexpected NAN value was coerced to int".into(),
+                source_file: None, source_line: None, output_offset: 0,
+            });
+        } else if !number.is_finite() || number >= 9_223_372_036_854_775_808.0 || number < -9_223_372_036_854_775_808.0 {
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Warning,
+                message: crate::array_builtins::non_representable_float_to_int_message(number),
+                source_file: None, source_line: None, output_offset: 0,
+            });
+        } else if number.fract() != 0.0 {
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Deprecated,
+                message: format!("Implicit conversion from float {number} to int loses precision"),
+                source_file: None, source_line: None, output_offset: 0,
+            });
+        }
+    }
+    value.array_key()
+}
 
 /// Return a mutable array copy after validating the first argument and arity.
 pub(super) fn mutable_array(name: &str, args: &[Value], min: usize, max: usize) -> Result<Vec<(ArrayKey, Value)>, String> {

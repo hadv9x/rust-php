@@ -137,6 +137,8 @@ pub struct DestructureTarget {
     pub property: Option<String>,
     /// Nested `list()` or short-array targets selected from this slot.
     pub nested: Option<Vec<DestructureTarget>>,
+    /// Whether the selected source slot is bound to a variable by reference.
+    pub by_reference: bool,
 }
 
 /// Literal array key accepted by the destructuring grammar.

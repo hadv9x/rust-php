@@ -2,7 +2,7 @@
 
 use php_runtime::bytecode::Op;
 use php_syntax::Stmt;
-use super::{CodeGenerator, ControlContext};
+use super::CodeGenerator;
 
 fn variable_array_path(expression: &php_syntax::Expr) -> Option<(String, Vec<&php_syntax::Expr>)> {
     match expression {
@@ -45,7 +45,7 @@ impl CodeGenerator<'_> {
                 self.expression(condition);
                 let exit_jump = self.instructions.len();
                 self.instructions.push(Op::JumpFalse(0));
-                self.control_stack.push(ControlContext::default());
+                self.push_control_context();
                 self.statements(body);
                 self.instructions.push(Op::Jump(condition_start));
                 let end = self.instructions.len();
@@ -54,7 +54,7 @@ impl CodeGenerator<'_> {
             }
             Stmt::DoWhile { condition, body } => {
                 let body_start = self.instructions.len();
-                self.control_stack.push(ControlContext::default());
+                self.push_control_context();
                 self.statements(body);
                 let condition_start = self.instructions.len();
                 self.expression(condition);
@@ -74,7 +74,7 @@ impl CodeGenerator<'_> {
                     self.instructions.push(Op::JumpFalse(0));
                     jump
                 });
-                self.control_stack.push(ControlContext::default());
+                self.push_control_context();
                 self.statements(body);
                 let update_start = self.instructions.len();
                 for update in updates { self.statement(update); }
@@ -90,14 +90,14 @@ impl CodeGenerator<'_> {
                 if let Some((variable, keys)) = reference_path {
                     self.instructions.push(Op::Load(variable.clone()));
                     for key in &keys { self.expression(key); }
-                    self.instructions.push(Op::IterStartReference(iterator_id, variable, keys.len()));
+                    self.instructions.push(Op::IterStartReference(iterator_id, variable, keys.len(), self.current_class.clone()));
                 } else {
                     self.expression(iterable);
-                    self.instructions.push(Op::IterStart(iterator_id));
+                    self.instructions.push(Op::IterStart(iterator_id, self.current_class.clone()));
                 }
                 let next_item = self.instructions.len();
                 self.instructions.push(Op::IterNext(iterator_id, key_name.clone(), value_name.clone(), uses_references, 0));
-                self.control_stack.push(ControlContext::default());
+                self.push_control_context();
                 self.statements(body);
                 self.instructions.push(Op::Jump(next_item));
                 let end = self.instructions.len();

@@ -6,7 +6,8 @@ use super::common::*;
 /// Remove the last entry and return its value plus updated input for variable writeback.
 pub(super) fn array_pop(args: &[Value]) -> Result<(Value, Option<(usize, Value)>), String> {
     let mut items = mutable_array("array_pop", args, 1, 1)?;
-    let result = items.pop().map(|(_, value)| value).unwrap_or(Value::Null);
+    // PHP returns a value copy here, even when the removed slot is a reference.
+    let result = items.pop().map(|(_, value)| value.dereference()).unwrap_or(Value::Null);
     Ok((result, Some((0, Value::array(items)))))
 }
 
@@ -100,11 +101,7 @@ pub(super) fn array_splice(args: &[Value]) -> Result<(Value, Option<(usize, Valu
         Some(value) => (integer(value) as usize).min(source.len() - start),
     };
     let removed = source.drain(start..start + remove_count).collect::<Vec<_>>();
-    let replacement = match args.get(3) {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => items.iter().map(|(_, value)| value.clone()).collect(),
-        Some(value) => vec![value.clone()],
-    };
+    let replacement = args.get(3).map(splice_replacement_values).unwrap_or_default();
     let mut insertion = Vec::new();
     for value in replacement { append(&mut insertion, value); }
     source.splice(start..start, insertion);
@@ -126,10 +123,28 @@ pub(super) fn array_splice(args: &[Value]) -> Result<(Value, Option<(usize, Valu
     Ok((Value::array(removed_result), Some((0, Value::array(reindexed)))))
 }
 
+fn splice_replacement_values(value: &Value) -> Vec<Value> {
+    match value.dereference() {
+        Value::Null => Vec::new(),
+        Value::Array(items) => items.iter().map(|(_, value)| value.clone()).collect(),
+        Value::Object(object) => {
+            let object = object.borrow();
+            let mut names = object.property_order.clone();
+            let mut remaining = object.properties.keys().filter(|name| !names.contains(name)).cloned().collect::<Vec<_>>();
+            remaining.sort();
+            names.extend(remaining);
+            names.into_iter().filter_map(|name| object.properties.get(&name).cloned()).collect()
+        }
+        Value::Closure(_) | Value::Generator(_) => Vec::new(),
+        value => vec![value],
+    }
+}
+
 /// Remove the first entry and reindex remaining numeric keys.
 pub(super) fn array_shift(args: &[Value]) -> Result<(Value, Option<(usize, Value)>), String> {
     let mut items = mutable_array("array_shift", args, 1, 1)?;
-    let result = if items.is_empty() { Value::Null } else { items.remove(0).1 };
+    // Like array_pop(), array_shift() does not return the slot's reference cell.
+    let result = if items.is_empty() { Value::Null } else { items.remove(0).1.dereference() };
     let mut next_index = 0_i64;
     for (key, _) in &mut items {
         if matches!(key, ArrayKey::Integer(_)) {

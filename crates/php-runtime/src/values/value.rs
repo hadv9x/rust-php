@@ -95,6 +95,8 @@ pub struct PhpClosure {
     pub reference_captures: std::collections::HashMap<String, String>,
     /// Callable value targeted by PHP first-class callable syntax, if this is a wrapper closure.
     pub callable_target: Option<Value>,
+    /// Access scope carried by ReflectionMethod-bound closures.
+    pub callable_access_scope: Option<String>,
 }
 
 impl Value {
@@ -238,8 +240,7 @@ impl Value {
                 }
                 Ok(ArrayKey::String(value.clone()))
             }
-            Self::Array(_) => Err("Array cannot be used as an array key".into()),
-            Self::Object(_) | Self::Closure(_) | Self::Generator(_) | Self::Stream(_) => Err("Object cannot be used as an array key".into()),
+            Self::Array(_) | Self::Object(_) | Self::Closure(_) | Self::Generator(_) | Self::Stream(_) => Err("Illegal offset type".into()),
             Self::Reference(_) => unreachable!("dereference removes reference wrappers"),
         }
     }

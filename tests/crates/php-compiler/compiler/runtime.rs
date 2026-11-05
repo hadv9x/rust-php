@@ -43,6 +43,17 @@ fn imported_interface_constants_resolve_in_class_constants() {
 }
 
 #[test]
+fn inherited_interface_constants_resolve_in_parameter_defaults() {
+    let source = r#"<?php
+        interface RootPolicy { const VALUE = 'root'; }
+        interface ChildPolicy extends RootPolicy {}
+        class PolicyConsumer implements ChildPolicy { public function value($mode = self::VALUE) { return $mode; } }
+        echo (new PolicyConsumer())->value();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "root");
+}
+
+#[test]
 fn user_objects_can_read_write_compound_unset_and_detect_dynamic_properties() {
     let source = r#"<?php
         class DynamicRecord { public $declaredValue = 1; public function keptMethod() { return $this->declaredValue; } }
@@ -201,6 +212,30 @@ fn filesystem_metadata_helpers_support_named_arguments_and_introspection() {
         echo file_exists('missing-compatibility-test-file'), ':', is_writable(filename: 'missing-compatibility-test-file'), ':', function_exists('is_executable'), ':', strlen(getcwd()) > 0, "\n";
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "[workspace:1:[workspace::1:1:1:1:1::1:1:1:::1:1\n");
+}
+
+#[test]
+fn include_path_is_request_local_and_honored_by_file_read_apis() {
+    static NEXT_FILE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let directory = std::env::temp_dir().join(format!("php-rust-include-path-{}-{}", std::process::id(), NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("payload.txt"), "alpha\nbeta\n").unwrap();
+    let directory = directory.to_string_lossy().into_owned();
+    let source = format!(r#"<?php
+        $old = set_include_path(include_path: '{directory}');
+        echo get_include_path(), ':', $old, ':', PATH_SEPARATOR, ':';
+        echo file_get_contents(filename: 'payload.txt', use_include_path: true), ':';
+        echo implode('|', file(filename: 'payload.txt', flags: FILE_USE_INCLUDE_PATH | FILE_IGNORE_NEW_LINES)), ':';
+        $stream = fopen(filename: 'payload.txt', mode: 'rb', use_include_path: true);
+        echo stream_get_contents($stream), ':', fclose($stream), ':', function_exists('set_include_path'), ':', function_exists('get_include_path'), "\n";
+    "#);
+    let output = compile_source(&source).unwrap().execute().unwrap();
+    assert!(output.starts_with(&format!("{directory}:.{}:", if cfg!(windows) { ";" } else { ":/usr/share/php" })), "{output}");
+    assert!(output.contains("alpha\nbeta\n:alpha|beta:"), "{output}");
+    assert!(output.ends_with("alpha\nbeta\n:1:1:1\n"), "{output}");
+    let fresh_request = compile_source("<?php echo get_include_path();").unwrap().execute().unwrap();
+    assert_eq!(fresh_request, if cfg!(windows) { ".;" } else { ".:/usr/share/php" });
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -633,6 +668,8 @@ fn globals_write_and_unset_diagnostics_happen_during_compilation() {
         ("<?php $alias =& $GLOBALS;", "Cannot create a reference to $GLOBALS itself"),
         ("<?php unset($GLOBALS);", "Cannot unset $GLOBALS"),
         ("<?php array_pop($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php extract($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php extract(array: $GLOBALS);", "Cannot re-assign $GLOBALS"),
         ("<?php next($GLOBALS);", "Cannot re-assign $GLOBALS"),
         ("<?php reset(array: $GLOBALS);", "Cannot re-assign $GLOBALS"),
         ("<?php end($GLOBALS);", "Cannot re-assign $GLOBALS"),
@@ -642,11 +679,25 @@ fn globals_write_and_unset_diagnostics_happen_during_compilation() {
         ("<?php class GlobalMutator { public function mutate(&$table) {} } (new GlobalMutator())->mutate($GLOBALS);", "Cannot re-assign $GLOBALS"),
         ("<?php class GlobalMutator { public function mutate(&$table) {} } (new GlobalMutator())->mutate(table: $GLOBALS);", "Cannot re-assign $GLOBALS"),
         ("<?php class GlobalMutator { public static function mutate(&$table) {} } GlobalMutator::mutate($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php function bindGlobal(PDOStatement $statement) { $statement->bindParam(':value', $GLOBALS); }", "Cannot re-assign $GLOBALS"),
+        ("<?php function bindGlobal(PDOStatement $statement) { $statement->bindColumn(column: 1, var: $GLOBALS); }", "Cannot re-assign $GLOBALS"),
+        ("<?php ('array_pop')($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php $callback = 'array_pop'; $callback($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php $callback = 'array_pop'; $alias = $callback; $alias($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php function mutateCallback(&$table) {} $callback = 'mutateCallback'; $callback($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php array_pop(... )($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php class GlobalMutator { public function mutate(&$table) {} } [new GlobalMutator(), 'mutate']($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php class GlobalMutator { public static function mutate(&$table) {} } ['GlobalMutator', 'mutate']($GLOBALS);", "Cannot re-assign $GLOBALS"),
+        ("<?php class GlobalMutatorParent { public static function mutate(&$table) {} } class GlobalMutatorChild extends GlobalMutatorParent { public static function call() { parent::mutate(... )($GLOBALS); } }", "Cannot re-assign $GLOBALS"),
         ("<?php trait GlobalMutatorTrait { public function mutate(&$table) {} } class GlobalMutator { use GlobalMutatorTrait; } (new GlobalMutator())->mutate($GLOBALS);", "Cannot re-assign $GLOBALS"),
     ] {
-        let error = compile_source(source).err().unwrap();
+        let error = compile_source(source).err().unwrap_or_else(|| panic!("expected compile error for {source}"));
         assert!(error.contains(expected), "{source}: {error}");
     }
+    assert!(compile_source("<?php $callback = 'array_pop'; $callback = 'strlen'; $callback($GLOBALS);").is_ok());
+    assert!(compile_source("<?php $callback = 'array_pop'; unset($callback); $callback($GLOBALS);").is_ok());
+    assert!(compile_source("<?php $callback = 'strlen'; if ($condition) { $callback = 'array_pop'; } else { $callback($GLOBALS); }").is_ok());
+    assert!(compile_source("<?php class LocalStatement { public function bindParam($key, $value) {} } function safe(PDOStatement $statement) { $statement = new LocalStatement(); $statement->bindParam(':value', $GLOBALS); }").is_ok());
 }
 
 #[test]

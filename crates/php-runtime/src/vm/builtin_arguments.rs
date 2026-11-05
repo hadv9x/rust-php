@@ -64,32 +64,68 @@ fn signature(name: &str) -> Option<Signature> {
         "mongodb\\cursor::toarray" | "mongodb\\insertresult::getinsertedcount" | "mongodb\\insertmanyresult::getinsertedcount"
         | "mongodb\\updateresult::getmatchedcount" | "mongodb\\updateresult::getmodifiedcount" | "mongodb\\deleteresult::getdeletedcount" => (&[], &[], false),
         "call_user_func_array" => (&["callback", "args"], &[], false),
-        "func_get_args" | "func_num_args" | "get_defined_vars" | "error_get_last" | "error_clear_last" => (&[], &[], false),
+        "func_get_args" | "func_num_args" | "get_defined_vars" | "error_get_last" | "error_clear_last" | "gc_collect_cycles" => (&[], &[], false),
         "func_get_arg" => (&["position"], &[], false),
         "reflectionclass::__construct" => (&["objectOrClass"], &[], false),
+        "reflectionobject::__construct" => (&["object"], &[], false),
         "reflectionenum::__construct" => (&["objectOrClass"], &[], false),
         "reflectionenum::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionenum::getmethod" | "reflectionenum::getproperty" => (&["name"], &[], false),
         "reflectionfunction::__construct" => (&["function"], &[], false),
+        "reflectionparameter::__construct" => (&["function", "param"], &[], false),
+        "reflectionfunction::invoke" => (&["args"], &[], true),
+        "reflectionfunction::invokeargs" => (&["args"], &[], false),
+        "reflectionfunction::getclosure" => (&[], &[], false),
+        "reflectionmethod::__construct" => (&["objectOrMethod", "method"], &[(1, N)], false),
+        "reflectionmethod::createfrommethodname" => (&["method"], &[], false),
+        "reflectionmethod::getclosure" => (&["object"], &[(0, N)], false),
+        "reflectionmethod::isvariadic" | "reflectionmethod::returnsreference" | "reflectionmethod::isclosure" | "reflectionfunction::isvariadic" | "reflectionfunction::returnsreference" | "reflectionfunction::isclosure" | "reflectionfunction::isstatic" => (&[], &[], false),
         "reflectionclass::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionclass::getmethod" => (&["name"], &[], false),
+        "reflectionclass::getmethods" => (&["filter"], &[(0, N)], false),
+        "reflectionclass::getconstructor" | "reflectionenum::getconstructor" | "reflectionclass::getdefaultproperties" | "reflectionenum::getdefaultproperties" | "reflectionclass::getstaticproperties" | "reflectionenum::getstaticproperties" => (&[], &[], false),
+        "reflectionclass::getconstants" | "reflectionenum::getconstants" => (&["filter"], &[(0, N)], false),
         "reflectionclass::getproperty" => (&["name"], &[], false),
-        "reflectionclass::isenum" | "reflectionclass::isinterface" | "reflectionclass::isabstract" | "reflectionclass::isfinal" | "reflectionclass::getparentclass" => (&[], &[], false),
+        "reflectionclass::getproperties" | "reflectionenum::getproperties" => (&["filter"], &[(0, N)], false),
+        "reflectionclass::hasmethod" | "reflectionclass::hasproperty" => (&["name"], &[], false),
+        "reflectionclass::getconstant" | "reflectionclass::hasconstant" | "reflectionenum::getconstant" | "reflectionenum::hasconstant" => (&["name"], &[], false),
+        "reflectionclass::isinstance" | "reflectionenum::isinstance" => (&["object"], &[], false),
+        "reflectionclass::getreflectionconstant" | "reflectionenum::getreflectionconstant" => (&["name"], &[], false),
+        "reflectionclassconstant::__construct" => (&["class", "constant"], &[], false),
+        "reflectionconstant::__construct" => (&["name"], &[], false),
+        "reflectionconstant::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
+        "reflectionconstant::getname" | "reflectionconstant::getvalue" | "reflectionconstant::getnamespace" | "reflectionconstant::isdeprecated" | "reflectionconstant::isinternal" | "reflectionconstant::isuserdefined" => (&[], &[], false),
+        "reflectionclassconstant::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
+        "reflectionclassconstant::getdeclaringclass" | "reflectionclassconstant::getname" | "reflectionclassconstant::getmodifiers" | "reflectionclassconstant::gettype" | "reflectionclassconstant::getvalue" | "reflectionclassconstant::hastype" | "reflectionclassconstant::isenumcase" | "reflectionclassconstant::isfinal" | "reflectionclassconstant::isprivate" | "reflectionclassconstant::isprotected" | "reflectionclassconstant::ispublic" => (&[], &[], false),
+        "reflectionuniontype::gettypes" | "reflectionuniontype::allowsnull" | "reflectionintersectiontype::gettypes" | "reflectionintersectiontype::allowsnull" => (&[], &[], false),
+        "reflectionclass::isenum" | "reflectionclass::isinterface" | "reflectionclass::isabstract" | "reflectionclass::isinstantiable" | "reflectionclass::isfinal" | "reflectionclass::isreadonly" | "reflectionclass::isanonymous" | "reflectionclass::istrait" | "reflectionclass::iscloneable" | "reflectionclass::isiterable" | "reflectionclass::isiterateable" | "reflectionclass::getparentclass" | "reflectionclass::getinterfacenames" | "reflectionclass::getinterfaces" | "reflectionclass::gettraitnames" | "reflectionclass::gettraits" | "reflectionclass::gettraitaliases" | "reflectionclass::getshortname" | "reflectionclass::getnamespacename" | "reflectionclass::innamespace" => (&[], &[], false),
+        "reflectionenum::iscloneable" => (&[], &[], false),
         "reflectionclass::issubclassof" => (&["class"], &[], false),
         "reflectionclass::implementsinterface" => (&["interface"], &[], false),
-        "reflectionenum::getcases" | "reflectionenum::isbacked" | "reflectionenum::getbackingtype" | "reflectionenum::getname" => (&[], &[], false),
-        "reflectionenumunitcase::getname" | "reflectionenumunitcase::getvalue" | "reflectionenumbackedcase::getbackingvalue" => (&[], &[], false),
+        "reflectionenum::getcase" | "reflectionenum::hascase" => (&["name"], &[], false),
+        "reflectionenum::getcases" | "reflectionenum::isbacked" | "reflectionenum::getbackingtype" | "reflectionenum::getname" | "reflectionenum::isinstantiable" | "reflectionenum::isreadonly" | "reflectionenum::isanonymous" | "reflectionenum::isiterable" | "reflectionenum::isiterateable" | "reflectionenum::getshortname" | "reflectionenum::getnamespacename" | "reflectionenum::innamespace" => (&[], &[], false),
+        "reflectionenumunitcase::getname" | "reflectionenumunitcase::getvalue" | "reflectionenumunitcase::getenum" | "reflectionenumunitcase::getdeclaringclass" | "reflectionenumunitcase::getmodifiers" | "reflectionenumunitcase::gettype" | "reflectionenumunitcase::hastype" | "reflectionenumunitcase::isenumcase" | "reflectionenumunitcase::isfinal" | "reflectionenumunitcase::isprivate" | "reflectionenumunitcase::isprotected" | "reflectionenumunitcase::ispublic" | "reflectionenumbackedcase::getbackingvalue" | "reflectionenumbackedcase::getdeclaringclass" | "reflectionenumbackedcase::getmodifiers" | "reflectionenumbackedcase::gettype" | "reflectionenumbackedcase::hastype" | "reflectionenumbackedcase::isenumcase" | "reflectionenumbackedcase::isfinal" | "reflectionenumbackedcase::isprivate" | "reflectionenumbackedcase::isprotected" | "reflectionenumbackedcase::ispublic" => (&[], &[], false),
+        "reflectionenumunitcase::getattributes" | "reflectionenumbackedcase::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionnamedtype::getname" | "reflectionnamedtype::isbuiltin" | "reflectionnamedtype::allowsnull" => (&[], &[], false),
         "reflectionfunction::getname" => (&[], &[], false),
         "reflectionfunction::getparameters" => (&[], &[], false),
         "reflectionfunction::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionmethod::getname" => (&[], &[], false),
+        "reflectionmethod::setaccessible" => (&["accessible"], &[], false),
+        "reflectionmethod::getdeclaringclass" => (&[], &[], false),
+        "reflectionmethod::getmodifiers" => (&[], &[], false),
         "reflectionmethod::getparameters" => (&[], &[], false),
-        "reflectionparameter::getname" => (&[], &[], false),
-        "reflectionparameter::getposition" => (&[], &[], false),
+        "reflectionparameter::getname" | "reflectionparameter::getposition" | "reflectionparameter::allowsnull" | "reflectionparameter::getclass" | "reflectionparameter::isarray" | "reflectionparameter::iscallable" | "reflectionparameter::ispromoted" | "reflectionparameter::canbepassedbyvalue" | "reflectionparameter::isdefaultvalueconstant" | "reflectionparameter::getdefaultvalueconstantname" => (&[], &[], false),
+        "reflectionparameter::getdeclaringclass" | "reflectionparameter::getdeclaringfunction" => (&[], &[], false),
         "reflectionparameter::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionmethod::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
-        "reflectionproperty::getname" => (&[], &[], false),
+        "reflectionmethod::ispublic" | "reflectionmethod::isprotected" | "reflectionmethod::isprivate" | "reflectionmethod::isstatic" | "reflectionmethod::isabstract" | "reflectionmethod::isfinal" | "reflectionmethod::isconstructor" | "reflectionmethod::isdestructor" => (&[], &[], false),
+        "reflectionproperty::getname" | "reflectionproperty::gettype" | "reflectionproperty::hastype" | "reflectionproperty::getmodifiers" | "reflectionproperty::ispublic" | "reflectionproperty::isprotected" | "reflectionproperty::isprivate" | "reflectionproperty::isstatic" | "reflectionproperty::isreadonly" | "reflectionproperty::isprivateset" | "reflectionproperty::isprotectedset" | "reflectionproperty::ispromoted" | "reflectionproperty::hasdefaultvalue" | "reflectionproperty::getdefaultvalue" => (&[], &[], false),
+        "reflectionproperty::getvalue" => (&["object"], &[(0, N)], false),
+        "reflectionproperty::setvalue" => (&["object", "value"], &[(0, N)], false),
+        "reflectionproperty::setaccessible" => (&["accessible"], &[], false),
+        "reflectionproperty::getdeclaringclass" => (&[], &[], false),
+        "reflectionproperty::isinitialized" => (&["object"], &[(0, N)], false),
         "reflectionproperty::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
         "reflectionclass::getname" | "reflectionattribute::getname" | "reflectionattribute::getarguments"
         | "reflectionattribute::gettarget" | "reflectionattribute::isrepeated" | "reflectionattribute::newinstance" => (&[], &[], false),
@@ -140,6 +176,8 @@ fn signature(name: &str) -> Option<Signature> {
         | "pdo::errorinfo" | "pdo::intransaction" | "pdo::rollback" => (&[], &[], false),
         "pdo::getavailabledrivers" => (&[], &[], false),
         "function_exists" => (&["function"], &[], false),
+        "getenv" => (&["name", "local_only"], &[(0, N), (1, F)], false),
+        "putenv" => (&["assignment"], &[], false),
         "php_sapi_name" => (&[], &[], false),
         "error_reporting" => (&["error_level"], &[], false),
         "generator::current" | "generator::key" | "generator::valid" | "generator::rewind"
@@ -168,6 +206,12 @@ fn signature(name: &str) -> Option<Signature> {
         "class_exists" => (&["class", "autoload"], &[(1, DefaultValue::True)], false),
         "interface_exists" => (&["interface", "autoload"], &[(1, DefaultValue::True)], false),
         "trait_exists" => (&["trait", "autoload"], &[(1, DefaultValue::True)], false),
+        "spl_autoload" => (&["class", "file_extensions"], &[(1, N)], false),
+        "spl_autoload_extensions" => (&["file_extensions"], &[(0, N)], false),
+        "spl_autoload_register" => (&["autoload_function", "throw", "prepend"], &[(0, N), (1, DefaultValue::True), (2, F)], false),
+        "spl_autoload_unregister" => (&["autoload_function"], &[], false),
+        "spl_autoload_functions" => (&[], &[], false),
+        "spl_autoload_call" => (&["class"], &[], false),
         "method_exists" => (&["object_or_class", "method"], &[], false),
         "property_exists" => (&["object_or_class", "property"], &[], false),
         "get_class" => (&["object"], &[(0, N)], false),
@@ -182,6 +226,8 @@ fn signature(name: &str) -> Option<Signature> {
         "headers_list" => (&[], &[], false),
         "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" => (&["filename"], &[], false),
         "getcwd" => (&[], &[], false),
+        "get_include_path" => (&[], &[], false),
+        "set_include_path" => (&["include_path"], &[], false),
         "sys_get_temp_dir" => (&[], &[], false),
         "time" => (&[], &[], false),
         "microtime" => (&["as_float"], &[(0, F)], false),
@@ -231,6 +277,7 @@ fn signature(name: &str) -> Option<Signature> {
         "pathinfo" => (&["path", "flags"], &[(1, Num(15.0))], false),
         "strip_tags" => (&["string", "allowed_tags"], &[(1, DefaultValue::EmptyString)], false),
         "stripcslashes" => (&["string"], &[], false),
+        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => (&["string"], &[], false),
         "explode" => (&["separator", "string", "limit"], &[(2, Num(i64::MAX as f64))], false),
         "implode" => (&["separator", "array"], &[(0, DefaultValue::EmptyString)], false),
         "str_getcsv" => (&["string", "separator", "enclosure", "escape"], &[(1, DefaultValue::Comma), (2, DefaultValue::Quote), (3, DefaultValue::Backslash)], false),
@@ -296,6 +343,19 @@ fn signature(name: &str) -> Option<Signature> {
     Some(Signature { names, defaults, variadic })
 }
 
+pub(super) fn is_vm_function(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    !name.contains("::")
+        && !matches!(name.as_str(),
+            "exception" | "error" | "typeerror" | "argumentcounterror" | "compileerror" | "parseerror"
+            | "arithmeticerror" | "divisionbyzeroerror" | "assertionerror" | "unhandledmatcherror"
+            | "valueerror" | "jsonexception" | "logicexception" | "badfunctioncallexception"
+            | "badmethodcallexception" | "domainexception" | "invalidargumentexception" | "lengthexception"
+            | "outofrangeexception" | "runtimeexception" | "outofboundsexception" | "overflowexception"
+            | "rangeexception" | "underflowexception" | "unexpectedvalueexception")
+        && signature(&name).is_some()
+}
+
 fn callback_variadic_parameters(name: &str) -> Option<&'static [&'static str]> {
     match name.to_ascii_lowercase().as_str() {
         "array_diff_uassoc" | "array_intersect_uassoc" | "array_diff_ukey" | "array_intersect_ukey" => Some(&["key_compare_func"]),
@@ -324,14 +384,14 @@ fn bind_callback_variadic(
             Some("array") => {
                 named_seen = true;
                 if primary.replace((value, reference)).is_some() {
-                    return Err(format!("{function_name}(): argument '$array' is passed more than once"));
+                    return Err("Named parameter $array overwrites previous argument".into());
                 }
             }
             Some(label) if callback_names.iter().any(|name| *name == label) => {
                 named_seen = true;
                 let callback_index = callback_names.iter().position(|name| *name == label).expect("matched callback name");
                 if callbacks[callback_index].replace((value, reference)).is_some() {
-                    return Err(format!("{function_name}(): argument '${label}' is passed more than once"));
+                    return Err(format!("Named parameter ${label} overwrites previous argument"));
                 }
             }
             Some(label) => {
@@ -414,12 +474,12 @@ pub(super) fn bind(
             let parameter = signature.names.iter().position(|parameter| parameter == label);
             if let Some(parameter) = parameter {
                 if slots[parameter].is_some() {
-                    return Err(format!("{function_name}(): argument '${label}' is passed more than once"));
+                    return Err(format!("Named parameter ${label} overwrites previous argument"));
                 }
                 slots[parameter] = Some((value, reference));
             } else if signature.variadic {
                 if extras.iter().any(|(key, _, _)| key == &ArrayKey::String(label.clone())) {
-                    return Err(format!("{function_name}(): named argument '${label}' is passed more than once"));
+                    return Err(format!("Named parameter ${label} overwrites previous argument"));
                 }
                 extras.push((ArrayKey::String(label.clone()), value, reference));
             } else {
@@ -506,12 +566,32 @@ mod tests {
         // while forwarding arguments to another callable.
         let custom_binding = ["call_user_func"];
         let names = [
-            "addcslashes", "addslashes", "basename", "boolval", "call_user_func_array", "checkdate", "chr", "class_exists", "compact", "constant", "count_chars", "date", "define", "defined", "dirname", "error_clear_last", "error_get_last", "error_reporting", "explode", "extract", "fclose", "feof", "file", "file_exists", "file_get_contents", "file_put_contents", "filesize", "floatval", "fopen", "fread", "fseek", "ftell", "func_get_arg", "func_get_args", "func_num_args", "function_exists", "fwrite", "get_called_class", "get_class", "get_debug_type", "get_defined_vars", "get_parent_class", "getcwd", "getdate", "gettimeofday", "getrandmax", "gettype", "gmdate", "gmmktime", "header", "header_remove", "headers_list", "hrtime", "hex2bin", "htmlspecialchars", "htmlspecialchars_decode", "http_response_code", "idate", "implode", "interface_exists", "trait_exists", "intval", "is_a", "is_array", "is_bool", "is_callable", "is_countable", "is_iterable", "is_dir", "is_double", "is_executable", "is_file", "is_float", "is_int", "is_integer", "is_link", "is_null", "is_numeric", "is_object", "is_readable", "is_real", "is_resource", "is_scalar", "is_string", "is_subclass_of", "is_uploaded_file", "is_writable", "json_decode", "json_encode", "json_last_error", "json_last_error_msg", "json_validate", "lcfirst", "localtime", "ltrim", "method_exists", "microtime", "mktime", "mongo_aggregate", "mongo_begin_transaction", "mongo_commit", "mongo_count_documents", "mongo_delete_many", "mongo_delete_one", "mongo_estimated_document_count", "mongo_find", "mongo_insert_many", "mongo_insert_one", "mongo_replace_one", "mongo_rollback", "mongo_update_many", "mongo_update_one", "move_uploaded_file", "mt_getrandmax", "mt_rand", "nl2br", "number_format", "ord", "pathinfo", "php_sapi_name", "property_exists", "rand", "random_int", "realpath", "rewind", "rtrim", "session_destroy", "session_id", "session_start", "session_status", "session_unset", "str_contains", "str_decrement", "str_ends_with", "str_increment", "str_ireplace", "str_pad", "str_repeat", "str_replace", "str_shuffle", "str_split", "str_starts_with", "str_word_count", "strcasecmp", "strchr", "strcmp", "strcspn", "stream_get_contents", "stripos", "stripslashes", "stristr", "strlen", "strnatcasecmp", "strnatcmp", "strncasecmp", "strncmp", "strpbrk", "strpos", "strrev", "strripos", "strrpos", "strspn", "strstr", "strtolower", "strtotime", "strtoupper", "strtr", "strval", "substr", "substr_count", "substr_replace", "sys_get_temp_dir", "tempnam", "time", "trim", "ucfirst", "ucwords", "unlink", "var_dump", "wordwrap",
+            "addcslashes", "addslashes", "basename", "boolval", "call_user_func_array", "checkdate", "chr", "class_exists", "compact", "constant", "count_chars", "date", "define", "defined", "dirname", "error_clear_last", "error_get_last", "error_reporting", "explode", "extract", "fclose", "feof", "file", "file_exists", "file_get_contents", "file_put_contents", "filesize", "floatval", "fopen", "fread", "fseek", "ftell", "func_get_arg", "func_get_args", "func_num_args", "function_exists", "fwrite", "gc_collect_cycles", "get_called_class", "get_class", "get_debug_type", "get_defined_vars", "get_parent_class", "getcwd", "get_include_path", "getdate", "getenv", "gettimeofday", "putenv", "getrandmax", "gettype", "gmdate", "gmmktime", "header", "header_remove", "headers_list", "hrtime", "hex2bin", "htmlspecialchars", "htmlspecialchars_decode", "http_response_code", "idate", "implode", "interface_exists", "trait_exists", "intval", "is_a", "is_array", "is_bool", "is_callable", "is_countable", "is_iterable", "is_dir", "is_double", "is_executable", "is_file", "is_float", "is_int", "is_integer", "is_link", "is_null", "is_numeric", "is_object", "is_readable", "is_real", "is_resource", "is_scalar", "is_string", "is_subclass_of", "is_uploaded_file", "is_writable", "json_decode", "json_encode", "json_last_error", "json_last_error_msg", "json_validate", "lcfirst", "localtime", "ltrim", "method_exists", "microtime", "mktime", "mongo_aggregate", "mongo_begin_transaction", "mongo_commit", "mongo_count_documents", "mongo_delete_many", "mongo_delete_one", "mongo_estimated_document_count", "mongo_find", "mongo_insert_many", "mongo_insert_one", "mongo_replace_one", "mongo_rollback", "mongo_update_many", "mongo_update_one", "move_uploaded_file", "mt_getrandmax", "mt_rand", "nl2br", "number_format", "ord", "pathinfo", "php_sapi_name", "property_exists", "rand", "random_int", "realpath", "rewind", "rtrim", "session_destroy", "session_id", "session_start", "session_status", "session_unset", "set_include_path", "spl_autoload", "spl_autoload_call", "spl_autoload_extensions", "spl_autoload_functions", "spl_autoload_register", "spl_autoload_unregister", "str_contains", "str_decrement", "str_ends_with", "str_increment", "str_ireplace", "str_pad", "str_repeat", "str_replace", "str_shuffle", "str_split", "str_starts_with", "str_word_count", "strcasecmp", "strchr", "strcmp", "strcspn", "stream_get_contents", "stripos", "stripslashes", "stristr", "strlen", "strnatcasecmp", "strnatcmp", "strncasecmp", "strncmp", "strpbrk", "strpos", "strrev", "strripos", "strrpos", "strspn", "strstr", "strtolower", "strtotime", "strtoupper", "strtr", "strval", "substr", "substr_count", "substr_replace", "sys_get_temp_dir", "tempnam", "time", "trim", "ucfirst", "ucwords", "unlink", "var_dump", "wordwrap",
         ];
         for name in names {
             assert!(signature(name).is_some() || custom_binding.contains(&name),
                 "missing named-argument signature or custom binder for {name}");
+            assert!(super::is_vm_function(name) || custom_binding.contains(&name),
+                "VM builtin inventory does not expose {name} to function_exists()");
         }
+    }
+
+    #[test]
+    fn include_path_builtins_bind_named_arguments_and_reject_unknown_names() {
+        let (arguments, _) = bind(
+            "set_include_path",
+            vec![Value::String("/custom/php".into())],
+            &[None],
+            &[Some("include_path".into())],
+        ).unwrap();
+        assert!(matches!(&arguments[0], Value::String(path) if path == "/custom/php"));
+
+        let (arguments, _) = bind("get_include_path", Vec::new(), &[], &[]).unwrap();
+        assert!(arguments.is_empty());
+        assert_eq!(
+            bind("get_include_path", vec![Value::Null], &[None], &[Some("include_path".into())]).unwrap_err(),
+            "get_include_path(): unknown named parameter '$include_path'",
+        );
     }
 
     #[test]
@@ -589,12 +669,12 @@ mod tests {
     #[test]
     fn implemented_reflection_methods_have_named_parameter_metadata() {
         for method in [
-            "reflectionclass::getName", "reflectionclass::getAttributes", "reflectionclass::getMethod", "reflectionclass::getProperty",
-            "reflectionclass::isEnum", "reflectionclass::isInterface", "reflectionclass::isAbstract", "reflectionclass::isFinal", "reflectionclass::getParentClass",
+            "reflectionclass::getName", "reflectionclass::getAttributes", "reflectionclass::getMethod", "reflectionclass::getMethods", "reflectionclass::getProperty", "reflectionclass::getProperties", "reflectionenum::getProperties", "reflectionclass::getDefaultProperties", "reflectionenum::getDefaultProperties", "reflectionclass::getStaticProperties", "reflectionenum::getStaticProperties",
+            "reflectionclass::isEnum", "reflectionclass::isInterface", "reflectionclass::isAbstract", "reflectionclass::isFinal", "reflectionclass::isReadOnly", "reflectionclass::isAnonymous", "reflectionclass::isIterable", "reflectionclass::isIterateable", "reflectionclass::getParentClass", "reflectionclass::getInterfaceNames", "reflectionclass::getInterfaces", "reflectionclass::getTraitNames", "reflectionclass::getTraits", "reflectionclass::getTraitAliases", "reflectionclass::hasMethod", "reflectionclass::hasProperty",
             "reflectionclass::isSubclassOf", "reflectionclass::implementsInterface",
-            "reflectionfunction::getName", "reflectionfunction::getAttributes", "reflectionfunction::getParameters", "reflectionmethod::getName",
-            "reflectionmethod::getAttributes", "reflectionmethod::getParameters", "reflectionproperty::getName",
-            "reflectionproperty::getAttributes", "reflectionparameter::getName", "reflectionparameter::getPosition",
+            "reflectionfunction::getName", "reflectionfunction::getAttributes", "reflectionfunction::getParameters", "reflectionmethod::getName", "reflectionmethod::getModifiers",
+            "reflectionmethod::getAttributes", "reflectionmethod::getParameters", "reflectionmethod::setAccessible", "reflectionmethod::isPublic", "reflectionmethod::isProtected", "reflectionmethod::isPrivate", "reflectionmethod::isStatic", "reflectionmethod::isAbstract", "reflectionmethod::isFinal", "reflectionmethod::isConstructor", "reflectionmethod::isDestructor", "reflectionproperty::getName", "reflectionproperty::setAccessible",
+            "reflectionproperty::getAttributes", "reflectionproperty::getModifiers", "reflectionproperty::isPublic", "reflectionproperty::isProtected", "reflectionproperty::isPrivate", "reflectionproperty::isStatic", "reflectionproperty::isReadOnly", "reflectionproperty::isPrivateSet", "reflectionproperty::isProtectedSet", "reflectionproperty::isPromoted", "reflectionparameter::getName", "reflectionparameter::getPosition",
             "reflectionparameter::getAttributes", "reflectionattribute::getName", "reflectionattribute::getArguments",
             "reflectionattribute::getTarget", "reflectionattribute::isRepeated", "reflectionattribute::newInstance",
         ] {

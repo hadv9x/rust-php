@@ -14,7 +14,25 @@ fn enum_scalar_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn reflection_attribute_arguments(arguments: &[(Option<String>, Value)]) -> Value {
+fn reflection_string_argument(
+    function: &str,
+    value: &Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    globals: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<String, String> {
+    match value.dereference() {
+        Value::String(_) | Value::Integer(_) | Value::Number(_) | Value::Bool(_) | Value::Null => Ok(value.show()),
+        Value::Object(_) => super::objects::stringify(value, functions, classes, static_properties, globals, output, steps)
+            .map_err(|error| format!("{function}(): {error}")),
+        _ => Err(format!("TypeError:{function}(): Argument #1 ($name) must be of type string, {} given", value.type_name())),
+    }
+}
+
+pub(super) fn reflection_attribute_arguments(arguments: &[(Option<String>, Value)]) -> Value {
     let mut positional = 0i64;
     Value::from_array_entries(arguments.iter().map(|(name, value)| {
         let key = match name {
@@ -23,6 +41,241 @@ fn reflection_attribute_arguments(arguments: &[(Option<String>, Value)]) -> Valu
         };
         (key, value.clone())
     }).collect())
+}
+
+fn reflection_constants(target: &str, classes: &HashMap<String, BytecodeClass>, filter: Option<i64>) -> Value {
+    fn collect(
+        name: &str,
+        classes: &HashMap<String, BytecodeClass>,
+        filter: Option<i64>,
+        visited: &mut HashSet<String>,
+        added: &mut HashSet<String>,
+        entries: &mut Vec<(ArrayKey, Value)>,
+    ) {
+        let key = name.trim_start_matches('\\').to_ascii_lowercase();
+        if !visited.insert(key.clone()) { return; }
+        let Some(class) = classes.get(&key) else { return; };
+        let mut order = class.constant_order.clone();
+        let mut remaining = class.constants.keys().filter(|constant| !order.contains(constant)).cloned().collect::<Vec<_>>();
+        remaining.sort();
+        order.extend(remaining);
+        for constant_name in order {
+            let Some(constant) = class.constants.get(&constant_name) else { continue; };
+            let visibility = match constant.visibility {
+                MemberVisibility::Public => 1,
+                MemberVisibility::Protected => 2,
+                MemberVisibility::Private => 4,
+            };
+            if filter.is_some_and(|filter| filter & visibility == 0) || !added.insert(constant_name.clone()) { continue; }
+            entries.push((ArrayKey::String(constant_name), constant.value.clone()));
+        }
+        if let Some(parent) = &class.parent { collect(parent, classes, filter, visited, added, entries); }
+        for interface in &class.interfaces { collect(interface, classes, filter, visited, added, entries); }
+    }
+    let mut entries = Vec::new();
+    collect(target, classes, filter, &mut HashSet::new(), &mut HashSet::new(), &mut entries);
+    Value::from_array_entries(entries)
+}
+
+fn split_top_level_type(type_name: &str, separator: char) -> Vec<&str> {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut parts = Vec::new();
+    for (index, character) in type_name.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            value if value == separator && depth == 0 => {
+                parts.push(type_name[start..index].trim());
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if !parts.is_empty() { parts.push(type_name[start..].trim()); }
+    parts
+}
+
+fn strip_type_parentheses(mut type_name: &str) -> &str {
+    loop {
+        if !type_name.starts_with('(') || !type_name.ends_with(')') { return type_name; }
+        let mut depth = 0usize;
+        let mut wraps_all = true;
+        for (index, character) in type_name.char_indices() {
+            if character == '(' { depth += 1; }
+            if character == ')' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 && index + 1 != type_name.len() { wraps_all = false; break; }
+            }
+        }
+        if !wraps_all { return type_name; }
+        type_name = &type_name[1..type_name.len() - 1];
+    }
+}
+
+fn reflection_type_allows_null(type_name: &str) -> bool {
+    let type_name = type_name.trim();
+    if type_name.starts_with('?') { return true; }
+    let type_name = strip_type_parentheses(type_name);
+    let members = split_top_level_type(type_name, '|');
+    if !members.is_empty() {
+        return members.iter().any(|member| member.eq_ignore_ascii_case("null") || reflection_type_allows_null(member));
+    }
+    type_name.eq_ignore_ascii_case("null")
+}
+
+fn reflection_named_type(name: &str, allows_null: bool) -> Value {
+    let normalized = name.to_ascii_lowercase();
+    let builtin = matches!(normalized.as_str(), "int" | "float" | "string" | "bool" | "array" | "object" | "callable" | "iterable" | "void" | "never" | "mixed" | "null" | "false" | "true");
+    let allows_null = allows_null || matches!(normalized.as_str(), "mixed" | "null");
+    Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+        class_name: "ReflectionNamedType".into(),
+        properties: HashMap::from([
+            ("\0type_name".into(), Value::String(name.to_string())),
+            ("\0is_builtin".into(), Value::Bool(builtin)),
+            ("\0allows_null".into(), Value::Bool(allows_null)),
+        ]),
+        property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+    })))
+}
+
+fn reflection_type(type_name: &str) -> Value {
+    let allows_null = reflection_type_allows_null(type_name);
+    let mut normalized = type_name.trim();
+    if let Some(nullable) = normalized.strip_prefix('?') { normalized = nullable; }
+    normalized = strip_type_parentheses(normalized);
+    let parts = split_top_level_type(normalized, '|');
+    let (parts, separator) = if parts.is_empty() {
+        let intersection = split_top_level_type(normalized, '&');
+        if intersection.is_empty() { return reflection_named_type(normalized, allows_null); }
+        (intersection, '&')
+    } else { (parts, '|') };
+    let types = parts.iter().enumerate().map(|(index, part)| (ArrayKey::Integer(index as i64), reflection_type(strip_type_parentheses(part)))).collect();
+    Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+        class_name: if separator == '|' { "ReflectionUnionType" } else { "ReflectionIntersectionType" }.into(),
+        properties: HashMap::from([
+            ("\0types".into(), Value::from_array_entries(types)),
+            ("\0allows_null".into(), Value::Bool(allows_null)),
+        ]),
+        property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+    })))
+}
+
+fn reflection_method_modifiers(function: &BytecodeFunction) -> i64 {
+    let visibility = match function.visibility {
+        MemberVisibility::Public => 1,
+        MemberVisibility::Protected => 2,
+        MemberVisibility::Private => 4,
+    };
+    visibility
+        | if function.is_static { 16 } else { 0 }
+        | if function.is_final { 32 } else { 0 }
+        | if function.is_abstract { 64 } else { 0 }
+}
+
+fn reflection_optional_int_argument(arguments: &[Value], class_name: &str, method: &str) -> Result<Option<i64>, String> {
+    let Some(value) = arguments.first() else { return Ok(None); };
+    match value.dereference() {
+        Value::Null => Ok(None),
+        Value::Integer(value) => Ok(Some(value)),
+        Value::Number(value) if value.is_finite() => Ok(Some(value.trunc() as i64)),
+        Value::Bool(value) => Ok(Some(i64::from(value))),
+        Value::String(value) => {
+            let value = value.trim();
+            value.parse::<i64>().map(Some).or_else(|_| value.parse::<f64>().ok()
+                .filter(|value| value.is_finite())
+                .map(|value| Some(value.trunc() as i64))
+                .ok_or(()))
+                .map_err(|_| format!("TypeError:{class_name}::{method}(): Argument #1 ($filter) must be of type ?int, string given"))
+        }
+        Value::Object(object) => Err(format!("TypeError:{class_name}::{method}(): Argument #1 ($filter) must be of type ?int, {} given", object.borrow().class_name)),
+        Value::Closure(_) => Err(format!("TypeError:{class_name}::{method}(): Argument #1 ($filter) must be of type ?int, Closure given")),
+        Value::Generator(_) => Err(format!("TypeError:{class_name}::{method}(): Argument #1 ($filter) must be of type ?int, Generator given")),
+        value => Err(format!("TypeError:{class_name}::{method}(): Argument #1 ($filter) must be of type ?int, {} given", value.type_name())),
+    }
+}
+
+pub(super) fn required_parameter_count(function: &BytecodeFunction) -> usize {
+    function.parameters.iter().enumerate().filter(|(index, _)| {
+        function.parameter_defaults.get(*index).is_none_or(Option::is_none)
+            && !function.parameter_variadic.get(*index).copied().unwrap_or(false)
+    }).map(|(index, _)| index + 1).max().unwrap_or(0)
+}
+
+fn reflection_interface_names(target: &str, classes: &HashMap<String, BytecodeClass>) -> Vec<String> {
+    fn collect(name: &str, classes: &HashMap<String, BytecodeClass>, names: &mut Vec<String>, seen: &mut HashSet<String>) {
+        let Some(class) = classes.get(&name.to_ascii_lowercase()) else { return; };
+        for interface in &class.interfaces {
+            let key = interface.to_ascii_lowercase();
+            if seen.insert(key.clone()) {
+                names.push(classes.get(&key).map_or_else(|| interface.clone(), |decl| decl.name.clone()));
+                collect(interface, classes, names, seen);
+            }
+        }
+    }
+    let mut chain = Vec::new();
+    let mut current = Some(target);
+    while let Some(name) = current {
+        let Some(class) = classes.get(&name.to_ascii_lowercase()) else { break; };
+        chain.push(class.name.clone());
+        current = class.parent.as_deref();
+    }
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for name in chain.iter().rev() { collect(name, classes, &mut names, &mut seen); }
+    names
+}
+
+fn reflection_method_prototype(
+    target: &str,
+    method: &str,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Option<(String, String)> {
+    fn search(
+        class_name: &str,
+        method: &str,
+        classes: &HashMap<String, BytecodeClass>,
+        visited: &mut HashSet<String>,
+    ) -> Option<(String, String)> {
+        let key = class_name.to_ascii_lowercase();
+        if !visited.insert(key.clone()) { return None; }
+        let class = classes.get(&key)?;
+        if class.methods.contains_key(method) {
+            let display = class.method_display_names.get(method).cloned().unwrap_or_else(|| method.to_string());
+            return Some((class.name.clone(), display));
+        }
+        if let Some(parent) = &class.parent {
+            if let Some(prototype) = search(parent, method, classes, visited) { return Some(prototype); }
+        }
+        for interface in &class.interfaces {
+            if let Some(prototype) = search(interface, method, classes, visited) { return Some(prototype); }
+        }
+        None
+    }
+
+    let target_key = target.to_ascii_lowercase();
+    let class = classes.get(&target_key)?;
+    let method = method.to_ascii_lowercase();
+    if let Some(parent) = &class.parent {
+        if let Some(prototype) = search(parent, &method, classes, &mut HashSet::new()) { return Some(prototype); }
+    }
+    for interface in &class.interfaces {
+        if let Some(prototype) = search(interface, &method, classes, &mut HashSet::new()) { return Some(prototype); }
+    }
+    for (name, candidate) in classes {
+        if candidate.is_interface
+            && candidate.methods.contains_key(&method)
+            && super::is_a_type(&target_key, name, classes, &mut HashSet::new())
+        {
+            let display = candidate.method_display_names.get(&method).cloned().unwrap_or_else(|| method.clone());
+            return Some((candidate.name.clone(), display));
+        }
+    }
+    None
+}
+
+fn reflection_trait_names(target: &str, classes: &HashMap<String, BytecodeClass>) -> Vec<String> {
+    classes.get(&target.to_ascii_lowercase()).map(|class| class.traits.clone()).unwrap_or_default()
 }
 
 fn instantiate_reflection_attribute(
@@ -42,12 +295,16 @@ fn instantiate_reflection_attribute(
     let declaration = classes.get(&class_name.to_ascii_lowercase()).ok_or_else(|| format!("Attribute class {class_name} does not exist"))?;
     let marker = declaration.attributes.iter().find(|attribute| attribute.name.eq_ignore_ascii_case("Attribute"))
         .ok_or_else(|| format!("Attempting to use non-attribute class {class_name} as an attribute"))?;
-    let flags = marker.arguments.first().and_then(|(name, value)| name.is_none().then_some(value.number() as i64)).unwrap_or(63);
+    let flags = marker.arguments.iter().find(|(name, _)| name.as_deref() == Some("flags"))
+        .or_else(|| marker.arguments.iter().find(|(name, _)| name.is_none()))
+        .map_or(127, |(_, value)| value.number() as i64);
     let target_type = properties.get("\0target_type").map_or(1, |value| value.number() as i64);
     if flags & target_type == 0 { return Err(format!("Attribute class {class_name} cannot target this declaration")); }
     let target_class = properties.get("\0target_class").ok_or("Invalid ReflectionAttribute target")?.show();
     let repeated = properties.get("\0is_repeated").is_some_and(Value::truthy) || if target_type == 2 {
         functions.get(&target_class.to_ascii_lowercase()).is_some_and(|target| target.attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&class_name)).count() > 1)
+    } else if target_type == 64 {
+        global_variables.constant_attributes.get(&target_class).is_some_and(|attributes| attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&class_name)).count() > 1)
     } else { classes.get(&target_class.to_ascii_lowercase()).is_some_and(|target| {
         if target_type == 4 {
             let method = properties.get("\0target_member").map(Value::show).unwrap_or_default();
@@ -55,6 +312,9 @@ fn instantiate_reflection_attribute(
         } else if target_type == 8 {
             let property = properties.get("\0target_member").map(Value::show).unwrap_or_default();
             target.property_attributes.get(&property).is_some_and(|attributes| attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&class_name)).count() > 1)
+        } else if target_type == 16 {
+            let constant = properties.get("\0target_member").map(Value::show).unwrap_or_default();
+            target.constants.get(&constant).is_some_and(|constant| constant.attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&class_name)).count() > 1)
         } else if target_type == 32 {
             let method = properties.get("\0target_member").map(Value::show).unwrap_or_default();
             let position = properties.get("\0target_position").map_or(usize::MAX, |value| value.number() as usize);
@@ -63,7 +323,7 @@ fn instantiate_reflection_attribute(
             target.attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&class_name)).count() > 1
         }
     }) };
-    if repeated && flags & 64 == 0 { return Err(format!("Attribute {class_name} must not be repeated")); }
+    if repeated && flags & 128 == 0 { return Err(format!("Attribute {class_name} must not be repeated")); }
     let argument_array = properties.get("\0attribute_arguments").ok_or("Invalid ReflectionAttribute arguments")?;
     let Value::Array(entries) = argument_array.dereference() else { return Err("Invalid ReflectionAttribute arguments".into()); };
     let mut arguments = Vec::with_capacity(entries.len());
@@ -145,9 +405,17 @@ pub(super) fn take_call_arguments(
             let value = operands.next().ok_or("Invalid bytecode stack")?;
             if unpack.get(index).copied().unwrap_or(false) {
                 let Value::Array(array) = value.dereference() else { return Err("Only arrays can be unpacked into arguments".into()); };
+                let from_traversable = array.was_traversable_unpack;
                 for (key, value) in array.iter() {
                     let name = match key { ArrayKey::Integer(_) => None, ArrayKey::String(name) => Some(name.clone()) };
-                    if let Value::Reference(reference) = value {
+                    if from_traversable {
+                        let temporary = std::rc::Rc::new(std::cell::RefCell::new(value.dereference()));
+                        arguments.push(value.dereference());
+                        references.push(Some(ReferenceArgument {
+                            variable: TRAVERSABLE_UNPACK_MARKER.into(), array_keys: Vec::new(), object_property: None,
+                            direct_reference: Some(temporary),
+                        }));
+                    } else if let Value::Reference(reference) = value {
                         arguments.push(reference.borrow().dereference());
                         references.push(Some(ReferenceArgument {
                             variable: String::new(), array_keys: Vec::new(), object_property: None,
@@ -167,6 +435,45 @@ pub(super) fn take_call_arguments(
         names.push(argument_names.get(index).cloned().flatten());
     }
     Ok((arguments, references, names))
+}
+
+const TRAVERSABLE_UNPACK_MARKER: &str = "\0php-rust-traversable-unpack";
+
+fn is_traversable_unpack_reference(reference: &ReferenceArgument) -> bool {
+    reference.variable == TRAVERSABLE_UNPACK_MARKER
+}
+
+fn builtin_traversable_reference_parameter(name: &str, index: usize, argument_name: Option<&str>, value: &Value) -> bool {
+    let name = name.rsplit('\\').next().unwrap_or(name).to_ascii_lowercase();
+    let parameter_name = argument_name.map(str::to_ascii_lowercase);
+    let array_parameter = match name.as_str() {
+        "array_push" | "array_pop" | "array_shift" | "array_unshift" | "array_splice"
+        | "array_walk" | "array_walk_recursive" | "shuffle" | "sort" | "rsort" | "asort"
+        | "arsort" | "ksort" | "krsort" | "natsort" | "natcasesort" | "usort" | "uasort"
+        | "uksort" | "reset" | "end" | "next" | "prev" | "each" => index == 0,
+        _ => false,
+    };
+    if name == "similar_text" {
+        return index == 2 || parameter_name.as_deref() == Some("percent");
+    }
+    if name == "array_multisort" {
+        return matches!(value.dereference(), Value::Array(_));
+    }
+    array_parameter || (parameter_name.as_deref() == Some("array") && matches!(name.as_str(),
+        "array_push" | "array_pop" | "array_shift" | "array_unshift" | "array_splice"
+        | "array_walk" | "array_walk_recursive" | "shuffle" | "sort" | "rsort" | "asort"
+        | "arsort" | "ksort" | "krsort" | "natsort" | "natcasesort" | "usort" | "uasort"
+        | "uksort" | "reset" | "end" | "next" | "prev" | "each"))
+}
+
+fn warn_traversable_by_reference(global_variables: &mut GlobalVariables, argument_index: usize, call_name: &str) {
+    global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+        level: crate::DiagnosticLevel::Warning,
+        message: format!("Cannot pass by-reference argument {argument_index} of {call_name} by unpacking a Traversable, passing by-value instead"),
+        source_file: None,
+        source_line: None,
+        output_offset: 0,
+    });
 }
 
 fn collect_traversable(
@@ -204,6 +511,7 @@ fn collect_traversable(
                             message: "Illegal offset type".into(),
                             source_file: None,
                             source_line: None,
+                            output_offset: 0,
                         }),
                         Err(error) => return Err(error),
                     }
@@ -260,6 +568,7 @@ fn collect_traversable(
                                 message: "Illegal offset type".into(),
                                 source_file: None,
                                 source_line: None,
+                                output_offset: 0,
                             });
                             None
                         }
@@ -316,11 +625,14 @@ pub(super) fn execute_instruction(
     match instruction {
         Op::ExpandUnpack => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?;
+            let from_traversable = !matches!(value.dereference(), Value::Array(_));
             let entries = collect_traversable(value, variables, bindings, global_variables, global_scope, frame_id,
                 functions, classes, static_properties, output, steps, 0, false, false).map_err(|error| {
                     if error == "Value is not Traversable|array" { "Only arrays and Traversable objects can be unpacked".into() } else { error }
                 })?;
-            stack.push(Value::from_array_entries(entries));
+            let mut unpacked = crate::PhpArray::from_entries(entries);
+            unpacked.was_traversable_unpack = from_traversable;
+            stack.push(Value::Array(unpacked));
         }
         Op::Call(name, descriptors, argument_names, unpack, strict_types) => {
             let (arguments, by_reference, argument_names) = take_call_arguments(stack, descriptors, argument_names, unpack, classes)?;
@@ -335,6 +647,13 @@ pub(super) fn execute_instruction(
                     let result = invoke_with_references(fallback_name, arguments, &by_reference, &argument_names, *strict_types, variables, bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)?;
                     stack.push(result);
                     return Ok(true);
+                }
+                for (index, reference) in by_reference.iter().enumerate() {
+                    if reference.as_ref().is_some_and(is_traversable_unpack_reference)
+                        && builtin_traversable_reference_parameter(fallback_name, index, argument_names.get(index).and_then(Option::as_deref), &arguments[index])
+                    {
+                        warn_traversable_by_reference(global_variables, index + 1, fallback_name);
+                    }
                 }
                 if matches!(fallback_name.to_ascii_lowercase().as_str(), "func_get_args" | "func_get_arg" | "func_num_args") {
                     let (arguments, _) = super::builtin_arguments::bind(fallback_name, arguments, &by_reference, &argument_names)?;
@@ -430,6 +749,7 @@ pub(super) fn execute_instruction(
                         message: "str_getcsv(): the $escape parameter must be provided as its default value will change".into(),
                         source_file: None,
                         source_line: None,
+                        output_offset: 0,
                     });
                 }
                 if fallback_name.eq_ignore_ascii_case("error_reporting") {
@@ -488,6 +808,72 @@ pub(super) fn execute_instruction(
                         let name = arguments.first().ok_or("function_exists() expects exactly 1 argument")?.show();
                         stack.push(Value::Bool(runtime_function_exists(&name, functions)));
                     }
+                    "spl_autoload_register" => {
+                        let callback = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null))
+                            .cloned().unwrap_or_else(|| Value::String("spl_autoload".into()));
+                        let (valid, _) = callable_status(&callback, false, functions, classes);
+                        if !valid {
+                            if arguments.get(1).is_some_and(Value::truthy) {
+                                return Err("TypeError:spl_autoload_register(): Argument #1 ($callback) must be a valid callback".into());
+                            }
+                            stack.push(Value::Bool(false));
+                            return Ok(true);
+                        }
+                        let identity = autoload_callback_identity(&callback);
+                        if !global_variables.autoload_callbacks.iter().any(|existing| autoload_callback_identity(existing) == identity) {
+                            if arguments.get(2).is_some_and(Value::truthy) {
+                                global_variables.autoload_callbacks.insert(0, callback);
+                            } else {
+                                global_variables.autoload_callbacks.push(callback);
+                            }
+                        }
+                        stack.push(Value::Bool(true));
+                    }
+                    "spl_autoload_unregister" => {
+                        let callback = arguments.first().ok_or("spl_autoload_unregister() expects exactly 1 argument")?;
+                        let identity = autoload_callback_identity(callback);
+                        let before = global_variables.autoload_callbacks.len();
+                        global_variables.autoload_callbacks.retain(|existing| autoload_callback_identity(existing) != identity);
+                        stack.push(Value::Bool(global_variables.autoload_callbacks.len() != before));
+                    }
+                    "spl_autoload_functions" => {
+                        if global_variables.autoload_callbacks.is_empty() {
+                            stack.push(Value::Bool(false));
+                        } else {
+                            stack.push(Value::from_array_entries(global_variables.autoload_callbacks.iter().enumerate()
+                                .map(|(index, callback)| (ArrayKey::Integer(index as i64), callback.clone())).collect()));
+                        }
+                    }
+                    "spl_autoload_call" => {
+                        let requested = arguments.first().ok_or("spl_autoload_call() expects exactly 1 argument")?.show();
+                        invoke_registered_autoloaders(&requested, variables, bindings, global_variables, global_scope, frame_id,
+                            functions, classes, static_properties, output, steps)?;
+                        stack.push(Value::Null);
+                    }
+                    "spl_autoload" => {
+                        let requested = arguments.first().ok_or("spl_autoload() expects exactly 1 argument")?.show();
+                        let extensions = arguments.get(1).filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
+                        invoke_spl_autoload(&requested, extensions.as_deref(), variables, bindings, global_variables,
+                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                        stack.push(Value::Null);
+                    }
+                    "spl_autoload_extensions" => {
+                        if arguments.len() > 1 { return Err("spl_autoload_extensions() expects at most 1 argument".into()); }
+                        let previous = global_variables.autoload_extensions.clone().unwrap_or_else(|| ".inc,.php".into());
+                        if let Some(extension) = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)) {
+                            global_variables.autoload_extensions = Some(extension.show());
+                        }
+                        stack.push(Value::String(previous));
+                    }
+                    "gc_collect_cycles" => {
+                        if !arguments.is_empty() { return Err(format!("gc_collect_cycles() expects exactly 0 arguments, {} given", arguments.len())); }
+                        let collected = super::objects::collect_object_cycles(
+                            functions, classes, static_properties, global_variables, output, steps,
+                        )?;
+                        stack.push(Value::Integer(collected as i64));
+                    }
+                    "getenv" => stack.push(getenv_value(&arguments, global_variables)?),
+                    "putenv" => stack.push(putenv_value(&arguments, global_variables)?),
                     "php_sapi_name" => {
                         if !arguments.is_empty() { return Err("php_sapi_name() expects exactly 0 arguments".into()); }
                         stack.push(global_variables.get("\0sapi_name").cloned().unwrap_or_else(|| Value::String("cli".into())));
@@ -495,9 +881,12 @@ pub(super) fn execute_instruction(
                     "var_dump" => {
                         if arguments.is_empty() { return Err("var_dump() expects at least 1 argument, 0 given".into()); }
                         let mut seen = HashSet::new();
+                        let mut object_ids = HashMap::new();
+                        let mut next_object_id = 1usize;
                         for value in &arguments {
-                            let dump = format_dump_value(value, 0, &mut seen, functions, classes, static_properties, global_variables, output, steps)?;
+                            let dump = format_dump_value(value, 0, &mut seen, &mut object_ids, &mut next_object_id, functions, classes, static_properties, global_variables, output, steps)?;
                             output.push_str(&dump);
+                            global_variables.output_offset = output.len();
                         }
                         stack.push(Value::Null);
                     }
@@ -514,16 +903,32 @@ pub(super) fn execute_instruction(
                     "class_exists" | "interface_exists" | "trait_exists" => {
                         let name = arguments.first().ok_or("class_exists() expects at least 1 argument")?.show();
                         let key = name.trim_start_matches('\\').to_ascii_lowercase();
-                        let built_in_class = matches!(key.as_str(), "generator" | "pdo" | "pdostatement" | "reflectionclass" | "reflectionenum" | "reflectionenumunitcase" | "reflectionenumbackedcase" | "reflectionnamedtype" | "reflectiontype" | "reflectionfunction" | "reflectionmethod" | "reflectionproperty" | "reflectionattribute" | "reflectionparameter" | "attribute" | "mongodb\\client" | "mongodb\\database" | "mongodb\\collection" | "mongodb\\cursor" | "mongodb\\insertresult" | "mongodb\\insertmanyresult" | "mongodb\\updateresult" | "mongodb\\deleteresult");
+                        let built_in_class = matches!(key.as_str(), "generator" | "pdo" | "pdostatement" | "reflectionclass" | "reflectionobject" | "reflectionclassconstant" | "reflectionconstant" | "reflectionenum" | "reflectionenumunitcase" | "reflectionenumbackedcase" | "reflectionnamedtype" | "reflectiontype" | "reflectionuniontype" | "reflectionintersectiontype" | "reflectionfunction" | "reflectionmethod" | "reflectionproperty" | "reflectionattribute" | "reflectionparameter" | "attribute" | "mongodb\\client" | "mongodb\\database" | "mongodb\\collection" | "mongodb\\cursor" | "mongodb\\insertresult" | "mongodb\\insertmanyresult" | "mongodb\\updateresult" | "mongodb\\deleteresult");
                         let wants_interface = fallback_name.eq_ignore_ascii_case("interface_exists");
                         let wants_trait = fallback_name.eq_ignore_ascii_case("trait_exists");
-                        let exists = if wants_trait {
+                        let mut exists = if wants_trait {
                             classes.get(&key).is_some_and(|class| class.is_trait)
                         } else if wants_interface {
                             crate::exception_builtins::is_interface(&key)
                         } else {
                             crate::exception_builtins::is_class(&key) || built_in_class
                         } || classes.get(&key).is_some_and(|class| if wants_interface { class.is_interface } else { !class.is_interface && !class.is_trait });
+                        exists |= global_variables.dynamic_classes.get(&key).is_some_and(|class| {
+                            if wants_trait { class.is_trait } else if wants_interface { class.is_interface } else { !class.is_interface && !class.is_trait }
+                        });
+                        if !exists && arguments.get(1).is_none_or(Value::truthy) {
+                            invoke_registered_autoloaders(&name, variables, bindings, global_variables, global_scope, frame_id,
+                                functions, classes, static_properties, output, steps)?;
+                            exists = if wants_trait {
+                                global_variables.dynamic_classes.get(&key).is_some_and(|class| class.is_trait)
+                            } else if wants_interface {
+                                crate::exception_builtins::is_interface(&key)
+                                    || global_variables.dynamic_classes.get(&key).is_some_and(|class| class.is_interface)
+                            } else {
+                                crate::exception_builtins::is_class(&key) || built_in_class
+                                    || global_variables.dynamic_classes.get(&key).is_some_and(|class| !class.is_interface && !class.is_trait)
+                            };
+                        }
                         stack.push(Value::Bool(exists));
                     }
                     "get_class" | "get_parent_class" => {
@@ -540,7 +945,7 @@ pub(super) fn execute_instruction(
                             }),
                             None => match variables.get("this") {
                                 Some(Value::Object(object)) => Some(object.borrow().class_name.to_ascii_lowercase()),
-                                _ => variables.get("static_class").map(Value::show).map(|name| name.to_ascii_lowercase()),
+                                _ => variables.get("\0static_class").map(Value::show).map(|name| name.to_ascii_lowercase()),
                             },
                         };
                         let result = class_key.and_then(|key| {
@@ -548,7 +953,7 @@ pub(super) fn execute_instruction(
                                 if wants_parent {
                                     class.parent.as_ref().and_then(|parent| classes.get(parent)).map(|parent| parent.name.clone())
                                 } else {
-                                    Some(class.name.clone())
+                                    Some(class.reflection_name.clone())
                                 }
                             } else if !wants_parent {
                                 match key.as_str() {
@@ -556,8 +961,26 @@ pub(super) fn execute_instruction(
                                     "pdostatement" => Some("PDOStatement".into()),
                                     "generator" => Some("Generator".into()),
                                     "stdclass" => Some("stdClass".into()),
+                                    "reflectionclass" => Some("ReflectionClass".into()),
+                                    "reflectionobject" => Some("ReflectionObject".into()),
+                                    "reflectionclassconstant" => Some("ReflectionClassConstant".into()),
+                                    "reflectionconstant" => Some("ReflectionConstant".into()),
+                                    "reflectionenum" => Some("ReflectionEnum".into()),
+                                    "reflectionenumunitcase" => Some("ReflectionEnumUnitCase".into()),
+                                    "reflectionenumbackedcase" => Some("ReflectionEnumBackedCase".into()),
+                                    "reflectionnamedtype" => Some("ReflectionNamedType".into()),
+                                    "reflectionuniontype" => Some("ReflectionUnionType".into()),
+                                    "reflectionintersectiontype" => Some("ReflectionIntersectionType".into()),
+                                    "reflectionfunction" => Some("ReflectionFunction".into()),
+                                    "reflectionmethod" => Some("ReflectionMethod".into()),
+                                    "reflectionproperty" => Some("ReflectionProperty".into()),
+                                    "reflectionattribute" => Some("ReflectionAttribute".into()),
+                                    "reflectionparameter" => Some("ReflectionParameter".into()),
                                     _ => crate::exception_builtins::canonical_name(&key).map(str::to_string),
                                 }
+                            } else if wants_parent {
+                                super::builtin_parent_class(&key).map(str::to_string)
+                                    .or_else(|| crate::exception_builtins::parent_class(&key).map(str::to_string))
                             } else if crate::exception_builtins::is_class(&key) {
                                 crate::exception_builtins::parent_class(&key).map(str::to_string)
                             } else { None }
@@ -568,7 +991,7 @@ pub(super) fn execute_instruction(
                         if !arguments.is_empty() {
                             return Err(format!("get_called_class() expects exactly 0 arguments, {} given", arguments.len()));
                         }
-                        let called_class = variables.get("static_class").map(Value::show)
+                        let called_class = variables.get("\0static_class").map(Value::show)
                             .ok_or_else(|| "Error:get_called_class() must be called from within a class".to_string())?;
                         stack.push(Value::String(classes.get(&called_class.to_ascii_lowercase()).map(|class| class.name.clone()).unwrap_or(called_class)));
                     }
@@ -603,15 +1026,18 @@ pub(super) fn execute_instruction(
                         };
                         let generator_method = matches!(method.as_str(), "current" | "getreturn" | "key" | "next" | "rewind" | "send" | "throw" | "valid");
                         let reflection_method = match class_name.to_ascii_lowercase().as_str() {
-                            "reflectionclass" => matches!(method.as_str(), "getname" | "getattributes" | "getmethod" | "getproperty" | "getparentclass" | "isenum" | "isinterface" | "isabstract" | "isfinal" | "issubclassof" | "implementsinterface"),
-                            "reflectionenum" => matches!(method.as_str(), "getname" | "getattributes" | "getmethod" | "getcases" | "isbacked" | "getbackingtype"),
+                            "reflectionclass" | "reflectionobject" => matches!(method.as_str(), "getname" | "getshortname" | "getnamespacename" | "innamespace" | "getattributes" | "getmethod" | "getmethods" | "getconstructor" | "getproperty" | "getproperties" | "getdefaultproperties" | "getstaticproperties" | "getparentclass" | "getinterfacenames" | "getinterfaces" | "gettraitnames" | "gettraits" | "gettraitaliases" | "hasmethod" | "hasproperty" | "getconstant" | "getconstants" | "getreflectionconstant" | "hasconstant" | "isenum" | "isinterface" | "isabstract" | "isinstantiable" | "isfinal" | "isreadonly" | "isanonymous" | "istrait" | "isinstance" | "iscloneable" | "isiterable" | "isiterateable" | "issubclassof" | "implementsinterface"),
+                            "reflectionenum" => matches!(method.as_str(), "getname" | "getshortname" | "getnamespacename" | "innamespace" | "getattributes" | "getmethod" | "getmethods" | "getconstructor" | "getproperty" | "getproperties" | "getdefaultproperties" | "getstaticproperties" | "getparentclass" | "getinterfacenames" | "getinterfaces" | "gettraitnames" | "gettraits" | "gettraitaliases" | "getcases" | "getcase" | "hascase" | "getconstant" | "getconstants" | "getreflectionconstant" | "hasconstant" | "isbacked" | "getbackingtype" | "isinstantiable" | "isreadonly" | "isanonymous" | "istrait" | "isinstance" | "iscloneable" | "isiterable" | "isiterateable"),
+                            "reflectionconstant" => matches!(method.as_str(), "getname" | "getvalue" | "getattributes" | "getnamespace" | "isdeprecated" | "isinternal" | "isuserdefined"),
+                            "reflectionclassconstant" => matches!(method.as_str(), "getattributes" | "getdeclaringclass" | "getmodifiers" | "getname" | "gettype" | "getvalue" | "hastype" | "isenumcase" | "isfinal" | "isprivate" | "isprotected" | "ispublic"),
+                            "reflectionuniontype" | "reflectionintersectiontype" => matches!(method.as_str(), "gettypes" | "allowsnull"),
                             "reflectionnamedtype" => matches!(method.as_str(), "getname" | "isbuiltin" | "allowsnull"),
-                            "reflectionenumunitcase" => matches!(method.as_str(), "getname" | "getvalue"),
-                            "reflectionenumbackedcase" => matches!(method.as_str(), "getname" | "getvalue" | "getbackingvalue"),
-                            "reflectionmethod" => matches!(method.as_str(), "getname" | "getattributes" | "getparameters"),
-                            "reflectionparameter" => matches!(method.as_str(), "getname" | "getposition" | "getattributes"),
-                            "reflectionfunction" => matches!(method.as_str(), "getname" | "getattributes" | "getparameters"),
-                            "reflectionproperty" => matches!(method.as_str(), "getname" | "getattributes"),
+                            "reflectionenumunitcase" => matches!(method.as_str(), "getname" | "getvalue" | "getenum" | "getattributes" | "getdeclaringclass" | "getmodifiers" | "gettype" | "hastype" | "isenumcase" | "isfinal" | "isprivate" | "isprotected" | "ispublic"),
+                            "reflectionenumbackedcase" => matches!(method.as_str(), "getname" | "getvalue" | "getenum" | "getbackingvalue" | "getattributes" | "getdeclaringclass" | "getmodifiers" | "gettype" | "hastype" | "isenumcase" | "isfinal" | "isprivate" | "isprotected" | "ispublic"),
+                            "reflectionmethod" => matches!(method.as_str(), "getname" | "getdeclaringclass" | "getmodifiers" | "getattributes" | "getparameters" | "setaccessible" | "ispublic" | "isprotected" | "isprivate" | "isstatic" | "isabstract" | "isfinal" | "isconstructor" | "isdestructor" | "getnumberofparameters" | "getnumberofrequiredparameters" | "hasreturntype" | "getreturntype" | "invoke" | "invokeargs" | "getclosure" | "createfrommethodname" | "isvariadic" | "returnsreference" | "isclosure" | "hasprototype" | "getprototype"),
+                            "reflectionparameter" => matches!(method.as_str(), "__construct" | "getname" | "getposition" | "getattributes" | "getdeclaringclass" | "getdeclaringfunction" | "ispassedbyreference" | "canbepassedbyvalue" | "isvariadic" | "isoptional" | "isdefaultvalueavailable" | "getdefaultvalue" | "isdefaultvalueconstant" | "getdefaultvalueconstantname" | "hastype" | "gettype" | "allowsnull" | "ispromoted" | "getclass" | "isarray" | "iscallable"),
+                            "reflectionfunction" => matches!(method.as_str(), "getname" | "getattributes" | "getparameters" | "getnumberofparameters" | "getnumberofrequiredparameters" | "hasreturntype" | "getreturntype" | "isvariadic" | "returnsreference" | "isclosure" | "isstatic" | "invoke" | "invokeargs" | "getclosure"),
+                            "reflectionproperty" => matches!(method.as_str(), "getname" | "getvalue" | "setvalue" | "setaccessible" | "getdeclaringclass" | "gettype" | "hastype" | "getattributes" | "getmodifiers" | "ispublic" | "isprotected" | "isprivate" | "isstatic" | "isreadonly" | "isprivateset" | "isprotectedset" | "ispromoted" | "isinitialized" | "hasdefaultvalue" | "getdefaultvalue"),
                             "reflectionattribute" => matches!(method.as_str(), "getname" | "getarguments" | "gettarget" | "isrepeated" | "newinstance"),
                             _ => false,
                         };
@@ -749,6 +1175,14 @@ pub(super) fn execute_instruction(
                         if !arguments.is_empty() { return Err("getcwd() expects exactly 0 arguments".into()); }
                         stack.push(std::env::current_dir().ok().map(|path| Value::String(path.to_string_lossy().into_owned())).unwrap_or(Value::Bool(false)));
                     }
+                    "get_include_path" => {
+                        if !arguments.is_empty() { return Err("get_include_path() expects exactly 0 arguments".into()); }
+                        stack.push(Value::String(global_variables.include_path().into()));
+                    }
+                    "set_include_path" => {
+                        let path = arguments.first().ok_or("set_include_path() expects exactly 1 argument")?.show();
+                        stack.push(Value::String(global_variables.set_include_path(path)));
+                    }
                     "sys_get_temp_dir" => {
                         if !arguments.is_empty() { return Err("sys_get_temp_dir() expects exactly 0 arguments".into()); }
                         stack.push(Value::String(std::env::temp_dir().to_string_lossy().into_owned()));
@@ -875,10 +1309,11 @@ pub(super) fn execute_instruction(
                     }
                     "file_get_contents" => {
                         let path = arguments.first().ok_or("file_get_contents() expects a filename")?.show();
+                        let use_include_path = arguments.get(1).is_some_and(Value::truthy);
                         let contents = if path == "php://input" {
                             Some(global_variables.get("\0php_input").cloned().unwrap_or_else(|| Value::String(String::new())).show().into_bytes())
                         } else {
-                            filesystem_path(global_variables, std::path::Path::new(&path), false).and_then(|path| std::fs::read(path).ok())
+                            filesystem_lookup_path(global_variables, std::path::Path::new(&path), false, use_include_path).and_then(|path| std::fs::read(path).ok())
                         };
                         if let Some(bytes) = contents {
                             let requested_offset = arguments.get(3).map(|value| value.number() as i64).unwrap_or(0);
@@ -898,7 +1333,7 @@ pub(super) fn execute_instruction(
                     "file" => {
                         let path = arguments.first().ok_or("file() expects a filename")?.show();
                         let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(0);
-                        if let Some(path) = filesystem_path(global_variables, std::path::Path::new(&path), false) {
+                        if let Some(path) = filesystem_lookup_path(global_variables, std::path::Path::new(&path), false, flags & 1 != 0) {
                         if let Ok(contents) = std::fs::read(path) {
                             let contents = String::from_utf8_lossy(&contents);
                             let mut lines = Vec::new();
@@ -956,6 +1391,7 @@ pub(super) fn execute_instruction(
                     "fopen" => {
                         let path = arguments.first().ok_or("fopen() expects at least 2 arguments")?.show();
                         let mode = arguments.get(1).ok_or("fopen() expects at least 2 arguments")?.show();
+                        let use_include_path = arguments.get(2).is_some_and(Value::truthy);
                         let stream = if path == "php://temp" || path == "php://memory" {
                             let Some(first) = mode.chars().next() else { return Err("fopen(): invalid stream mode".into()); };
                             if !matches!(first, 'r' | 'w' | 'a' | 'x' | 'c') || mode.chars().skip(1).any(|character| !matches!(character, '+' | 'b' | 't')) { return Err("fopen(): invalid stream mode".into()); }
@@ -964,7 +1400,7 @@ pub(super) fn execute_instruction(
                             crate::PhpStream::temporary(readable, writable).ok()
                         } else {
                             let writable = mode.chars().next().is_some_and(|mode| mode != 'r') || mode.contains('+');
-                            filesystem_path(global_variables, std::path::Path::new(&path), writable)
+                            filesystem_lookup_path(global_variables, std::path::Path::new(&path), writable, use_include_path)
                                 .and_then(|path| crate::PhpStream::open_file(path, &mode).ok())
                         };
                         stack.push(stream.map(|stream| Value::Stream(std::rc::Rc::new(std::cell::RefCell::new(stream)))).unwrap_or(Value::Bool(false)));
@@ -1018,127 +1454,11 @@ pub(super) fn execute_instruction(
                         let Some(Value::Stream(stream)) = arguments.first().map(Value::dereference) else { return Err("fclose() expects a stream resource".into()); };
                         stack.push(Value::Bool(stream.borrow_mut().close().is_ok()));
                     }
-                    "json_encode" => {
-                        let value = arguments.first().ok_or("json_encode() expects exactly 1 argument")?;
-                        let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(0);
-                        let depth = arguments.get(2).map(|value| value.number() as i64).unwrap_or(512);
-                        let throw_on_error = flags & 4194304 != 0;
-                        if depth > i32::MAX as i64 || depth < i32::MIN as i64 {
-                            return Err(format!("ValueError:json_encode(): Argument #3 ($depth) must be between 1 and {}", i32::MAX));
-                        }
-                        if depth < 1 {
-                            return Err("ValueError:json_encode(): Argument #3 ($depth) must be greater than 0".into());
-                        }
-                        if flags & !(4095 | 1048576 | 2097152 | 4194304) != 0 {
-                            let code = 4;
-                            if throw_on_error && flags & 512 == 0 {
-                                return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
-                            }
-                            global_variables.json_last_error = code;
-                            stack.push(Value::Bool(false));
-                        } else {
-                            let mut serialize = |object: &Value| -> Result<Option<Value>, String> {
-                                let Value::Object(instance) = object else { return Ok(None); };
-                                let class_name = instance.borrow().class_name.clone();
-                                let Some(method) = super::objects::find_method(&class_name, "jsonserialize", classes) else {
-                                    return Ok(None);
-                                };
-                                if method.is_static || !method.parameters.is_empty() || method.visibility != crate::MemberVisibility::Public {
-                                    return Err(format!("{class_name}::jsonSerialize() must be a public non-static method without parameters"));
-                                }
-                                let mut locals = HashMap::from([
-                                    ("this".to_string(), object.clone()),
-                                    ("static_class".to_string(), Value::String(class_name.clone())),
-                                ]);
-                                let result = execute_code(&method.instructions, functions, classes, static_properties,
-                                    &mut locals, global_variables, false, &super::function_scope(method), HashMap::new(), output, steps)?
-                                    .unwrap_or(Value::Null);
-                                Ok(Some(super::validate_return_type_in_scope(result, method, classes, Some(&class_name))?))
-                            };
-                            match crate::json_builtins::encode_with_serializer(value, depth as usize, crate::json_builtins::EncodeOptions {
-                                pretty: flags & 128 != 0,
-                                unescaped_slashes: flags & 64 != 0,
-                                unescaped_unicode: flags & 256 != 0,
-                                unescaped_line_terminators: flags & 2048 != 0,
-                                force_object: flags & 16 != 0,
-                                hex_flags: flags & 15,
-                                preserve_zero_fraction: flags & 1024 != 0,
-                                numeric_check: flags & 32 != 0,
-                                partial_output: flags & 512 != 0,
-                            }, classes, &mut serialize) {
-                                Ok((json, error_code)) => {
-                                    if !throw_on_error || flags & 512 != 0 || error_code != 0 { global_variables.json_last_error = error_code; }
-                                    stack.push(Value::String(json));
-                                }
-                                Err(error) => {
-                                    let code = json_error_code(&error);
-                                    if throw_on_error && flags & 512 == 0 {
-                                        return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
-                                    }
-                                    global_variables.json_last_error = code;
-                                    stack.push(Value::Bool(false));
-                                }
-                            }
-                        }
-                    }
-                    "json_decode" => {
-                        let source = arguments.first().ok_or("json_decode() expects exactly 1 argument")?.show();
-                        let depth = arguments.get(2).map(|value| value.number() as i64).unwrap_or(512);
-                        let flags = arguments.get(3).map(|value| value.number() as i64).unwrap_or(0);
-                        let associative = arguments.get(1).map_or(flags & 1 != 0, |value| {
-                            matches!(value.dereference(), Value::Null) && flags & 1 != 0 || value.truthy()
-                        });
-                        let throw_on_error = flags & 4194304 != 0;
-                        if depth < 1 || depth > i32::MAX as i64 {
-                            return Err(format!("ValueError:json_decode(): Argument #3 ($depth) must be between 1 and {}", i32::MAX));
-                        }
-                        if flags & !(3 | 1048576 | 2097152 | 4194304) != 0 {
-                            let code = 4;
-                            if throw_on_error {
-                                return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
-                            }
-                            global_variables.json_last_error = code;
-                            stack.push(Value::Null);
-                        } else {
-                            match crate::json_builtins::decode(&source, associative, depth as usize, flags & 2 != 0) {
-                                Ok(value) => { if !throw_on_error { global_variables.json_last_error = 0; } stack.push(value); }
-                                Err(error) => {
-                                    let code = json_error_code(&error);
-                                    if throw_on_error {
-                                        return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
-                                    }
-                                    global_variables.json_last_error = code;
-                                    stack.push(Value::Null);
-                                }
-                            }
-                        }
-                    }
-                    "json_validate" => {
-                        let value = arguments.first().ok_or("json_validate() expects exactly 1 argument")?;
-                        let source = match value.dereference() {
-                            Value::String(source) => source,
-                            Value::Integer(number) => number.to_string(),
-                            Value::Number(number) => number.to_string(),
-                            Value::Bool(value) => if value { "1".into() } else { String::new() },
-                            Value::Null => String::new(),
-                            other => return Err(format!("TypeError:json_validate(): Argument #1 ($json) must be of type string, {} given", other.type_name().to_ascii_lowercase())),
-                        };
-                        let depth = arguments.get(1).map(|value| value.number() as i64).unwrap_or(512);
-                        let flags = arguments.get(2).map(|value| value.number() as i64).unwrap_or(0);
-                        if depth < 1 || depth > i32::MAX as i64 {
-                            return Err(format!("ValueError:json_validate(): Argument #2 ($depth) must be between 1 and {}", i32::MAX));
-                        }
-                        if flags & !1048576 != 0 {
-                            return Err("ValueError:json_validate(): Argument #3 ($flags) must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)".into());
-                        }
-                        match crate::json_builtins::decode(&source, true, depth as usize, false) {
-                            Ok(_) => { global_variables.json_last_error = 0; stack.push(Value::Bool(true)); }
-                            Err(error) => {
-                                global_variables.json_last_error = json_error_code(&error);
-                                stack.push(Value::Bool(false));
-                            }
-                        }
-                    }
+                    "json_encode" => stack.push(json_encode_builtin(
+                        &arguments, functions, classes, static_properties, global_variables, output, steps,
+                    )?),
+                    "json_decode" => stack.push(json_decode_builtin(&arguments, classes, global_variables, steps)?),
+                    "json_validate" => stack.push(json_validate_builtin(&arguments, global_variables)?),
                     "json_last_error" => {
                         if !arguments.is_empty() { return Err("json_last_error() expects exactly 0 arguments".into()); }
                         stack.push(Value::Integer(global_variables.json_last_error));
@@ -1203,7 +1523,7 @@ pub(super) fn execute_instruction(
                         }
                         stack.push(Value::String(current));
                     }
-                    "basename" | "dirname" | "pathinfo" | "strip_tags" | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "count_chars" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" | "str_split" | "strpos" | "stripos" | "strrpos" | "strripos" | "substr_count" | "substr_compare" | "strtok" | "levenshtein" | "substr" | "substr_replace" | "explode" | "implode" | "str_getcsv" | "htmlspecialchars" | "htmlspecialchars_decode" | "nl2br" | "wordwrap" | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr" => {
+                    "basename" | "dirname" | "pathinfo" | "strip_tags" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "count_chars" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" | "str_split" | "strpos" | "stripos" | "strrpos" | "strripos" | "substr_count" | "substr_compare" | "strtok" | "levenshtein" | "substr" | "substr_replace" | "explode" | "implode" | "str_getcsv" | "htmlspecialchars" | "htmlspecialchars_decode" | "nl2br" | "wordwrap" | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr" => {
                         coerce_stringable_builtin_args(fallback_name, &mut arguments, crate::string_builtins::string_argument_positions(fallback_name), functions, classes, static_properties, global_variables, output, steps)?;
                         let result = match fallback_name.to_ascii_lowercase().as_str() {
                             "hex2bin" => hex2bin_with_diagnostic(&arguments, global_variables)?,
@@ -1258,40 +1578,23 @@ pub(super) fn execute_instruction(
                 let array_arguments = arguments.iter().map(Value::dereference).collect::<Vec<_>>();
                 let mut array_diagnostics = Vec::new();
                 let normalized_array_name = fallback_name.to_ascii_lowercase();
-                let callback_indices = match normalized_array_name.as_str() {
-                    "array_map" => vec![0],
-                    "array_all" | "array_any" | "array_filter" | "array_find" | "array_find_key" | "array_reduce" | "usort" | "uasort" | "uksort" => vec![1],
-                    "array_diff_uassoc" | "array_diff_ukey" | "array_intersect_uassoc" | "array_intersect_ukey" => vec![array_arguments.len().saturating_sub(1)],
-                    "array_udiff" | "array_udiff_assoc" | "array_uintersect" | "array_uintersect_assoc" => vec![array_arguments.len().saturating_sub(1)],
-                    "array_udiff_uassoc" | "array_udiff_ukey" | "array_uintersect_uassoc" | "array_uintersect_ukey" => vec![array_arguments.len().saturating_sub(2), array_arguments.len().saturating_sub(1)],
-                    _ => Vec::new(),
-                };
-                if callback_indices.iter().any(|index| array_arguments.get(*index).is_some_and(|callback| {
-                    callable_parameter_references(callback, functions, classes).iter().any(|by_ref| *by_ref)
-                })) {
-                    array_diagnostics.push(crate::RuntimeDiagnostic {
-                        level: crate::DiagnosticLevel::Warning,
-                        message: format!("{fallback_name}(): callback expects a parameter to be passed by reference"),
-                        source_file: None, source_line: None,
-                    });
-                }
-                if fallback_name.eq_ignore_ascii_case("array_walk") || fallback_name.eq_ignore_ascii_case("array_walk_recursive") {
-                    if let Some(callback) = array_arguments.get(1) {
-                        let refs = callable_parameter_references(callback, functions, classes);
-                        let userdata_passed = array_arguments.len() > 2;
-                        if refs.get(1).copied().unwrap_or(false) || (userdata_passed && refs.get(2).copied().unwrap_or(false)) {
-                            array_diagnostics.push(crate::RuntimeDiagnostic {
-                                level: crate::DiagnosticLevel::Warning,
-                                message: format!("{fallback_name}(): callback expects the key or userdata parameter to be passed by reference"),
-                                source_file: None, source_line: None,
-                            });
-                        }
-                    }
-                }
                 let dispatch_result = if fallback_name.eq_ignore_ascii_case("array_walk") || fallback_name.eq_ignore_ascii_case("array_walk_recursive") {
                     let mut no_positional_callback = |_: &Value, _: Vec<Value>| Err(format!("Unexpected positional callback for {fallback_name}"));
                     let mut walk_index = 0usize;
+                    let mut walk_reference_warning_emitted = false;
+                    let userdata_passed = array_arguments.len() > 2;
                     let mut walk_invoker = |callback: &Value, value: Value, key: Value, user_data: Option<Value>| {
+                        if !walk_reference_warning_emitted {
+                            let references = callable_parameter_references(callback, functions, classes);
+                            if references.get(1).copied().unwrap_or(false) || (userdata_passed && references.get(2).copied().unwrap_or(false)) {
+                                global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                    level: crate::DiagnosticLevel::Warning,
+                                    message: format!("{fallback_name}(): callback expects the key or userdata parameter to be passed by reference"),
+                                    source_file: None, source_line: None, output_offset: 0,
+                                });
+                                walk_reference_warning_emitted = true;
+                            }
+                        }
                         let temp_name = format!("\0array_walk:{}:{}", frame_id, walk_index);
                         walk_index += 1;
                         invoke_array_walk_callback(
@@ -1303,16 +1606,25 @@ pub(super) fn execute_instruction(
                     crate::array_builtins::call(fallback_name, array_arguments, classes, &mut no_positional_callback, &mut walk_invoker, &mut stringify, &mut array_diagnostics)
                 } else {
                     let mut unused_walk = |_: &Value, _: Value, _: Value, _: Option<Value>| Err("Unexpected array walk callback".into());
-                    if matches!(fallback_name, "sort" | "rsort" | "asort" | "arsort" | "ksort" | "krsort" | "natsort" | "natcasesort" | "array_unique") {
+                    if matches!(fallback_name, "sort" | "rsort" | "asort" | "arsort" | "ksort" | "krsort" | "natsort" | "natcasesort" | "array_unique" | "array_multisort") {
                         let mut unused_callback = |_: &Value, _: Vec<Value>| Err("Unexpected positional callback for sorting".into());
                         let mut stringify = |value: &Value| super::objects::stringify(
                             value, functions, classes, static_properties, global_variables, output, steps,
                         );
                         crate::array_builtins::call(fallback_name, array_arguments, classes, &mut unused_callback, &mut unused_walk, &mut stringify, &mut array_diagnostics)
                     } else {
+                        let mut reference_warning_emitted = false;
                         let mut callback_invoker = |callback: &Value, callback_args: Vec<Value>| {
+                            if !reference_warning_emitted && callable_parameter_references(callback, functions, classes).iter().any(|by_ref| *by_ref) {
+                                global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                    level: crate::DiagnosticLevel::Warning,
+                                    message: format!("{fallback_name}(): callback expects a parameter to be passed by reference"),
+                                    source_file: None, source_line: None, output_offset: 0,
+                                });
+                                reference_warning_emitted = true;
+                            }
                             invoke_array_callback(
-                                callback, callback_args, variables, bindings, global_scope, frame_id, functions, classes,
+                                callback, callback_args.into_iter().map(|value| value.dereference()).collect(), variables, bindings, global_scope, frame_id, functions, classes,
                                 static_properties, global_variables, output, steps,
                             )
                         };
@@ -1354,7 +1666,7 @@ pub(super) fn execute_instruction(
                 }
             }
             stack.push(Value::Closure(Rc::new(std::cell::RefCell::new(PhpClosure {
-                function: (**function).clone(), captures: captured_values, capture_order, reference_captures, callable_target: None,
+                function: (**function).clone(), captures: captured_values, capture_order, reference_captures, callable_target: None, callable_access_scope: None,
             }))));
         }
         Op::MakeFunctionCallable(name) => {
@@ -1365,7 +1677,7 @@ pub(super) fn execute_instruction(
             stack.push(make_callable_closure(target, functions, classes)?);
         }
         Op::MakeLateStaticCallable(method) => {
-            let class = variables.get("static_class").map(Value::show)
+            let class = variables.get("\0static_class").map(Value::show)
                 .or_else(|| variables.get("this").and_then(|value| match value.dereference() {
                     Value::Object(object) => Some(object.borrow().class_name.clone()),
                     _ => None,
@@ -1426,15 +1738,63 @@ pub(super) fn execute_instruction(
             }
             let Value::Object(object) = object else { return Err("Call to method on non-object".into()); };
             let class_name = object.borrow().class_name.clone();
-            if class_name.eq_ignore_ascii_case("ReflectionClass") || class_name.eq_ignore_ascii_case("ReflectionEnum") || class_name.eq_ignore_ascii_case("ReflectionEnumUnitCase") || class_name.eq_ignore_ascii_case("ReflectionEnumBackedCase") || class_name.eq_ignore_ascii_case("ReflectionNamedType") || class_name.eq_ignore_ascii_case("ReflectionMethod") || class_name.eq_ignore_ascii_case("ReflectionProperty") || class_name.eq_ignore_ascii_case("ReflectionAttribute") || class_name.eq_ignore_ascii_case("ReflectionParameter") || class_name.eq_ignore_ascii_case("ReflectionFunction") {
-                let signature = format!("{}::{method}", class_name.to_ascii_lowercase());
+            if class_name.eq_ignore_ascii_case("ReflectionClass") || class_name.eq_ignore_ascii_case("ReflectionObject") || class_name.eq_ignore_ascii_case("ReflectionClassConstant") || class_name.eq_ignore_ascii_case("ReflectionConstant") || class_name.eq_ignore_ascii_case("ReflectionEnum") || class_name.eq_ignore_ascii_case("ReflectionEnumUnitCase") || class_name.eq_ignore_ascii_case("ReflectionEnumBackedCase") || class_name.eq_ignore_ascii_case("ReflectionNamedType") || class_name.eq_ignore_ascii_case("ReflectionUnionType") || class_name.eq_ignore_ascii_case("ReflectionIntersectionType") || class_name.eq_ignore_ascii_case("ReflectionMethod") || class_name.eq_ignore_ascii_case("ReflectionProperty") || class_name.eq_ignore_ascii_case("ReflectionAttribute") || class_name.eq_ignore_ascii_case("ReflectionParameter") || class_name.eq_ignore_ascii_case("ReflectionFunction") {
+                let reflection_kind = if class_name.eq_ignore_ascii_case("ReflectionObject") { "reflectionclass".to_string() } else { class_name.to_ascii_lowercase() };
+                let signature = format!("{reflection_kind}::{method}");
                 arguments = super::builtin_arguments::bind(&signature, arguments, &reference_names, &argument_names)?.0;
                 let internal = object.borrow().properties.clone();
-                let result = match (class_name.to_ascii_lowercase().as_str(), method.as_str()) {
+                let result = match (reflection_kind.as_str(), method.as_str()) {
                     ("reflectionfunction", "getname") => internal.get("\0function_name").cloned().ok_or("Invalid ReflectionFunction")?,
+                    ("reflectionfunction", "invoke" | "invokeargs") => {
+                        let function_name = internal.get("\0function_name").ok_or("Invalid ReflectionFunction")?.show();
+                        let (invoke_args, invoke_references, invoke_names) = if method == "invoke" {
+                            (arguments.clone(), reference_names.clone(), argument_names.clone())
+                        } else {
+                            match arguments.first().map(Value::dereference) {
+                                Some(Value::Array(values)) => {
+                                    let mut values_out = Vec::with_capacity(values.len());
+                                    let mut references_out = Vec::with_capacity(values.len());
+                                    let mut names_out = Vec::with_capacity(values.len());
+                                    for (key, value) in values.iter() {
+                                        values_out.push(value.clone());
+                                        references_out.push(match value {
+                                            Value::Reference(reference) => Some(ReferenceArgument { variable: String::new(), array_keys: Vec::new(), object_property: None, direct_reference: Some(reference.clone()) }),
+                                            _ => None,
+                                        });
+                                        names_out.push(match key { ArrayKey::String(name) => Some(name.clone()), ArrayKey::Integer(_) => None });
+                                    }
+                                    (values_out, references_out, names_out)
+                                }
+                                Some(value) => return Err(format!("TypeError:ReflectionFunction::invokeArgs(): Argument #1 ($args) must be of type array, {} given", value.type_name())),
+                                None => return Err("ReflectionFunction::invokeArgs() expects exactly 1 argument".into()),
+                            }
+                        };
+                        if let Some(Value::Closure(closure)) = internal.get("\0closure").map(Value::dereference) {
+                            invoke_closure(&closure, invoke_args, &invoke_references, &invoke_names, variables, bindings, global_scope, frame_id,
+                                functions, classes, static_properties, global_variables, output, steps, false)?
+                        } else {
+                            invoke_with_references(&function_name, invoke_args, &invoke_references, &invoke_names, false,
+                                variables, bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)?
+                        }
+                    }
+                    ("reflectionfunction", "getclosure") => {
+                        if let Some(Value::Closure(closure)) = internal.get("\0closure").map(Value::dereference) {
+                            Value::Closure(closure)
+                        } else {
+                            let function_name = internal.get("\0function_name").cloned().ok_or("Invalid ReflectionFunction")?;
+                            let wrapper = BytecodeFunction::new("{reflection-function-closure}".into(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), None, false, Vec::new(), false, false, false, MemberVisibility::Public, None);
+                            Value::Closure(Rc::new(std::cell::RefCell::new(PhpClosure {
+                                function: wrapper, captures: HashMap::new(), capture_order: Vec::new(), reference_captures: HashMap::new(),
+                                callable_target: Some(function_name), callable_access_scope: None,
+                            })))
+                        }
+                    }
                     ("reflectionfunction", "getattributes") => {
                         let function_name = internal.get("\0function_name").ok_or("Invalid ReflectionFunction")?.show();
-                        let function = functions.get(&function_name.to_ascii_lowercase()).ok_or("Reflected function no longer exists")?;
+                        let function = match internal.get("\0closure").map(Value::dereference) {
+                            Some(Value::Closure(closure)) => closure.borrow().function.clone(),
+                            _ => functions.get(&function_name.to_ascii_lowercase()).cloned().ok_or("Reflected function no longer exists")?,
+                        };
                         let filter = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
                         let flags = arguments.get(1).map_or(0, |flags| flags.number() as i64);
                         if flags & !2 != 0 { return Err("ReflectionFunction::getAttributes(): unsupported flags".into()); }
@@ -1473,15 +1833,62 @@ pub(super) fn execute_instruction(
                                 properties: HashMap::from([
                                     ("\0parameter_name".into(), Value::String(name.clone())),
                                     ("\0parameter_position".into(), Value::Integer(position as i64)),
+                                    ("\0function_name".into(), internal.get("\0function_name").cloned().unwrap_or(Value::Null)),
+                                    ("\0closure".into(), internal.get("\0closure").cloned().unwrap_or(Value::Null)),
                                     ("\0parameter_attributes".into(), Value::from_array_entries(reflected)),
+                                    ("\0parameter_type".into(), function.parameter_types.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
+                                    ("\0parameter_by_reference".into(), Value::Bool(function.parameter_by_reference.get(position).copied().unwrap_or(false))),
+                                    ("\0parameter_variadic".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false))),
+                                    ("\0parameter_promoted".into(), Value::Bool(function.parameter_promoted.get(position).copied().unwrap_or(false))),
+                                    ("\0parameter_has_default".into(), Value::Bool(function.parameter_defaults.get(position).is_some_and(Option::is_some))),
+                                    ("\0parameter_optional".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false) || (function.parameter_defaults.get(position).is_some_and(Option::is_some) && position >= required_parameter_count(&function)))),
+                                    ("\0parameter_default".into(), function.parameter_defaults.get(position).and_then(Clone::clone).unwrap_or(Value::Null)),
+                                    ("\0parameter_default_constant_name".into(), function.parameter_default_constant_names.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
                                 ]),
                                 property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
                             }))))
                         }).collect();
                         Value::from_array_entries(entries)
                     }
+                    ("reflectionfunction", "getnumberofparameters" | "getnumberofrequiredparameters" | "hasreturntype" | "getreturntype") => {
+                        let function = match internal.get("\0closure").map(Value::dereference) {
+                            Some(Value::Closure(closure)) => Some(closure.borrow().function.clone()),
+                            _ => internal.get("\0function_name").and_then(|name| functions.get(&name.show().to_ascii_lowercase())).cloned(),
+                        }.ok_or("Reflected function no longer exists")?;
+                        match method.as_str() {
+                            "getnumberofparameters" => Value::Integer(function.parameters.len() as i64),
+                            "getnumberofrequiredparameters" => Value::Integer(function.parameters.iter().enumerate().filter(|(index, _)| {
+                                function.parameter_defaults.get(*index).is_none_or(Option::is_none)
+                                    && !function.parameter_variadic.get(*index).copied().unwrap_or(false)
+                            }).map(|(index, _)| index + 1).max().unwrap_or(0) as i64),
+                            "hasreturntype" => Value::Bool(function.return_type.is_some()),
+                            "getreturntype" => function.return_type.as_deref().map(reflection_type).unwrap_or(Value::Null),
+                            _ => unreachable!(),
+                        }
+                    }
+                    ("reflectionfunction", "isvariadic" | "returnsreference" | "isclosure" | "isstatic") => {
+                        let function = match internal.get("\0closure").map(Value::dereference) {
+                            Some(Value::Closure(closure)) => Some(closure.borrow().function.clone()),
+                            _ => internal.get("\0function_name").and_then(|name| functions.get(&name.show().to_ascii_lowercase())).cloned(),
+                        }.ok_or("Reflected function no longer exists")?;
+                        Value::Bool(match method.as_str() {
+                            "isvariadic" => function.parameter_variadic.iter().any(|variadic| *variadic),
+                            "returnsreference" => function.returns_by_reference,
+                            "isclosure" => internal.get("\0closure").is_some(),
+                            "isstatic" => function.is_static,
+                            _ => false,
+                        })
+                    }
                     ("reflectionenumunitcase" | "reflectionenumbackedcase", "getname") => internal.get("\0case_name").cloned().ok_or("Invalid ReflectionEnumUnitCase")?,
                     ("reflectionenumunitcase" | "reflectionenumbackedcase", "getvalue") => internal.get("\0case_value").cloned().ok_or("Invalid ReflectionEnumUnitCase")?,
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "getenum") => {
+                        let target = internal.get("\0target_class").cloned().ok_or("Invalid ReflectionEnumUnitCase")?;
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionEnum".into(),
+                            properties: HashMap::from([("\0target_class".into(), target)]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
+                    }
                     ("reflectionenumbackedcase", "getbackingvalue") => {
                         let case = internal.get("\0case_value").ok_or("Invalid ReflectionEnumBackedCase")?;
                         match case.dereference() {
@@ -1489,9 +1896,40 @@ pub(super) fn execute_instruction(
                             _ => return Err("Invalid ReflectionEnumBackedCase".into()),
                         }
                     }
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "getdeclaringclass") => {
+                        let declaring = internal.get("\0declaring_class").ok_or("Invalid ReflectionEnumCase")?.show();
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionClass".into(),
+                            properties: HashMap::from([("\0target_class".into(), Value::String(declaring))]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
+                    }
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "gettype") => Value::Null,
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "hastype") => Value::Bool(false),
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "isenumcase") => Value::Bool(true),
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "getmodifiers") => Value::Integer(1),
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "ispublic") => Value::Bool(true),
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "isprotected" | "isprivate" | "isfinal") => Value::Bool(false),
+                    ("reflectionenumunitcase" | "reflectionenumbackedcase", "getattributes") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionEnumCase")?.show();
+                        let name = internal.get("\0case_name").ok_or("Invalid ReflectionEnumCase")?.show();
+                        let constant = classes.get(&target.to_ascii_lowercase()).and_then(|class| class.constants.get(&name)).ok_or("Reflected enum case no longer exists")?;
+                        let filter = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
+                        let flags = arguments.get(1).map_or(0, |flags| flags.number() as i64);
+                        if flags & !2 != 0 { return Err("ReflectionClassConstant::getAttributes(): unsupported flags".into()); }
+                        Value::from_array_entries(constant.attributes.iter().filter(|attribute| filter.as_ref().is_none_or(|filter| attribute.name.eq_ignore_ascii_case(filter) || (flags & 2 != 0 && super::is_a_type(&attribute.name, filter, classes, &mut HashSet::new())))).enumerate().map(|(index, attribute)| {
+                            (ArrayKey::Integer(index as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionAttribute".into(),
+                                properties: HashMap::from([("\0attribute_name".into(), Value::String(attribute.name.clone())), ("\0attribute_arguments".into(), reflection_attribute_arguments(&attribute.arguments)), ("\0target_class".into(), Value::String(target.clone())), ("\0target_type".into(), Value::Integer(16)), ("\0target_member".into(), Value::String(name.clone()))]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            }))))
+                        }).collect())
+                    }
                     ("reflectionnamedtype", "getname") => internal.get("\0type_name").cloned().ok_or("Invalid ReflectionNamedType")?,
                     ("reflectionnamedtype", "isbuiltin") => Value::Bool(internal.get("\0is_builtin").is_some_and(Value::truthy)),
                     ("reflectionnamedtype", "allowsnull") => Value::Bool(internal.get("\0allows_null").is_some_and(Value::truthy)),
+                    ("reflectionuniontype" | "reflectionintersectiontype", "gettypes") => internal.get("\0types").cloned().ok_or("Invalid ReflectionType")?,
+                    ("reflectionuniontype" | "reflectionintersectiontype", "allowsnull") => Value::Bool(internal.get("\0allows_null").is_some_and(Value::truthy)),
                     ("reflectionenum", "isbacked") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionEnum target")?.show();
                         Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.enum_backing_type.is_some()))
@@ -1519,11 +1957,44 @@ pub(super) fn execute_instruction(
                             let case = class.constants.get(name)?.value.clone();
                             let reflected = crate::PhpObject {
                                 class_name: if class.enum_backing_type.is_some() { "ReflectionEnumBackedCase" } else { "ReflectionEnumUnitCase" }.into(),
-                                properties: HashMap::from([("\0case_name".into(), Value::String(name.clone())), ("\0case_value".into(), case)]),
+                                properties: HashMap::from([
+                                    ("\0case_name".into(), Value::String(name.clone())),
+                                    ("\0case_value".into(), case),
+                                    ("\0target_class".into(), Value::String(class.name.clone())),
+                                    ("\0constant_name".into(), Value::String(name.clone())),
+                                    ("\0declaring_class".into(), Value::String(class.name.clone())),
+                                ]),
                                 property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
                             };
                             Some((ArrayKey::Integer(index as i64), Value::Object(Rc::new(std::cell::RefCell::new(reflected)))))
                         }).collect())
+                    }
+                    ("reflectionenum", "hascase") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionEnum target")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).filter(|class| class.is_enum).ok_or("Invalid ReflectionEnum target")?;
+                        if arguments.len() != 1 { return Err(format!("ReflectionEnum::hasCase() expects exactly 1 argument, {} given", arguments.len())); }
+                        let name = reflection_string_argument("ReflectionEnum::hasCase", &arguments[0], functions, classes, static_properties, global_variables, output, steps)?;
+                        Value::Bool(class.enum_cases.iter().any(|case| case == &name))
+                    }
+                    ("reflectionenum", "getcase") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionEnum target")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).filter(|class| class.is_enum).ok_or("Invalid ReflectionEnum target")?;
+                        if arguments.len() != 1 { return Err(format!("ReflectionEnum::getCase() expects exactly 1 argument, {} given", arguments.len())); }
+                        let name = reflection_string_argument("ReflectionEnum::getCase", &arguments[0], functions, classes, static_properties, global_variables, output, steps)?;
+                        let case = class.enum_cases.iter().find(|case| case.as_str() == name)
+                            .ok_or_else(|| format!("ReflectionException:Case {name} does not exist"))?;
+                        let value = class.constants.get(case).ok_or("Enum case metadata is missing")?.value.clone();
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: if class.enum_backing_type.is_some() { "ReflectionEnumBackedCase" } else { "ReflectionEnumUnitCase" }.into(),
+                            properties: HashMap::from([
+                                ("\0case_name".into(), Value::String(case.clone())),
+                                ("\0case_value".into(), value),
+                                ("\0target_class".into(), Value::String(class.name.clone())),
+                                ("\0constant_name".into(), Value::String(case.clone())),
+                                ("\0declaring_class".into(), Value::String(class.name.clone())),
+                            ]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
                     }
                     ("reflectionclass", "isenum") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
@@ -1537,9 +2008,266 @@ pub(super) fn execute_instruction(
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
                         Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.is_abstract))
                     }
+                    ("reflectionclass" | "reflectionenum", "isinstantiable") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let instantiable = classes.get(&target.to_ascii_lowercase()).is_some_and(|class| {
+                            !class.is_abstract && !class.is_interface && !class.is_trait && !class.is_enum
+                                && super::objects::find_method(&class.name, "__construct", classes)
+                                    .is_none_or(|constructor| constructor.visibility == crate::MemberVisibility::Public)
+                        });
+                        Value::Bool(instantiable)
+                    }
                     ("reflectionclass", "isfinal") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
                         Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.is_final))
+                    }
+                    ("reflectionclass" | "reflectionenum", "isreadonly") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.is_readonly))
+                    }
+                    ("reflectionclass" | "reflectionenum", "isanonymous") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::Bool(target.starts_with("class@anonymous#"))
+                    }
+                    ("reflectionclass" | "reflectionenum", "isiterable" | "isiterateable") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::Bool(super::is_a_type(&target.to_ascii_lowercase(), "traversable", classes, &mut HashSet::new()))
+                    }
+                    ("reflectionclass" | "reflectionenum", "getconstant") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let name = arguments.first().ok_or("ReflectionClass::getConstant() expects exactly 1 argument")?.show();
+                        if let Some((_, constant)) = super::objects::find_class_constant(&target, &name, classes) {
+                            constant.value.clone()
+                        } else {
+                            global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                level: crate::DiagnosticLevel::Deprecated,
+                                message: "ReflectionClass::getConstant() for a non-existent constant is deprecated, use ReflectionClass::hasConstant() to check if the constant exists".into(),
+                                source_file: None,
+                                source_line: None,
+                                output_offset: 0,
+                            });
+                            Value::Bool(false)
+                        }
+                    }
+                    ("reflectionclass" | "reflectionenum", "getreflectionconstant") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let name = arguments.first().ok_or("ReflectionClass::getReflectionConstant() expects exactly 1 argument")?.show();
+                        if let Some((_, constant)) = super::objects::find_class_constant(&target, &name, classes) {
+                            Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionClassConstant".into(),
+                                properties: HashMap::from([("\0target_class".into(), Value::String(target)), ("\0constant_name".into(), Value::String(name)), ("\0declaring_class".into(), Value::String(classes.get(&constant.declaring_class).map_or_else(|| constant.declaring_class.clone(), |class| class.name.clone())))]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })))
+                        } else { Value::Bool(false) }
+                    }
+                    ("reflectionclassconstant", "getname") => internal.get("\0constant_name").cloned().ok_or("Invalid ReflectionClassConstant")?,
+                    ("reflectionclassconstant", "hastype") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        Value::Bool(super::objects::find_class_constant(&target, &name, classes).is_some_and(|(_, constant)| constant.type_name.is_some()))
+                    }
+                    ("reflectionclassconstant", "isenumcase") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.is_enum && class.enum_cases.iter().any(|case| case == &name)))
+                    }
+                    ("reflectionclassconstant", "gettype") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let type_name = super::objects::find_class_constant(&target, &name, classes).and_then(|(_, constant)| constant.type_name.clone());
+                        type_name.map_or(Value::Null, |type_name| reflection_type(&type_name))
+                    }
+                    ("reflectionclassconstant", "getvalue") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        super::objects::find_class_constant(&target, &name, classes).map(|(_, constant)| constant.value.clone()).ok_or("Reflected class constant no longer exists")?
+                    }
+                    ("reflectionclassconstant", "getdeclaringclass") => {
+                        let declaring = internal.get("\0declaring_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionClass".into(),
+                            properties: HashMap::from([("\0target_class".into(), Value::String(declaring))]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
+                    }
+                    ("reflectionclassconstant", "getmodifiers" | "ispublic" | "isprotected" | "isprivate" | "isfinal") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let constant = super::objects::find_class_constant(&target, &name, classes).map(|(_, constant)| constant).ok_or("Reflected class constant no longer exists")?;
+                        let visibility = match constant.visibility { crate::MemberVisibility::Public => 1, crate::MemberVisibility::Protected => 2, crate::MemberVisibility::Private => 4 };
+                        if method == "getmodifiers" { Value::Integer(visibility | if constant.is_final { 32 } else { 0 }) }
+                        else { Value::Bool(match method.as_str() { "ispublic" => visibility == 1, "isprotected" => visibility == 2, "isprivate" => visibility == 4, _ => constant.is_final }) }
+                    }
+                    ("reflectionclassconstant", "getattributes") => {
+                        let target = internal.get("\0declaring_class").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionClassConstant")?.show();
+                        let constant = classes.get(&target.to_ascii_lowercase()).and_then(|class| class.constants.get(&name)).ok_or("Reflected class constant no longer exists")?;
+                        let filter = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
+                        let flags = arguments.get(1).map_or(0, |flags| flags.number() as i64);
+                        if flags & !2 != 0 { return Err("ReflectionClassConstant::getAttributes(): unsupported flags".into()); }
+                        Value::from_array_entries(constant.attributes.iter().filter(|attribute| filter.as_ref().is_none_or(|name| attribute.name.eq_ignore_ascii_case(name) || (flags & 2 != 0 && super::is_a_type(&attribute.name, name, classes, &mut HashSet::new())))).enumerate().map(|(index, attribute)| {
+                            let arguments = reflection_attribute_arguments(&attribute.arguments);
+                            (ArrayKey::Integer(index as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionAttribute".into(),
+                                properties: HashMap::from([("\0attribute_name".into(), Value::String(attribute.name.clone())), ("\0attribute_arguments".into(), arguments), ("\0target_class".into(), Value::String(target.clone())), ("\0target_type".into(), Value::Integer(16)), ("\0target_member".into(), Value::String(name.clone()))]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            }))))
+                        }).collect())
+                    }
+                    ("reflectionconstant", "getname") => internal.get("\0constant_name").cloned().ok_or("Invalid ReflectionConstant")?,
+                    ("reflectionconstant", "getvalue") => {
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionConstant")?.show();
+                        super::read_constant(&name, global_variables)?
+                    }
+                    ("reflectionconstant", "getnamespace") => {
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionConstant")?.show();
+                        Value::String(name.rsplit_once('\\').map_or(String::new(), |(namespace, _)| namespace.to_string()))
+                    }
+                    ("reflectionconstant", "isdeprecated") => Value::Bool(false),
+                    ("reflectionconstant", "isuserdefined") => {
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionConstant")?.show();
+                        Value::Bool(global_variables.constants.contains_key(&name))
+                    }
+                    ("reflectionconstant", "isinternal") => {
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionConstant")?.show();
+                        Value::Bool(!global_variables.constants.contains_key(&name))
+                    }
+                    ("reflectionconstant", "getattributes") => {
+                        let name = internal.get("\0constant_name").ok_or("Invalid ReflectionConstant")?.show();
+                        let filter = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
+                        let flags = arguments.get(1).map_or(0, |flags| flags.number() as i64);
+                        if flags & !2 != 0 { return Err("ReflectionConstant::getAttributes(): unsupported flags".into()); }
+                        Value::from_array_entries(global_variables.constant_attributes.get(&name).into_iter().flatten()
+                            .filter(|attribute| filter.as_ref().is_none_or(|filter| attribute.name.eq_ignore_ascii_case(filter) || (flags & 2 != 0 && super::is_a_type(&attribute.name, filter, classes, &mut HashSet::new()))))
+                            .enumerate().map(|(index, attribute)| {
+                                (ArrayKey::Integer(index as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                    class_name: "ReflectionAttribute".into(),
+                                    properties: HashMap::from([
+                                        ("\0attribute_name".into(), Value::String(attribute.name.clone())),
+                                        ("\0attribute_arguments".into(), reflection_attribute_arguments(&attribute.arguments)),
+                                        ("\0target_class".into(), Value::String(name.clone())),
+                                        ("\0target_type".into(), Value::Integer(64)),
+                                    ]),
+                                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                                }))))
+                            }).collect())
+                    }
+                    ("reflectionclass" | "reflectionenum", "hasconstant") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let name = arguments.first().ok_or("ReflectionClass::hasConstant() expects exactly 1 argument")?.show();
+                        Value::Bool(super::objects::find_class_constant(&target, &name, classes).is_some())
+                    }
+                    ("reflectionclass" | "reflectionenum", "getconstants") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let filter = arguments.first().and_then(|value| match value.dereference() {
+                            Value::Null => None,
+                            Value::Integer(value) => Some(value),
+                            _ => None,
+                        });
+                        reflection_constants(&target, classes, filter)
+                    }
+                    ("reflectionclass" | "reflectionenum", "getdefaultproperties") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let mut chain = Vec::new();
+                        let mut current = Some(target.as_str());
+                        while let Some(name) = current {
+                            let Some(class) = classes.get(&name.to_ascii_lowercase()) else { break; };
+                            chain.push(class);
+                            current = class.parent.as_deref();
+                        }
+                        let mut properties = PhpArray::new();
+                        for (depth, class) in chain.iter().rev().enumerate() {
+                            let is_target = depth + 1 == chain.len();
+                            for name in &class.property_order {
+                                let Some(metadata) = class.properties.get(name) else { continue; };
+                                if !is_target && metadata.visibility == MemberVisibility::Private { continue; }
+                                properties.set(ArrayKey::String(name.clone()), metadata.default.clone().unwrap_or(Value::Null));
+                            }
+                            let mut static_names = class.static_properties.keys().cloned().collect::<Vec<_>>();
+                            static_names.sort();
+                            for name in static_names {
+                                let metadata = &class.static_properties[&name];
+                                if !is_target && metadata.visibility == MemberVisibility::Private { continue; }
+                                properties.set(ArrayKey::String(name), metadata.default.clone().unwrap_or(Value::Null));
+                            }
+                        }
+                        Value::Array(properties)
+                    }
+                    ("reflectionclass" | "reflectionenum", "getstaticproperties") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let mut chain = Vec::new();
+                        let mut current = Some(target.as_str());
+                        while let Some(name) = current {
+                            let Some(class) = classes.get(&name.to_ascii_lowercase()) else { break; };
+                            chain.push(class);
+                            current = class.parent.as_deref();
+                        }
+                        let mut properties = PhpArray::new();
+                        for (depth, class) in chain.iter().rev().enumerate() {
+                            let is_target = depth + 1 == chain.len();
+                            let mut names = class.static_properties.keys().cloned().collect::<Vec<_>>();
+                            names.sort();
+                            for name in names {
+                                let metadata = &class.static_properties[&name];
+                                if !is_target && metadata.visibility == MemberVisibility::Private { continue; }
+                                let storage_key = (class.name.to_ascii_lowercase(), name.clone());
+                                let value = static_properties.get(&storage_key).cloned()
+                                    .unwrap_or_else(|| metadata.default.clone().unwrap_or(Value::Null));
+                                properties.set(ArrayKey::String(name), value.dereference());
+                            }
+                        }
+                        Value::Array(properties)
+                    }
+                    ("reflectionclass", "hasmethod") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let name = arguments.first().ok_or("ReflectionClass::hasMethod() expects exactly 1 argument")?.show();
+                        Value::Bool(find_method(&target, &name.to_ascii_lowercase(), classes).is_some())
+                    }
+                    ("reflectionclass", "hasproperty") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let name = arguments.first().ok_or("ReflectionClass::hasProperty() expects exactly 1 argument")?.show();
+                        let mut current = Some(target.as_str());
+                        let target_key = target.to_ascii_lowercase();
+                        let mut found = false;
+                        while let Some(class_name) = current {
+                            let Some(class) = classes.get(&class_name.to_ascii_lowercase()) else { break; };
+                            let declared_here = class_name.eq_ignore_ascii_case(&target_key);
+                            let visible_member = |property: &crate::BytecodeProperty| declared_here || property.visibility != MemberVisibility::Private;
+                            if class.properties.get(&name).is_some_and(visible_member)
+                                || class.static_properties.get(&name).is_some_and(visible_member) {
+                                found = true;
+                                break;
+                            }
+                            current = class.parent.as_deref();
+                        }
+                        Value::Bool(found)
+                    }
+                    ("reflectionclass", "getmethods") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let reflection_class = if class_name.eq_ignore_ascii_case("ReflectionEnum") { "ReflectionEnum" } else { "ReflectionClass" };
+                        let filter = reflection_optional_int_argument(&arguments, reflection_class, "getMethods")?;
+                        let mut methods = Vec::new();
+                        let mut seen = HashSet::new();
+                        let mut current = Some(target.as_str());
+                        while let Some(class_name) = current {
+                            let Some(class) = classes.get(&class_name.to_ascii_lowercase()) else { break; };
+                            for method_name in &class.method_order {
+                                if !seen.insert(method_name.clone()) { continue; }
+                                let Some(function) = class.methods.get(method_name) else { continue; };
+                                if filter.is_some_and(|mask| reflection_method_modifiers(function) & mask == 0) { continue; }
+                                let declaring_class = function.declaring_class.as_deref().unwrap_or(&class.name);
+                                let display_name = classes.get(&declaring_class.to_ascii_lowercase())
+                                    .and_then(|declaring| declaring.method_display_names.get(method_name))
+                                    .cloned().unwrap_or_else(|| function.display_name.clone());
+                                methods.push((ArrayKey::Integer(methods.len() as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                    class_name: "ReflectionMethod".into(),
+                                    properties: HashMap::from([("\0target_class".into(), Value::String(declaring_class.to_string())), ("\0method_name".into(), Value::String(display_name))]),
+                                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                                })))));
+                            }
+                            current = class.parent.as_deref();
+                        }
+                        Value::from_array_entries(methods)
                     }
                     ("reflectionclass", "getparentclass") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
@@ -1554,6 +2282,46 @@ pub(super) fn execute_instruction(
                             None => Value::Bool(false),
                         }
                     }
+                    ("reflectionclass", "getinterfacenames") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let names = reflection_interface_names(&target, classes);
+                        Value::from_array_entries(names.into_iter().enumerate().map(|(i, name)| (ArrayKey::Integer(i as i64), Value::String(name))).collect())
+                    }
+                    ("reflectionclass", "getinterfaces") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::from_array_entries(reflection_interface_names(&target, classes).into_iter().map(|name| {
+                            let key = ArrayKey::String(name.clone());
+                            let reflected = Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionClass".into(),
+                                properties: HashMap::from([("\0target_class".into(), Value::String(name))]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })));
+                            (key, reflected)
+                        }).collect())
+                    }
+                    ("reflectionclass", "gettraitnames") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::from_array_entries(reflection_trait_names(&target, classes).into_iter().enumerate()
+                            .map(|(index, name)| (ArrayKey::Integer(index as i64), Value::String(name))).collect())
+                    }
+                    ("reflectionclass", "gettraits") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::from_array_entries(reflection_trait_names(&target, classes).into_iter().map(|name| {
+                            let reflected = Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionClass".into(),
+                                properties: HashMap::from([("\0target_class".into(), Value::String(name.clone()))]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })));
+                            (ArrayKey::String(name), reflected)
+                        }).collect())
+                    }
+                    ("reflectionclass", "gettraitaliases") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let aliases = classes.get(&target.to_ascii_lowercase()).map(|class| class.trait_aliases.as_slice()).unwrap_or_default();
+                        Value::from_array_entries(aliases.iter().map(|(alias, original)|
+                            (ArrayKey::String(alias.clone()), Value::String(original.clone()))
+                        ).collect())
+                    }
                     ("reflectionclass", "issubclassof" | "implementsinterface") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
                         let related = arguments.first().ok_or_else(|| format!("ReflectionClass::{method}() expects exactly 1 argument"))?.show();
@@ -1561,7 +2329,71 @@ pub(super) fn execute_instruction(
                         let matches = super::is_a_type(&target.to_ascii_lowercase(), &related.to_ascii_lowercase(), classes, &mut HashSet::new());
                         Value::Bool(matches && (method == "implementsinterface" || !same))
                     }
-                    ("reflectionclass" | "reflectionenum", "getname") => internal.get("\0target_class").cloned().ok_or("Invalid ReflectionClass target")?,
+                    ("reflectionclass" | "reflectionenum", "getname") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        classes.get(&target.to_ascii_lowercase()).map_or_else(
+                            || Value::String(target),
+                            |class| Value::String(class.reflection_name.clone()),
+                        )
+                    }
+                    ("reflectionclass" | "reflectionenum", "getshortname" | "getnamespacename" | "innamespace") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let reflected = classes.get(&target.to_ascii_lowercase());
+                        if reflected.is_some_and(|class| class.name.starts_with("class@anonymous#")) {
+                            match method.as_str() {
+                                "getshortname" => Value::String("class@anonymous".into()),
+                                "getnamespacename" => Value::String(String::new()),
+                                _ => Value::Bool(false),
+                            }
+                        } else {
+                            let target = reflected.map_or(target.as_str(), |class| class.reflection_name.as_str());
+                            let target = target.trim_start_matches('\\');
+                            let namespace = target.rsplit_once('\\').map_or("", |(namespace, _)| namespace);
+                            match method.as_str() {
+                                "getshortname" => Value::String(target.rsplit('\\').next().unwrap_or(target).into()),
+                                "getnamespacename" => Value::String(namespace.into()),
+                                _ => Value::Bool(!namespace.is_empty()),
+                            }
+                        }
+                    }
+                    ("reflectionclass" | "reflectionenum", "istrait") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        Value::Bool(classes.get(&target.to_ascii_lowercase()).is_some_and(|class| class.is_trait))
+                    }
+                    ("reflectionclass" | "reflectionenum", "isinstance") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let object = arguments.first().ok_or_else(|| format!("ReflectionClass::isInstance() expects exactly 1 argument"))?;
+                        let actual = match object.dereference() {
+                            Value::Object(object) => object.borrow().class_name.clone(),
+                            Value::Generator(_) => "Generator".into(),
+                            other => return Err(format!("TypeError:ReflectionClass::isInstance(): Argument #1 ($object) must be of type object, {} given", other.type_name())),
+                        };
+                        Value::Bool(super::is_a_type(&actual.to_ascii_lowercase(), &target.to_ascii_lowercase(), classes, &mut HashSet::new()))
+                    }
+                    ("reflectionclass" | "reflectionenum", "iscloneable") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let cloneable_kind = classes.get(&target.to_ascii_lowercase())
+                            .is_some_and(|class| !class.is_interface && !class.is_trait && !class.is_enum);
+                        Value::Bool(cloneable_kind && find_method(&target, "__clone", classes)
+                            .is_none_or(|method| method.visibility != crate::MemberVisibility::Private))
+                    }
+                    ("reflectionclass" | "reflectionenum", "getconstructor") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        if let Some(constructor) = find_method(&target, "__construct", classes) {
+                            let declaring_class = constructor.declaring_class.clone().unwrap_or_else(|| target.to_ascii_lowercase());
+                            let display_name = classes.get(&declaring_class.to_ascii_lowercase())
+                                .and_then(|class| class.method_display_names.get("__construct")).cloned()
+                                .unwrap_or_else(|| "__construct".into());
+                            Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionMethod".into(),
+                                properties: HashMap::from([
+                                    ("\0target_class".into(), Value::String(declaring_class)),
+                                    ("\0method_name".into(), Value::String(display_name)),
+                                ]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })))
+                        } else { Value::Null }
+                    }
                     ("reflectionclass" | "reflectionenum", "getattributes") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
                         let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
@@ -1580,11 +2412,46 @@ pub(super) fn execute_instruction(
                         }).collect();
                         Value::from_array_entries(entries)
                     }
+                    ("reflectionclass" | "reflectionenum", "getproperties") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
+                        let reflection_class = if class_name.eq_ignore_ascii_case("ReflectionEnum") { "ReflectionEnum" } else { "ReflectionClass" };
+                        let filter = reflection_optional_int_argument(&arguments, reflection_class, "getProperties")?;
+                        let mut properties = Vec::new();
+                        let mut seen = HashSet::new();
+                        let mut current = Some(target.as_str());
+                        while let Some(class_name) = current {
+                            let Some(class) = classes.get(&class_name.to_ascii_lowercase()) else { break; };
+                            let declared_here = class_name.eq_ignore_ascii_case(&target);
+                            let mut instance_names = class.property_order.clone();
+                            let mut remaining = class.properties.keys().filter(|name| !instance_names.contains(name)).cloned().collect::<Vec<_>>();
+                            remaining.sort();
+                            instance_names.extend(remaining);
+                            for (is_static, names) in [(false, instance_names), (true, { let mut names = class.static_properties.keys().cloned().collect::<Vec<_>>(); names.sort(); names })] {
+                                for name in names {
+                                    let metadata = if is_static { &class.static_properties[&name] } else { &class.properties[&name] };
+                                    if !declared_here && metadata.visibility == MemberVisibility::Private { continue; }
+                                    if !seen.insert(name.clone()) { continue; }
+                                    let visibility = match metadata.visibility { MemberVisibility::Public => 1, MemberVisibility::Protected => 2, MemberVisibility::Private => 4 };
+                                    let set_modifier = match metadata.set_visibility { Some(MemberVisibility::Private) => 32, Some(MemberVisibility::Protected) => 64, _ => 0 };
+                                    let modifiers = visibility | set_modifier | if is_static { 16 } else { 0 } | if metadata.is_readonly { 128 } else { 0 };
+                                    if filter.is_some_and(|mask| modifiers & mask == 0) { continue; }
+                                    properties.push((ArrayKey::Integer(properties.len() as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                        class_name: "ReflectionProperty".into(),
+                                        properties: HashMap::from([("\0target_class".into(), Value::String(class.name.clone())), ("\0property_name".into(), Value::String(name))]),
+                                        property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                                    })))));
+                                }
+                            }
+                            current = class.parent.as_deref();
+                        }
+                        Value::from_array_entries(properties)
+                    }
                     ("reflectionclass" | "reflectionenum", "getmethod") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionClass target")?.show();
                         let name = arguments.first().ok_or("ReflectionClass::getMethod() expects exactly 1 argument")?.show();
-                        let method = find_method(&target, &name.to_ascii_lowercase(), classes).ok_or_else(|| format!("Method {target}::{name}() does not exist"))?;
+                        let method = find_method(&target, &name.to_ascii_lowercase(), classes).ok_or_else(|| format!("ReflectionException:Method {target}::{name}() does not exist"))?;
                         let declaring_class = method.declaring_class.clone().unwrap_or_else(|| target.to_ascii_lowercase());
+                        let declaring_class = classes.get(&declaring_class.to_ascii_lowercase()).map_or(declaring_class, |class| class.name.clone());
                         let display_name = classes.get(&declaring_class.to_ascii_lowercase()).and_then(|class| class.method_display_names.get(&method.name.to_ascii_lowercase())).cloned().unwrap_or(name);
                         Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
                             class_name: "ReflectionMethod".into(),
@@ -1599,10 +2466,16 @@ pub(super) fn execute_instruction(
                         let mut declaring = None;
                         while let Some(class_name) = current {
                             let Some(class) = classes.get(&class_name.to_ascii_lowercase()) else { break; };
-                            if class.properties.contains_key(&name) || class.static_properties.contains_key(&name) { declaring = Some(class.name.clone()); break; }
+                            let candidate = class.properties.get(&name).or_else(|| class.static_properties.get(&name));
+                            if candidate.is_some_and(|property| {
+                                class_name.eq_ignore_ascii_case(&target) || property.visibility != MemberVisibility::Private
+                            }) {
+                                declaring = Some(class.name.clone());
+                                break;
+                            }
                             current = class.parent.as_deref();
                         }
-                        let declaring = declaring.ok_or_else(|| format!("Property {target}::${name} does not exist"))?;
+                        let declaring = declaring.ok_or_else(|| format!("ReflectionException:Property {target}::${name} does not exist"))?;
                         Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
                             class_name: "ReflectionProperty".into(),
                             properties: HashMap::from([("\0target_class".into(), Value::String(declaring)), ("\0property_name".into(), Value::String(name))]),
@@ -1610,19 +2483,307 @@ pub(super) fn execute_instruction(
                         })))
                     }
                     ("reflectionmethod", "getname") => internal.get("\0method_name").cloned().ok_or("Invalid ReflectionMethod")?,
+                    ("reflectionmethod", "getclosure") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        let receiver = if function.is_static {
+                            if let Some(argument) = arguments.first() {
+                                if !matches!(argument.dereference(), Value::Null | Value::Object(_)) {
+                                    return Err(format!("TypeError:ReflectionMethod::getClosure(): Argument #1 ($object) must be of type ?object, {} given", argument.type_name()));
+                                }
+                            }
+                            Value::String(target.clone())
+                        } else {
+                            let receiver = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null))
+                                .ok_or_else(|| format!("ReflectionException:Trying to get closure for non static method {target}::{method_name}() without an object"))?
+                                .dereference();
+                            let Value::Object(object) = &receiver else {
+                                return Err(format!("ReflectionException:Given object is not an instance of class {target}"));
+                            };
+                            if !super::is_a_type(&object.borrow().class_name.to_ascii_lowercase(), &target.to_ascii_lowercase(), classes, &mut HashSet::new()) {
+                                return Err(format!("ReflectionException:Given object is not an instance of class {target}"));
+                            }
+                            receiver
+                        };
+                        let target_callable = Value::from_array_entries(vec![
+                            (ArrayKey::Integer(0), receiver),
+                            (ArrayKey::Integer(1), Value::String(method_name)),
+                        ]);
+                        let wrapper = BytecodeFunction::new(
+                            "{reflection-method-closure}".into(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(),
+                            None, false, Vec::new(), false, false, false, MemberVisibility::Public, None,
+                        );
+                        Value::Closure(Rc::new(std::cell::RefCell::new(PhpClosure {
+                            function: wrapper, captures: HashMap::new(), capture_order: Vec::new(),
+                            reference_captures: HashMap::new(), callable_target: Some(target_callable),
+                            callable_access_scope: Some(function.declaring_class.clone().unwrap_or_else(|| target.clone())),
+                        })))
+                    }
+                    ("reflectionmethod", "invoke" | "invokeargs") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        let receiver = if function.is_static {
+                            Value::String(target.clone())
+                        } else {
+                            let receiver = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null))
+                                .ok_or_else(|| format!("ReflectionException:Trying to invoke non static method {target}::{method_name}() without an object"))?
+                                .dereference();
+                            let Value::Object(object) = &receiver else {
+                                return Err(format!("ReflectionException:Given object is not an instance of class {target}"));
+                            };
+                            if !super::is_a_type(&object.borrow().class_name.to_ascii_lowercase(), &target.to_ascii_lowercase(), classes, &mut HashSet::new()) {
+                                return Err(format!("ReflectionException:Given object is not an instance of class {target}"));
+                            }
+                            receiver
+                        };
+                        let (invoke_args, invoke_references, invoke_names) = if method == "invoke" {
+                            (
+                                arguments.iter().skip(1).cloned().collect::<Vec<_>>(),
+                                reference_names.iter().skip(1).cloned().collect::<Vec<_>>(),
+                                argument_names.iter().skip(1).cloned().collect::<Vec<_>>(),
+                            )
+                        } else {
+                            match arguments.get(1).map(Value::dereference) {
+                                Some(Value::Array(values)) => {
+                                    let mut values_out = Vec::with_capacity(values.len());
+                                    let mut references_out = Vec::with_capacity(values.len());
+                                    let mut names_out = Vec::with_capacity(values.len());
+                                    for (key, value) in values.iter() {
+                                        values_out.push(value.clone());
+                                        references_out.push(match value {
+                                            Value::Reference(reference) => Some(ReferenceArgument {
+                                                variable: String::new(), array_keys: Vec::new(), object_property: None,
+                                                direct_reference: Some(reference.clone()),
+                                            }),
+                                            _ => None,
+                                        });
+                                        names_out.push(match key { ArrayKey::String(name) => Some(name.clone()), ArrayKey::Integer(_) => None });
+                                    }
+                                    (values_out, references_out, names_out)
+                                }
+                                Some(value) => return Err(format!("TypeError:ReflectionMethod::invokeArgs(): Argument #2 ($args) must be of type array, {} given", value.type_name())),
+                                None => return Err("ReflectionMethod::invokeArgs() expects exactly 2 arguments".into()),
+                            }
+                        };
+                        let callable = Value::from_array_entries(vec![
+                            (ArrayKey::Integer(0), receiver),
+                            (ArrayKey::Integer(1), Value::String(method_name)),
+                        ]);
+                        invoke_array_callable_scoped(
+                            &callable, invoke_args, &invoke_references, &invoke_names, variables, bindings, global_scope, frame_id,
+                            functions, classes, static_properties, global_variables, output, steps, false,
+                            function.declaring_class.as_deref(),
+                        )?
+                    }
+                    ("reflectionmethod", "getnumberofparameters" | "getnumberofrequiredparameters" | "hasreturntype" | "getreturntype") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        match method.as_str() {
+                            "getnumberofparameters" => Value::Integer(function.parameters.len() as i64),
+                            "getnumberofrequiredparameters" => Value::Integer(function.parameters.iter().enumerate().filter(|(index, _)| {
+                                function.parameter_defaults.get(*index).is_none_or(Option::is_none)
+                                    && !function.parameter_variadic.get(*index).copied().unwrap_or(false)
+                            }).map(|(index, _)| index + 1).max().unwrap_or(0) as i64),
+                            "hasreturntype" => Value::Bool(function.return_type.is_some()),
+                            "getreturntype" => function.return_type.as_deref().map(reflection_type).unwrap_or(Value::Null),
+                            _ => unreachable!(),
+                        }
+                    }
+                    ("reflectionmethod", "setaccessible") => {
+                        let _accessible = arguments.first().ok_or("ReflectionMethod::setAccessible() expects exactly 1 argument")?.truthy();
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: "Method ReflectionMethod::setAccessible() is deprecated since 8.5, as it has no effect since PHP 8.1".into(),
+                            source_file: None, source_line: None, output_offset: 0,
+                        });
+                        Value::Null
+                    }
+                    ("reflectionmethod", "getdeclaringclass") => {
+                        let declaring = internal.get("\0target_class").cloned().ok_or("Invalid ReflectionMethod target")?;
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionClass".into(),
+                            properties: HashMap::from([("\0target_class".into(), declaring)]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
+                    }
+                    ("reflectionmethod", "getmodifiers") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        Value::Integer(reflection_method_modifiers(function))
+                    }
+                    ("reflectionmethod", "hasprototype" | "getprototype") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let prototype = reflection_method_prototype(&target, &method_name, classes);
+                        if method == "hasprototype" {
+                            Value::Bool(prototype.is_some())
+                        } else {
+                            let (class, name) = prototype.ok_or_else(|| format!("ReflectionException:Method {target}::{method_name}() does not have a prototype"))?;
+                            Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionMethod".into(),
+                                properties: HashMap::from([
+                                    ("\0target_class".into(), Value::String(class)),
+                                    ("\0method_name".into(), Value::String(name)),
+                                ]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })))
+                        }
+                    }
+                    ("reflectionmethod", "ispublic" | "isprotected" | "isprivate" | "isstatic" | "isabstract" | "isfinal" | "isconstructor" | "isdestructor") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        let matches = match method.as_str() {
+                            "ispublic" => function.visibility == MemberVisibility::Public,
+                            "isprotected" => function.visibility == MemberVisibility::Protected,
+                            "isprivate" => function.visibility == MemberVisibility::Private,
+                            "isstatic" => function.is_static,
+                            "isabstract" => function.is_abstract,
+                            "isfinal" => function.is_final,
+                            "isconstructor" => method_name.eq_ignore_ascii_case("__construct"),
+                            "isdestructor" => method_name.eq_ignore_ascii_case("__destruct"),
+                            _ => false,
+                        };
+                        Value::Bool(matches)
+                    }
+                    ("reflectionmethod", "isvariadic" | "returnsreference" | "isclosure") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
+                        let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
+                        let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
+                        Value::Bool(match method.as_str() {
+                            "isvariadic" => function.parameter_variadic.iter().any(|variadic| *variadic),
+                            "returnsreference" => function.returns_by_reference,
+                            "isclosure" => false,
+                            _ => false,
+                        })
+                    }
                     ("reflectionmethod", "getparameters") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionMethod target")?.show();
                         let method_name = internal.get("\0method_name").ok_or("Invalid ReflectionMethod name")?.show();
                         let function = find_method(&target, &method_name.to_ascii_lowercase(), classes).ok_or("Reflected method no longer exists")?;
                         let entries = function.parameters.iter().enumerate().map(|(position, name)| (ArrayKey::Integer(position as i64), Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
                             class_name: "ReflectionParameter".into(),
-                            properties: HashMap::from([("\0target_class".into(), Value::String(target.clone())), ("\0method_name".into(), Value::String(method_name.to_ascii_lowercase())), ("\0parameter_name".into(), Value::String(name.clone())), ("\0parameter_position".into(), Value::Integer(position as i64))]),
+                            properties: HashMap::from([
+                                ("\0target_class".into(), Value::String(target.clone())),
+                                ("\0method_name".into(), Value::String(method_name.to_ascii_lowercase())),
+                                ("\0parameter_name".into(), Value::String(name.clone())),
+                                ("\0parameter_position".into(), Value::Integer(position as i64)),
+                                ("\0parameter_type".into(), function.parameter_types.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
+                                ("\0parameter_by_reference".into(), Value::Bool(function.parameter_by_reference.get(position).copied().unwrap_or(false))),
+                                ("\0parameter_variadic".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false))),
+                                ("\0parameter_promoted".into(), Value::Bool(function.parameter_promoted.get(position).copied().unwrap_or(false))),
+                                ("\0parameter_has_default".into(), Value::Bool(function.parameter_defaults.get(position).is_some_and(Option::is_some))),
+                                ("\0parameter_optional".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false) || (function.parameter_defaults.get(position).is_some_and(Option::is_some) && position >= required_parameter_count(&function)))),
+                                ("\0parameter_default".into(), function.parameter_defaults.get(position).and_then(Clone::clone).unwrap_or(Value::Null)),
+                                ("\0parameter_default_constant_name".into(), function.parameter_default_constant_names.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
+                            ]),
                             property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
                         }))))).collect();
                         Value::from_array_entries(entries)
                     }
                     ("reflectionparameter", "getname") => internal.get("\0parameter_name").cloned().ok_or("Invalid ReflectionParameter")?,
                     ("reflectionparameter", "getposition") => internal.get("\0parameter_position").cloned().ok_or("Invalid ReflectionParameter")?,
+                    ("reflectionparameter", "getdeclaringclass") => match internal.get("\0target_class") {
+                        Some(target) => Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionClass".into(),
+                            properties: HashMap::from([("\0target_class".into(), target.clone())]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        }))),
+                        None => Value::Null,
+                    },
+                    ("reflectionparameter", "getdeclaringfunction") => {
+                        if let Some(target) = internal.get("\0target_class") {
+                            let method_name = internal.get("\0method_name").cloned().ok_or("Invalid ReflectionParameter method")?;
+                            Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionMethod".into(),
+                                properties: HashMap::from([("\0target_class".into(), target.clone()), ("\0method_name".into(), method_name)]),
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })))
+                        } else if let Some(function_name) = internal.get("\0function_name").filter(|value| !matches!(value.dereference(), Value::Null)) {
+                            let mut properties = HashMap::from([("\0function_name".into(), function_name.clone())]);
+                            if let Some(closure) = internal.get("\0closure").filter(|value| !matches!(value.dereference(), Value::Null)) {
+                                properties.insert("\0closure".into(), closure.clone());
+                            }
+                            Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                class_name: "ReflectionFunction".into(), properties,
+                                property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                            })))
+                        } else { Value::Null }
+                    }
+                    ("reflectionparameter", "ispassedbyreference") => internal.get("\0parameter_by_reference").cloned().unwrap_or(Value::Bool(false)),
+                    ("reflectionparameter", "canbepassedbyvalue") => Value::Bool(!internal.get("\0parameter_by_reference").is_some_and(Value::truthy)),
+                    ("reflectionparameter", "isvariadic") => internal.get("\0parameter_variadic").cloned().unwrap_or(Value::Bool(false)),
+                    ("reflectionparameter", "ispromoted") => internal.get("\0parameter_promoted").cloned().unwrap_or(Value::Bool(false)),
+                    ("reflectionparameter", "isoptional") => internal.get("\0parameter_optional").cloned().unwrap_or(Value::Bool(false)),
+                    ("reflectionparameter", "isdefaultvalueavailable") => internal.get("\0parameter_has_default").cloned().unwrap_or(Value::Bool(false)),
+                    ("reflectionparameter", "isdefaultvalueconstant") => Value::Bool(internal.get("\0parameter_default_constant_name").is_some_and(|value| !matches!(value.dereference(), Value::Null))),
+                    ("reflectionparameter", "getdefaultvalueconstantname") => {
+                        if !internal.get("\0parameter_has_default").is_some_and(Value::truthy) {
+                            let name = internal.get("\0parameter_name").map(Value::show).unwrap_or_default();
+                            return Err(format!("ReflectionException:Parameter ${name} does not have a default value"));
+                        }
+                        internal.get("\0parameter_default_constant_name").cloned().unwrap_or(Value::Null)
+                    }
+                    ("reflectionparameter", "getdefaultvalue") => {
+                        if !internal.get("\0parameter_has_default").is_some_and(Value::truthy) {
+                            let name = internal.get("\0parameter_name").map(Value::show).unwrap_or_default();
+                            return Err(format!("ReflectionException:Parameter ${name} does not have a default value"));
+                        }
+                        internal.get("\0parameter_default").cloned().unwrap_or(Value::Null)
+                    }
+                    ("reflectionparameter", "hastype") => Value::Bool(internal.get("\0parameter_type").is_some_and(|value| !matches!(value.dereference(), Value::Null))),
+                    ("reflectionparameter", "gettype") => internal.get("\0parameter_type").filter(|value| !matches!(value.dereference(), Value::Null)).map(|value| reflection_type(&value.show())).unwrap_or(Value::Null),
+                    ("reflectionparameter", "allowsnull") => {
+                        match internal.get("\0parameter_type").filter(|value| !matches!(value.dereference(), Value::Null)) {
+                            None => Value::Bool(true),
+                            Some(type_name) => {
+                                let reflected_type = reflection_type(&type_name.show());
+                                let type_allows_null = match reflected_type.dereference() {
+                                    Value::Object(object) => object.borrow().properties.get("\0allows_null").is_some_and(Value::truthy),
+                                    _ => false,
+                                };
+                                let default_is_null = internal.get("\0parameter_has_default").is_some_and(Value::truthy)
+                                    && internal.get("\0parameter_default").is_some_and(|value| matches!(value.dereference(), Value::Null));
+                                Value::Bool(type_allows_null || default_is_null)
+                            }
+                        }
+                    }
+                    ("reflectionparameter", "getclass" | "isarray" | "iscallable") => {
+                        let method_name = match method.as_str() {
+                            "getclass" => "getClass",
+                            "isarray" => "isArray",
+                            _ => "isCallable",
+                        };
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: format!("Method ReflectionParameter::{method_name}() is deprecated since 8.0, use ReflectionParameter::getType() instead"),
+                            source_file: None, source_line: None, output_offset: 0,
+                        });
+                        let type_name = internal.get("\0parameter_type").filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
+                        let names: Vec<String> = type_name.as_deref().map(|name| {
+                            let normalized = name.strip_prefix('?').unwrap_or(name);
+                            let normalized = strip_type_parentheses(normalized);
+                            let union = split_top_level_type(normalized, '|');
+                            if union.is_empty() { vec![normalized.to_string()] } else { union.into_iter().map(str::to_string).collect() }
+                        }).unwrap_or_default();
+                        match method.as_str() {
+                            "isarray" => Value::Bool(names.iter().any(|name| name.eq_ignore_ascii_case("array"))),
+                            "iscallable" => Value::Bool(names.iter().any(|name| name.eq_ignore_ascii_case("callable"))),
+                            _ => {
+                                let class_name = (names.len() == 1 && !matches!(names[0].to_ascii_lowercase().as_str(), "int" | "float" | "string" | "bool" | "array" | "object" | "callable" | "iterable" | "void" | "never" | "mixed" | "null" | "false" | "true"))
+                                    .then(|| names[0].clone());
+                                class_name.map(|name| Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                                    class_name: "ReflectionClass".into(),
+                                    properties: HashMap::from([("\0target_class".into(), Value::String(name))]),
+                                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                                })))).unwrap_or(Value::Null)
+                            }
+                        }
+                    }
                     ("reflectionparameter", "getattributes") => {
                         if let Some(Value::Array(attributes)) = internal.get("\0parameter_attributes").map(Value::dereference) {
                             let filter = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null)).map(Value::show);
@@ -1673,6 +2834,154 @@ pub(super) fn execute_instruction(
                         Value::from_array_entries(entries)
                     }
                     ("reflectionproperty", "getname") => internal.get("\0property_name").cloned().ok_or("Invalid ReflectionProperty")?,
+                    ("reflectionproperty", "getvalue") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
+                        let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
+                        let metadata = class.properties.get(&property).or_else(|| class.static_properties.get(&property))
+                            .ok_or("Reflected property no longer exists")?;
+                        if class.static_properties.contains_key(&property) {
+                            static_properties.get(&(target.to_ascii_lowercase(), property.clone())).cloned()
+                                .ok_or_else(|| format!("Error:Typed static property {}::${property} must not be accessed before initialization", class.name))?
+                        } else {
+                            let object = match arguments.first().map(Value::dereference) {
+                                Some(Value::Object(object)) => object,
+                                None | Some(Value::Null) => return Err(format!("ReflectionException:ReflectionProperty::getValue() for non-static property {}::${property} requires an object", class.name)),
+                                Some(value) => return Err(format!("TypeError:ReflectionProperty::getValue(): Argument #1 ($object) must be of type ?object, {} given", value.type_name())),
+                            };
+                            let object_class = object.borrow().class_name.clone();
+                            if !super::is_a_type(&object_class.to_ascii_lowercase(), &class.name, classes, &mut HashSet::new()) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {}", class.name));
+                            }
+                            super::objects::read_property(
+                                &Value::Object(object), &property, Some(&metadata.declaring_class),
+                                functions, classes, static_properties, global_variables, output, steps,
+                            )?.dereference()
+                        }
+                    }
+                    ("reflectionproperty", "setvalue") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
+                        let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
+                        let metadata = class.properties.get(&property).or_else(|| class.static_properties.get(&property))
+                            .ok_or("Reflected property no longer exists")?;
+                        let object_argument = arguments.first().map(Value::dereference);
+                        let value = arguments.get(1).ok_or("ReflectionProperty::setValue() expects exactly 2 arguments")?.dereference();
+                        if class.static_properties.contains_key(&property) {
+                            if !matches!(object_argument, None | Some(Value::Null)) {
+                                return Err("ReflectionException:Static property ReflectionProperty::setValue() expects null for the object argument".into());
+                            }
+                            if metadata.is_readonly && static_properties.contains_key(&(target.to_ascii_lowercase(), property.clone())) {
+                                return Err(format!("Error:Cannot modify readonly property {}::${property}", class.name));
+                            }
+                            if let Some(type_name) = &metadata.type_name {
+                                super::objects::ensure_property_type(&value, type_name, &property, classes)?;
+                            }
+                            static_properties.insert((target.to_ascii_lowercase(), property), value);
+                        } else {
+                            let object = match object_argument {
+                                Some(Value::Object(object)) => object,
+                                None | Some(Value::Null) => return Err(format!("ReflectionException:ReflectionProperty::setValue() for non-static property {}::${property} requires an object", class.name)),
+                                Some(other) => return Err(format!("TypeError:ReflectionProperty::setValue(): Argument #1 ($object) must be of type ?object, {} given", other.type_name())),
+                            };
+                            let object_class = object.borrow().class_name.clone();
+                            if !super::is_a_type(&object_class.to_ascii_lowercase(), &class.name, classes, &mut HashSet::new()) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {}", class.name));
+                            }
+                            super::objects::assign_property(
+                                &Value::Object(object), &property, value, Some(&metadata.declaring_class), true,
+                                functions, classes, static_properties, global_variables, output, steps,
+                            )?;
+                        }
+                        Value::Null
+                    }
+                    ("reflectionproperty", "setaccessible") => {
+                        let _accessible = arguments.first().ok_or("ReflectionProperty::setAccessible() expects exactly 1 argument")?.truthy();
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: "Method ReflectionProperty::setAccessible() is deprecated since 8.5, as it has no effect since PHP 8.1".into(),
+                            source_file: None, source_line: None, output_offset: 0,
+                        });
+                        Value::Null
+                    }
+                    ("reflectionproperty", "getdeclaringclass") => {
+                        let declaring = internal.get("\0target_class").cloned().ok_or("Invalid ReflectionProperty target")?;
+                        Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                            class_name: "ReflectionClass".into(),
+                            properties: HashMap::from([("\0target_class".into(), declaring)]),
+                            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                        })))
+                    }
+                    ("reflectionproperty", "hastype" | "gettype" | "getmodifiers" | "ispublic" | "isprotected" | "isprivate" | "isstatic" | "isreadonly" | "isprivateset" | "isprotectedset" | "ispromoted") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
+                        let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
+                        let metadata = class.properties.get(&property).or_else(|| class.static_properties.get(&property))
+                            .ok_or("Reflected property no longer exists")?;
+                        if method == "hastype" { Value::Bool(metadata.type_name.is_some()) }
+                        else if method == "gettype" { metadata.type_name.as_deref().map(reflection_type).unwrap_or(Value::Null) }
+                        else {
+                            let visibility = match metadata.visibility { crate::MemberVisibility::Public => 1, crate::MemberVisibility::Protected => 2, crate::MemberVisibility::Private => 4 };
+                            let set_modifier = match metadata.set_visibility { Some(crate::MemberVisibility::Private) => 32, Some(crate::MemberVisibility::Protected) => 64, _ => 0 };
+                            let modifiers = visibility | set_modifier | if metadata.default.is_some() && class.static_properties.contains_key(&property) { 16 } else { 0 } | if metadata.is_readonly { 128 } else { 0 };
+                            match method.as_str() {
+                                "getmodifiers" => Value::Integer(modifiers),
+                                "ispublic" => Value::Bool(metadata.visibility == crate::MemberVisibility::Public),
+                                "isprotected" => Value::Bool(metadata.visibility == crate::MemberVisibility::Protected),
+                                "isprivate" => Value::Bool(metadata.visibility == crate::MemberVisibility::Private),
+                                "isstatic" => Value::Bool(class.static_properties.contains_key(&property)),
+                                "isreadonly" => Value::Bool(metadata.is_readonly),
+                                "isprivateset" => Value::Bool(metadata.set_visibility == Some(crate::MemberVisibility::Private)),
+                                "isprotectedset" => Value::Bool(metadata.set_visibility == Some(crate::MemberVisibility::Protected)),
+                                "ispromoted" => Value::Bool(metadata.is_promoted),
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    ("reflectionproperty", "isinitialized") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
+                        let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
+                        let metadata = class.properties.get(&property).or_else(|| class.static_properties.get(&property))
+                            .ok_or("Reflected property no longer exists")?;
+                        let object_argument = match arguments.first().map(Value::dereference) {
+                            None | Some(Value::Null) => None,
+                            Some(Value::Object(object)) => Some(object),
+                            Some(value) => return Err(format!("TypeError:ReflectionProperty::isInitialized(): Argument #1 ($object) must be of type ?object, {} given", value.type_name())),
+                        };
+                        if class.static_properties.contains_key(&property) {
+                            Value::Bool(static_properties.contains_key(&(target.to_ascii_lowercase(), property)))
+                        } else {
+                            let object = object_argument
+                                .ok_or_else(|| format!("ReflectionException:Trying to check initialization of non-static property {}::${property} without an object", class.name))?;
+                            let object_class = object.borrow().class_name.clone();
+                            if !super::is_a_type(&object_class, &class.name, classes, &mut HashSet::new()) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {}", class.name));
+                            }
+                            let storage_key = instance_property_storage_key(metadata, &property);
+                            let initialized = object.borrow().properties.contains_key(&storage_key);
+                            Value::Bool(initialized)
+                        }
+                    }
+                    ("reflectionproperty", "hasdefaultvalue" | "getdefaultvalue") => {
+                        let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
+                        let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
+                        let class = classes.get(&target.to_ascii_lowercase()).ok_or("Reflected class no longer exists")?;
+                        let metadata = class.properties.get(&property).or_else(|| class.static_properties.get(&property))
+                            .ok_or("Reflected property no longer exists")?;
+                        let has_default = metadata.default.is_some() || (metadata.type_name.is_none() && !metadata.is_promoted);
+                        if method == "hasdefaultvalue" { Value::Bool(has_default) }
+                        else {
+                            if !has_default {
+                                global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                    level: crate::DiagnosticLevel::Deprecated,
+                                    message: "ReflectionProperty::getDefaultValue() for a property without a default value is deprecated, use ReflectionProperty::hasDefaultValue() to check if the default value exists".into(),
+                                    source_file: None, source_line: None, output_offset: 0,
+                                });
+                            }
+                            metadata.default.clone().unwrap_or(Value::Null)
+                        }
+                    }
                     ("reflectionproperty", "getattributes") => {
                         let target = internal.get("\0target_class").ok_or("Invalid ReflectionProperty target")?.show();
                         let property = internal.get("\0property_name").ok_or("Invalid ReflectionProperty name")?.show();
@@ -1702,6 +3011,8 @@ pub(super) fn execute_instruction(
                         let target_type = internal.get("\0target_type").map_or(1, |value| value.number() as i64);
                         let count = if target_type == 2 {
                             functions.get(&target.to_ascii_lowercase()).map_or(0, |function| function.attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&name)).count())
+                        } else if target_type == 64 {
+                            global_variables.constant_attributes.get(&target).map_or(0, |attributes| attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&name)).count())
                         } else { classes.get(&target.to_ascii_lowercase()).map_or(0, |class| {
                             if target_type == 4 {
                                 let method = internal.get("\0target_member").map(Value::show).unwrap_or_default();
@@ -1709,6 +3020,9 @@ pub(super) fn execute_instruction(
                             } else if target_type == 8 {
                                 let property = internal.get("\0target_member").map(Value::show).unwrap_or_default();
                                 class.property_attributes.get(&property).map_or(0, |attributes| attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&name)).count())
+                            } else if target_type == 16 {
+                                let constant = internal.get("\0target_member").map(Value::show).unwrap_or_default();
+                                class.constants.get(&constant).map_or(0, |constant| constant.attributes.iter().filter(|attribute| attribute.name.eq_ignore_ascii_case(&name)).count())
                             } else if target_type == 32 {
                                 let method = internal.get("\0target_member").map(Value::show).unwrap_or_default();
                                 let position = internal.get("\0target_position").map_or(usize::MAX, |value| value.number() as usize);
@@ -1783,13 +3097,15 @@ pub(super) fn execute_instruction(
             let (mut locals, parameter_bindings) = prepare_reference_arguments(arguments, &reference_names, function, &argument_names, &format!("{class_name}::{method}()"), variables, bindings, global_variables, global_scope, frame_id, classes, *strict_types)?;
             let concrete_class = object.borrow().class_name.clone();
             locals.insert("this".to_string(), Value::Object(object));
-            locals.insert("static_class".to_string(), Value::String(concrete_class.clone()));
+            locals.insert("\0static_class".to_string(), Value::String(concrete_class.clone()));
+            super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()));
             if super::is_generator_function(function) {
                 stack.push(super::new_generator(function.clone(), locals, parameter_bindings, *steps, classes)?);
                 return Ok(true);
             }
-            let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
-            let result = super::validate_return_type_in_scope(result, function, classes, Some(&concrete_class))?;
+            let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
+            let result = clean_frame_after_error(super::validate_return_type_in_scope(result, function, classes, Some(&concrete_class)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+            finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
             stack.push(result);
         }
         Op::CallParentMethod(parent, method, _argument_count, reference_names, argument_names, unpack, access_scope, strict_types) => {
@@ -1809,13 +3125,15 @@ pub(super) fn execute_instruction(
             ensure_access(function.visibility, function.declaring_class.as_deref(), access_scope.as_deref(), classes, method)?;
             let (mut locals, parameter_bindings) = prepare_reference_arguments(arguments, &reference_names, function, &argument_names, &format!("{parent}::{method}()"), variables, bindings, global_variables, global_scope, frame_id, classes, *strict_types)?;
             locals.insert("this".to_string(), Value::Object(object));
-            locals.insert("static_class".to_string(), Value::String(concrete_class.clone()));
+            locals.insert("\0static_class".to_string(), Value::String(concrete_class.clone()));
+            super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()));
             if super::is_generator_function(function) {
                 stack.push(super::new_generator(function.clone(), locals, parameter_bindings, *steps, classes)?);
                 return Ok(true);
             }
-            let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
-            let result = super::validate_return_type_in_scope(result, function, classes, Some(&concrete_class))?;
+            let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
+            let result = clean_frame_after_error(super::validate_return_type_in_scope(result, function, classes, Some(&concrete_class)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+            finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
             stack.push(result);
         }
         Op::CallStaticMethod(class_name, method, _argument_count, reference_names, argument_names, unpack, access_scope, strict_types) => {
@@ -1825,9 +3143,59 @@ pub(super) fn execute_instruction(
                 match stack.pop().ok_or_else(|| "Missing dynamic class name".to_string())? { Value::String(class) => class.to_ascii_lowercase(), value => value.show().to_ascii_lowercase() }
             } else { class_name.clone() };
             let resolved_class = if class_name == "static" {
-                match variables.get("static_class") { Some(Value::String(class)) => class.clone(), _ => return Err("static:: used outside a class method".into()) }
+                match variables.get("\0static_class") { Some(Value::String(class)) => class.clone(), _ => return Err("static:: used outside a class method".into()) }
             } else { class_name.clone() };
             let class_name = resolved_class.as_str();
+            let class_key = class_name.trim_start_matches('\\').to_ascii_lowercase();
+            if !classes.contains_key(&class_key) && !is_builtin_class_for_autoload(&class_key)
+                && !global_variables.autoload_callbacks.is_empty()
+            {
+                invoke_registered_autoloaders(class_name, variables, bindings, global_variables, global_scope, frame_id,
+                    functions, classes, static_properties, output, steps)?;
+            }
+            let mut merged_functions = None;
+            let mut merged_classes = None;
+            if global_variables.dynamic_symbol_generation != 0 {
+                let mut all_functions = functions.clone();
+                all_functions.extend(global_variables.dynamic_functions.clone());
+                merged_functions = Some(all_functions);
+                let mut all_classes = classes.clone();
+                all_classes.extend(global_variables.dynamic_classes.clone());
+                merged_classes = Some(all_classes);
+            }
+            let functions = merged_functions.as_ref().unwrap_or(functions);
+            let classes = merged_classes.as_ref().unwrap_or(classes);
+            if class_name.eq_ignore_ascii_case("ReflectionMethod") && method.eq_ignore_ascii_case("createFromMethodName") {
+                let (bound, _) = super::builtin_arguments::bind("reflectionmethod::createfrommethodname", arguments, &reference_names, &argument_names)?;
+                arguments = bound;
+                let requested = arguments.first().ok_or("ReflectionMethod::createFromMethodName() expects exactly 1 argument")?;
+                let Value::String(requested) = requested.dereference() else {
+                    return Err(format!("TypeError:ReflectionMethod::createFromMethodName(): Argument #1 ($method) must be of type string, {} given", requested.type_name()));
+                };
+                let Some((target, method_name)) = requested.split_once("::") else {
+                    return Err("ReflectionException:Method name must be a class name followed by :: and a method name".into());
+                };
+                let target = target.trim_start_matches('\\');
+                if target.is_empty() || method_name.is_empty() {
+                    return Err("ReflectionException:Method name must be a class name followed by :: and a method name".into());
+                }
+                let class = classes.get(&target.to_ascii_lowercase())
+                    .ok_or_else(|| format!("ReflectionException:Class {target} does not exist"))?;
+                let function = find_method(target, &method_name.to_ascii_lowercase(), classes)
+                    .ok_or_else(|| format!("ReflectionException:Method {target}::{method_name}() does not exist"))?;
+                let declaring_class = function.declaring_class.as_deref()
+                    .and_then(|name| classes.get(&name.to_ascii_lowercase()))
+                    .map_or_else(|| class.name.clone(), |declaring| declaring.name.clone());
+                stack.push(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(crate::PhpObject {
+                    class_name: "ReflectionMethod".into(),
+                    properties: std::collections::HashMap::from([
+                        ("\0target_class".into(), Value::String(declaring_class)),
+                        ("\0method_name".into(), Value::String(function.display_name.clone())),
+                    ]),
+                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                }))));
+                return Ok(true);
+            }
             if let Some(class) = classes.get(&class_name.to_ascii_lowercase()).filter(|class| class.is_enum) {
                 if method.eq_ignore_ascii_case("cases") || method.eq_ignore_ascii_case("from") || method.eq_ignore_ascii_case("tryfrom") {
                     arguments = super::builtin_arguments::bind(&format!("enum::{method}"), arguments, &reference_names, &argument_names)?.0;
@@ -1894,13 +3262,14 @@ pub(super) fn execute_instruction(
             if function.is_abstract { return Err(format!("Cannot call abstract method {class_name}::{method}()")); }
             if !function.is_static { return Err(format!("Non-static method {class_name}::{method}() cannot be called statically")); }
             let (mut locals, parameter_bindings) = prepare_reference_arguments(arguments, &reference_names, function, &argument_names, &format!("{class_name}::{method}()"), variables, bindings, global_variables, global_scope, frame_id, classes, *strict_types)?;
-            locals.insert("static_class".to_string(), Value::String(class_name.to_string()));
+            locals.insert("\0static_class".to_string(), Value::String(class_name.to_string()));
             if super::is_generator_function(function) {
                 stack.push(super::new_generator(function.clone(), locals, parameter_bindings, *steps, classes)?);
                 return Ok(true);
             }
-            let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
-            let result = super::validate_return_type_in_scope(result, function, classes, Some(class_name))?;
+            let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?.unwrap_or(Value::Null);
+            let result = clean_frame_after_error(super::validate_return_type_in_scope(result, function, classes, Some(class_name)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+            finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
             stack.push(result);
         }
         _ => return Ok(false),
@@ -1927,6 +3296,7 @@ fn make_callable_closure(
         capture_order: Vec::new(),
         reference_captures: HashMap::new(),
         callable_target: Some(target),
+        callable_access_scope: None,
     }))))
 }
 
@@ -1966,6 +3336,17 @@ fn invoke_array_walk_callback(
             invoke_with_references(
                 name, arguments, &reference_names, &argument_names, false, &mut variables, &mut bindings,
                 global_variables, false, frame_id, functions, classes, static_properties, output, steps,
+            )?;
+        }
+        Value::String(name) if name.contains("::") => {
+            let (class_name, method) = name.split_once("::").expect("contains separator");
+            let target = Value::array(vec![
+                (ArrayKey::Integer(0), Value::String(class_name.trim_start_matches('\\').to_string())),
+                (ArrayKey::Integer(1), Value::String(method.to_string())),
+            ]);
+            invoke_array_callable(
+                &target, arguments, &reference_names, &argument_names, &mut variables, &mut bindings,
+                false, frame_id, functions, classes, static_properties, global_variables, output, steps, false,
             )?;
         }
         Value::String(name) => { invoke_callable(name, arguments, functions, classes, static_properties, global_variables, output, steps)?; }
@@ -2058,12 +3439,12 @@ fn normalize_named_arguments(
             named_seen = true;
             if let Some(parameter_index) = function.parameters[..fixed_count].iter().position(|parameter| parameter == &name) {
                 if slots[parameter_index].is_some() {
-                    return Err(format!("{call_name}: parameter ${name} was passed more than once"));
+                    return Err(format!("Named parameter ${name} overwrites previous argument"));
                 }
                 slots[parameter_index] = Some((value, reference));
             } else if variadic_index.is_some() {
                 if variadic_entries.iter().any(|(key, _, _)| key == &ArrayKey::String(name.clone())) {
-                    return Err(format!("{call_name}: named parameter ${name} was passed more than once"));
+                    return Err(format!("Named parameter ${name} overwrites previous argument"));
                 }
                 variadic_entries.push((ArrayKey::String(name), value, reference));
             } else {
@@ -2098,15 +3479,21 @@ fn normalize_named_arguments(
     }
     if variadic_index.is_some() {
         let mut packed = crate::PhpArray::from_entries(Vec::new());
-        for (key, value, reference) in variadic_entries {
+        for (extra_index, (key, value, reference)) in variadic_entries.into_iter().enumerate() {
             if reference_variadic {
-                let Some(reference) = reference else {
-                    return Err(format!("Argument to {call_name} must be a variable passed by reference"));
-                };
-                let cell = reference_cell_for_argument(
-                    &reference, caller_variables, caller_bindings, global_variables, global_scope, frame_id,
-                )?;
-                packed.set_reference(key, cell);
+                match reference {
+                    Some(reference) if is_traversable_unpack_reference(&reference) => {
+                        warn_traversable_by_reference(global_variables, fixed_count + extra_index + 1, call_name);
+                        packed.set(key, value);
+                    }
+                    Some(reference) => {
+                        let cell = reference_cell_for_argument(
+                            &reference, caller_variables, caller_bindings, global_variables, global_scope, frame_id,
+                        )?;
+                        packed.set_reference(key, cell);
+                    }
+                    None => return Err(format!("Argument to {call_name} must be a variable passed by reference")),
+                }
             } else {
                 packed.set(key, value);
             }
@@ -2135,10 +3522,12 @@ fn reference_cell_for_argument(
         if target.array_keys.is_empty() {
             if let Value::Reference(reference) = &current { return Ok(reference.clone()); }
             let reference = Rc::new(std::cell::RefCell::new(current.dereference()));
+            if !object.properties.contains_key(property) { object.property_order.push(property.clone()); }
             object.properties.insert(property.clone(), Value::Reference(reference.clone()));
             return Ok(reference);
         }
         let (updated, reference) = current.ensure_array_reference(&target.array_keys)?;
+        if !object.properties.contains_key(property) { object.property_order.push(property.clone()); }
         object.properties.insert(property.clone(), updated);
         return Ok(reference);
     }
@@ -2165,6 +3554,7 @@ fn write_reference_argument(
         let mut object = object.borrow_mut();
         let current = object.properties.get(property).cloned().unwrap_or(Value::Null);
         let updated = if target.array_keys.is_empty() { value } else { current.array_set_path(&target.array_keys, value)? };
+        if !object.properties.contains_key(property) { object.property_order.push(property.clone()); }
         object.properties.insert(property.clone(), updated);
         return Ok(());
     }
@@ -2227,9 +3617,9 @@ fn iterator_to_array(
     let mut insert_entry = |key: ArrayKey, value: Value| {
         let key = if preserve_keys { key } else { ArrayKey::Integer(result.len() as i64) };
         if let Some((_, existing)) = result.iter_mut().find(|(existing_key, _)| *existing_key == key) {
-            *existing = value.dereference();
+            *existing = value;
         } else {
-            result.push((key, value.dereference()));
+            result.push((key, value));
         }
     };
     for (key, value) in collect_traversable(arguments[0].clone(), variables, bindings, globals, global_scope, frame_id,
@@ -2243,6 +3633,7 @@ fn iterator_to_array(
 
 fn json_error_code(message: &str) -> i64 {
     if message.contains("Maximum stack depth") { 1 }
+    else if message.contains("State mismatch") { 2 }
     else if message.contains("Unescaped control character") { 3 }
     else if message.contains("Unicode surrogate") { 10 }
     else if message.contains("Malformed UTF-8") { 5 }
@@ -2302,6 +3693,26 @@ fn filesystem_path(global_variables: &GlobalVariables, path: &std::path::Path, a
     let name = candidate.file_name()?;
     let parent = candidate.parent()?.canonicalize().ok()?;
     parent.starts_with(&root).then(|| parent.join(name))
+}
+
+fn filesystem_lookup_path(
+    global_variables: &GlobalVariables,
+    path: &std::path::Path,
+    allow_create: bool,
+    use_include_path: bool,
+) -> Option<PathBuf> {
+    if let Some(candidate) = filesystem_path(global_variables, path, allow_create) {
+        if !use_include_path || candidate.exists() { return Some(candidate); }
+    }
+    if !use_include_path || path.is_absolute() { return filesystem_path(global_variables, path, allow_create); }
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let found = global_variables.include_path().split(separator)
+        .filter(|directory| !directory.is_empty())
+        .find_map(|directory| {
+            filesystem_path(global_variables, &PathBuf::from(directory).join(path), allow_create)
+                .filter(|candidate| candidate.exists() || allow_create)
+        });
+    found.or_else(|| allow_create.then(|| filesystem_path(global_variables, path, true)).flatten())
 }
 
 #[cfg(unix)]
@@ -2708,6 +4119,8 @@ fn format_dump_value(
     value: &Value,
     depth: usize,
     seen: &mut HashSet<usize>,
+    object_ids: &mut HashMap<usize, usize>,
+    next_object_id: &mut usize,
     functions: &HashMap<String, BytecodeFunction>,
     classes: &HashMap<String, BytecodeClass>,
     static_properties: &mut StaticProperties,
@@ -2720,27 +4133,27 @@ fn format_dump_value(
     if let Value::Reference(reference) = value {
         let identity = Rc::as_ptr(reference) as usize;
         if !seen.insert(identity) { return Ok("*RECURSION*\n".into()); }
-        let dump = format_dump_value(&reference.borrow(), depth, seen, functions, classes, static_properties, global_variables, output, steps);
+        let dump = format_dump_value(&reference.borrow(), depth, seen, object_ids, next_object_id, functions, classes, static_properties, global_variables, output, steps);
         seen.remove(&identity);
         return dump;
     }
     let value = value.dereference();
     Ok(match value {
-        Value::Null => "NULL\n".into(),
-        Value::Bool(value) => format!("bool({value})\n"),
-        Value::Integer(value) => format!("int({value})\n"),
-        Value::Number(value) => format!("float({})\n", Value::Number(value).show()),
-        Value::String(value) => format!("string({}) \"{}\"\n", value.len(), value.escape_default()),
+        Value::Null => format!("{indent}NULL\n"),
+        Value::Bool(value) => format!("{indent}bool({value})\n"),
+        Value::Integer(value) => format!("{indent}int({value})\n"),
+        Value::Number(value) => format!("{indent}float({})\n", Value::Number(value).show()),
+        Value::String(value) => format!("{indent}string({}) \"{}\"\n", value.len(), escape_dump_string(&value)),
         Value::Array(array) => {
             if depth >= 64 { return Err("var_dump(): nesting level too deep".into()); }
-            let mut dump = format!("array({}) {{\n", array.len());
+            let mut dump = format!("{indent}array({}) {{\n", array.len());
             for (key, item) in array.iter() {
                 let key = match key {
                     ArrayKey::Integer(key) => format!("[{key}]"),
-                    ArrayKey::String(key) => format!("[\"{}\"]", key.escape_default()),
+                    ArrayKey::String(key) => format!("[\"{}\"]", escape_dump_string(key)),
                 };
                 dump.push_str(&format!("{nested_indent}{key}=>\n"));
-                dump.push_str(&format_dump_value(item, depth + 1, seen, functions, classes, static_properties, global_variables, output, steps)?);
+                dump.push_str(&format_dump_value(item, depth + 1, seen, object_ids, next_object_id, functions, classes, static_properties, global_variables, output, steps)?);
             }
             dump.push_str(&format!("{indent}}}\n"));
             dump
@@ -2748,6 +4161,11 @@ fn format_dump_value(
         Value::Object(object) => {
             let identity = Rc::as_ptr(&object) as usize;
             if !seen.insert(identity) { return Ok("*RECURSION*\n".into()); }
+            let object_id = *object_ids.entry(identity).or_insert_with(|| {
+                let id = *next_object_id;
+                *next_object_id += 1;
+                id
+            });
             if depth >= 64 { return Err("var_dump(): nesting level too deep".into()); }
             let (class_name, raw_properties, property_order) = {
                 let object = object.borrow();
@@ -2755,47 +4173,139 @@ fn format_dump_value(
             };
             let properties = if let Some(method) = super::objects::find_method(&class_name, "__debuginfo", classes) {
                 let mut locals = HashMap::from([("this".into(), Value::Object(object.clone()))]);
-                let returned = execute_code(&method.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(method), HashMap::new(), output, steps)?
+                super::initialize_local_order(&mut locals, ["this".to_string()]);
+                let returned = execute_user_frame(&method.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(method), HashMap::new(), output, steps)?
                     .unwrap_or(Value::Null);
+                finish_user_frame(locals, &returned, functions, classes, static_properties, global_variables, output, steps)?;
                 match returned.dereference() {
                     Value::Array(properties) => Value::Array(properties),
                     other => return Err(format!("TypeError:{class_name}::__debugInfo() must return an array, {} returned", other.type_name())),
                 }
             } else {
                 let mut names = property_order;
-                let mut remaining = raw_properties.keys().filter(|name| !name.starts_with('\0') && !names.contains(name)).cloned().collect::<Vec<_>>();
+                let mut remaining = raw_properties.keys().filter(|name| !names.contains(name)).cloned().collect::<Vec<_>>();
                 remaining.sort();
                 names.extend(remaining);
-                Value::from_array_entries(names.into_iter().filter_map(|name| raw_properties.get(&name).cloned().map(|value| (ArrayKey::String(name), value))).collect())
+                Value::from_array_entries(names.into_iter().filter_map(|name| {
+                    raw_properties.get(&name).cloned().map(|value| {
+                        (ArrayKey::String(dump_property_name(&name, &class_name, classes)), value)
+                    })
+                }).collect())
             };
             let Value::Array(properties) = properties.dereference() else { unreachable!() };
-            let mut dump = format!("object({class_name}) {{\n");
+            let property_count = properties.len();
+            let mut dump = format!("{indent}object({class_name})#{object_id} ({property_count}) {{\n");
             for (key, item) in properties.iter() {
                 let key = match key {
                     ArrayKey::Integer(key) => format!("[{key}]"),
-                    ArrayKey::String(key) => format!("[\"{}\"]", key.escape_default()),
+                    ArrayKey::String(key) => format!("[\"{}\"]", escape_dump_string(key)),
                 };
                 dump.push_str(&format!("{nested_indent}{key}=>\n"));
-                dump.push_str(&format_dump_value(item, depth + 1, seen, functions, classes, static_properties, global_variables, output, steps)?);
+                dump.push_str(&format_dump_value(item, depth + 1, seen, object_ids, next_object_id, functions, classes, static_properties, global_variables, output, steps)?);
             }
             dump.push_str(&format!("{indent}}}\n"));
             seen.remove(&identity);
             dump
         }
-        Value::Closure(_) => "object(Closure)\n".into(),
-        Value::Generator(_) => "object(Generator)\n".into(),
-        Value::Stream(_) => "resource(stream) of type (stream)\n".into(),
+        Value::Closure(_) => format!("{indent}object(Closure)\n"),
+        Value::Generator(_) => format!("{indent}object(Generator)\n"),
+        Value::Stream(_) => format!("{indent}resource(stream) of type (stream)\n"),
         Value::Reference(_) => unreachable!(),
     })
+}
+
+fn dump_property_name(storage_name: &str, class_name: &str, classes: &HashMap<String, BytecodeClass>) -> String {
+    if let Some(private_name) = storage_name.strip_prefix('\0') {
+        if let Some((declaring_class, property)) = private_name.split_once("::") {
+            let (display_class, display_property) = classes.get(declaring_class).map_or((declaring_class, property), |class| {
+                (class.name.as_str(), class.properties.keys().find(|name| name.eq_ignore_ascii_case(property)).map_or(property, String::as_str))
+            });
+            return format!("\0{display_class}\0{display_property}");
+        }
+    }
+    let mut current = Some(class_name);
+    while let Some(name) = current {
+        if let Some(class) = classes.get(&name.to_ascii_lowercase()) {
+            if let Some((property_name, property)) = class.properties.iter().find(|(property_name, _)| property_name.eq_ignore_ascii_case(storage_name)) {
+                if property.visibility == crate::MemberVisibility::Protected {
+                    return format!("\0*\0{property_name}");
+                }
+            }
+            current = class.parent.as_deref();
+        } else {
+            break;
+        }
+    }
+    storage_name.to_string()
+}
+
+fn escape_dump_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for character in value.chars() {
+        match character {
+            '\0' => escaped.push_str("\\0"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            character if character.is_control() => escaped.push_str(&format!("\\x{:02x}", character as u32)),
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+fn getenv_value(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() > 2 {
+        return Err(format!("getenv() expects at most 2 arguments, {} given", arguments.len()));
+    }
+    let name = arguments.first().map(Value::dereference);
+    if name.as_ref().is_none_or(|value| matches!(value, Value::Null)) {
+        let mut entries = std::env::vars_os().map(|(name, value)| {
+            (name.to_string_lossy().into_owned(), value.to_string_lossy().into_owned())
+        }).collect::<Vec<_>>();
+        for (name, value) in &globals.environment {
+            if let Some(index) = entries.iter().position(|(key, _)| key == name) {
+                if let Some(value) = value { entries[index].1 = value.clone(); }
+                else { entries.remove(index); }
+            } else if let Some(value) = value {
+                entries.push((name.clone(), value.clone()));
+            }
+        }
+        let entries = entries.into_iter().map(|(name, value)| (ArrayKey::String(name), Value::String(value))).collect();
+        return Ok(Value::from_array_entries(entries));
+    }
+    let name = name.unwrap().show();
+    if name.is_empty() { return Ok(Value::Bool(false)); }
+    if let Some(value) = globals.environment.get(&name) {
+        return Ok(value.as_ref().map(|value| Value::String(value.clone())).unwrap_or(Value::Bool(false)));
+    }
+    Ok(std::env::var_os(name).map(|value| Value::String(value.to_string_lossy().into_owned())).unwrap_or(Value::Bool(false)))
+}
+
+fn putenv_value(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() != 1 {
+        return Err(format!("putenv() expects exactly 1 argument, {} given", arguments.len()));
+    }
+    let assignment = arguments[0].show();
+    let (name, value) = match assignment.split_once('=') {
+        Some((name, value)) if !name.is_empty() => (name.to_string(), Some(value.to_string())),
+        Some(_) => return Ok(Value::Bool(false)),
+        None if !assignment.is_empty() => (assignment, None),
+        None => return Ok(Value::Bool(false)),
+    };
+    globals.environment.insert(name, value);
+    Ok(Value::Bool(true))
 }
 
 fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunction>) -> bool {
     let name = name.trim_start_matches('\\').to_ascii_lowercase();
     functions.contains_key(&name) || crate::array_builtins::is_supported(&name) || crate::math_builtins::is_supported(&name) || crate::string_builtins::is_supported(&name) || matches!(name.as_str(),
         "call_user_func" | "call_user_func_array" | "func_get_args" | "func_get_arg" | "func_num_args" | "var_dump" |
-        "function_exists" | "php_sapi_name" | "error_reporting" | "error_get_last" | "error_clear_last" | "class_exists" | "interface_exists" | "trait_exists" | "method_exists" | "property_exists" | "get_class" | "get_parent_class" | "get_called_class" | "is_a" | "is_subclass_of" | "is_callable" |
+        "function_exists" | "gc_collect_cycles" | "php_sapi_name" | "error_reporting" | "error_get_last" | "error_clear_last" | "class_exists" | "interface_exists" | "trait_exists" | "method_exists" | "property_exists" | "get_class" | "get_parent_class" | "get_called_class" | "is_a" | "is_subclass_of" | "is_callable" | "getenv" | "putenv" |
         "mongo_find" | "mongo_aggregate" | "mongo_count_documents" | "mongo_estimated_document_count" | "mongo_insert_one" | "mongo_insert_many" | "mongo_replace_one" | "mongo_update_one" | "mongo_update_many" | "mongo_delete_one" | "mongo_delete_many" | "mongo_begin_transaction" | "mongo_commit" | "mongo_rollback" |
-        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" | "getcwd" | "sys_get_temp_dir" | "tempnam" | "unlink" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
+        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" | "getcwd" | "get_include_path" | "set_include_path" | "sys_get_temp_dir" | "tempnam" | "unlink" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
         "json_encode" | "json_decode" | "json_validate" | "json_last_error" | "json_last_error_msg" | "is_uploaded_file" | "move_uploaded_file" |
         "session_start" | "session_destroy" | "session_unset" | "session_status" | "session_id" |
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "bin2hex" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "strstr" | "strchr" | "stristr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" |
@@ -2805,6 +4315,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
         "str_replace" | "str_ireplace" | "define" | "defined" | "constant" | "compact" | "extract" | "get_defined_vars" |
         "intval" | "floatval" | "strval" | "boolval" | "gettype" | "get_debug_type" | "is_int" | "is_integer" | "is_long" | "is_float" | "is_double" | "is_real" |
         "is_string" | "is_array" | "is_countable" | "is_iterable" | "is_bool" | "is_null" | "is_object" | "is_resource" | "is_scalar" | "is_numeric")
+        || super::builtin_arguments::is_vm_function(&name)
 }
 
 fn type_builtin(name: &str, arguments: &[Value], classes: &HashMap<String, BytecodeClass>) -> Result<Value, String> {
@@ -3019,6 +4530,120 @@ fn callable_status(
     }
 }
 
+fn autoload_callback_identity(value: &Value) -> String {
+    match value.dereference() {
+        Value::String(name) => format!("function:{}", name.to_ascii_lowercase()),
+        Value::Object(object) => format!("object:{:p}", Rc::as_ptr(&object)),
+        Value::Closure(closure) => format!("closure:{:p}", Rc::as_ptr(&closure)),
+        Value::Array(array) => {
+            let parts = array.iter().map(|(key, value)| {
+                let item = match value.dereference() {
+                    Value::Object(object) => format!("object:{:p}", Rc::as_ptr(&object)),
+                    Value::Closure(closure) => format!("closure:{:p}", Rc::as_ptr(&closure)),
+                    value => value.show(),
+                };
+                format!("{key:?}={item}")
+            }).collect::<Vec<_>>().join(";");
+            format!("array:{parts}")
+        }
+        other => format!("other:{}", other.show()),
+    }
+}
+
+fn is_builtin_class_for_autoload(name: &str) -> bool {
+    crate::exception_builtins::is_class(name) || matches!(name,
+        "generator" | "pdo" | "pdostatement" | "reflectionclass" | "reflectionclassconstant" | "reflectionconstant"
+        | "reflectionenum" | "reflectionenumunitcase" | "reflectionenumbackedcase" | "reflectionnamedtype"
+        | "reflectiontype" | "reflectionuniontype" | "reflectionintersectiontype" | "reflectionfunction"
+        | "reflectionmethod" | "reflectionproperty" | "reflectionattribute" | "reflectionparameter"
+        | "attribute" | "countable" | "iterator" | "iteratoraggregate" | "traversable" | "stringable"
+        | "jsonserializable" | "mongodb\\client" | "mongodb\\database" | "mongodb\\collection"
+        | "mongodb\\cursor" | "mongodb\\insertresult" | "mongodb\\insertmanyresult" | "mongodb\\updateresult"
+        | "mongodb\\deleteresult")
+}
+
+pub(super) fn invoke_registered_autoloaders(
+    requested: &str,
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    frame_id: u64,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let key = requested.trim_start_matches('\\').to_ascii_lowercase();
+    if !global_variables.autoload_in_progress.insert(key.clone()) { return Ok(()); }
+    let callbacks = global_variables.autoload_callbacks.clone();
+    let mut result = Ok(());
+    for callback in callbacks {
+        let arguments = vec![Value::String(requested.into())];
+        let invocation = match callback.dereference() {
+            Value::String(name) if name.eq_ignore_ascii_case("spl_autoload") => {
+                invoke_spl_autoload(requested, None, variables, bindings, global_variables, global_scope, frame_id,
+                    functions, classes, static_properties, output, steps)
+            }
+            Value::String(name) => invoke_callable(&name, arguments, functions, classes, static_properties, global_variables, output, steps).map(|_| ()),
+            Value::Array(_) => invoke_array_callable(&callback, arguments, &[], &[], variables, bindings, global_scope, frame_id,
+                functions, classes, static_properties, global_variables, output, steps, false).map(|_| ()),
+            Value::Object(_) => invoke_object_callable(&callback, arguments, &[], &[], variables, bindings, global_scope, frame_id,
+                functions, classes, static_properties, global_variables, output, steps, false).map(|_| ()),
+            Value::Closure(closure) => invoke_closure(&closure, arguments, &[], &[], variables, bindings, global_scope, frame_id,
+                functions, classes, static_properties, global_variables, output, steps, false).map(|_| ()),
+            _ => Err("Autoload callback must be callable".into()),
+        };
+        if let Err(error) = invocation {
+            result = Err(error);
+            break;
+        }
+        let loaded = classes.contains_key(&key) || global_variables.dynamic_classes.contains_key(&key);
+        if loaded { break; }
+    }
+    global_variables.autoload_in_progress.remove(&key);
+    result
+}
+
+fn invoke_spl_autoload(
+    requested: &str,
+    file_extensions: Option<&str>,
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    _frame_id: u64,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let Some(loader) = super::INCLUDE_LOADER.with(|loader| loader.borrow().clone()) else {
+        return Err("spl_autoload() requires a source loader; use compile_file()".into());
+    };
+    let relative = requested.trim_start_matches('\\').replace('\\', "/");
+    let extensions = file_extensions.map(str::to_string)
+        .or_else(|| global_variables.autoload_extensions.clone()).unwrap_or_else(|| ".inc,.php".into());
+    let current_file = global_variables.active_trace_frames.last().map(|frame| frame.file.as_str()).unwrap_or(&global_variables.source_file).to_string();
+    let include_path = global_variables.include_path().to_string();
+    for extension in extensions.split(',').filter(|extension| !extension.is_empty()) {
+        let candidate = format!("{relative}{extension}");
+        match loader(&candidate, &current_file, &include_path) {
+            Ok(module) => {
+                global_variables.included_files.insert(module.source_file.clone());
+                super::execute_dynamic_module(module, variables, bindings, global_variables, global_scope,
+                    functions, classes, static_properties, output, steps)?;
+                return Ok(());
+            }
+            Err(error) if error.contains("No such file or directory") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn prepare_reference_arguments(
     arguments: Vec<Value>, reference_names: &[Option<ReferenceArgument>], function: &BytecodeFunction,
     argument_names: &[Option<String>], call_name: &str, caller_variables: &mut HashMap<String, Value>,
@@ -3067,17 +4692,26 @@ pub(super) fn prepare_reference_arguments(
         let Some(Some(source)) = reference_names.get(index) else {
             return Err(format!("Argument {} to {call_name} must be a variable passed by reference", index + 1));
         };
+        if is_traversable_unpack_reference(source) {
+            warn_traversable_by_reference(global_variables, index + 1, call_name);
+            continue;
+        }
         let parameter = function.parameters[index].clone();
         locals.remove(&parameter);
         let binding = if let Some((receiver, property)) = &source.object_property {
             if let Value::Object(object) = receiver {
                 if source.array_keys.is_empty() {
-                    object.borrow_mut().properties.entry(property.clone()).or_insert(Value::Null);
+                    let mut object = object.borrow_mut();
+                    if !object.properties.contains_key(property) {
+                        object.property_order.push(property.clone());
+                        object.properties.insert(property.clone(), Value::Null);
+                    }
                     VariableBinding::ObjectProperty { receiver: receiver.clone(), property: property.clone() }
                 } else {
                     let mut object = object.borrow_mut();
                     let current = object.properties.get(property).cloned().unwrap_or(Value::Null);
                     let (updated, reference) = current.ensure_array_reference(&source.array_keys)?;
+                    if !object.properties.contains_key(property) { object.property_order.push(property.clone()); }
                     object.properties.insert(property.clone(), updated);
                     VariableBinding::Reference(global_variables.store_reference(reference))
                 }
@@ -3144,10 +4778,12 @@ pub(super) fn instantiate_pdo_row(
                 global_variables, global_scope, frame_id, classes, false,
             )?;
             locals.insert("this".into(), object.clone());
-            locals.insert("static_class".into(), Value::String(class.name.clone()));
-            execute_code(&constructor.instructions, functions, classes, static_properties,
+            locals.insert("\0static_class".into(), Value::String(class.name.clone()));
+            super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(constructor.parameters.iter().cloned()));
+            execute_user_frame(&constructor.instructions, functions, classes, static_properties,
                 &mut locals, global_variables, false, &function_scope(constructor),
                 parameter_bindings, output, steps)?;
+            finish_user_frame(locals, &object, functions, classes, static_properties, global_variables, output, steps)?;
         } else if !constructor_args.is_empty() {
             return Err(format!("Class '{}' has no constructor", class.name));
         }
@@ -3163,6 +4799,7 @@ fn hydrate_pdo_row(object: &Value, row: &Value) -> Result<(), String> {
         let mut instance = instance.borrow_mut();
         for (key, value) in fields.iter() {
             if let ArrayKey::String(name) = key {
+                if !instance.properties.contains_key(name) { instance.property_order.push(name.clone()); }
                 instance.properties.insert(name.clone(), value.dereference());
             }
         }
@@ -3179,7 +4816,7 @@ fn coerce_numeric_arguments(
     let variadic_index = function.parameter_variadic.iter().position(|variadic| *variadic);
     for (index, argument) in arguments.iter_mut().enumerate() {
         if function.parameter_by_reference.get(index).copied().unwrap_or(false)
-            && reference_names.get(index).is_some_and(Option::is_some)
+            && reference_names.get(index).and_then(Option::as_ref).is_some_and(|reference| !is_traversable_unpack_reference(reference))
         {
             continue;
         }
@@ -3194,7 +4831,7 @@ fn coerce_numeric_arguments(
                     for (extra_index, (_, value)) in converted.iter_mut().enumerate() {
                         let reference_index = index + extra_index;
                         if function.parameter_by_reference.get(index).copied().unwrap_or(false)
-                            && reference_names.get(reference_index).is_some_and(Option::is_some) { continue; }
+                            && reference_names.get(reference_index).and_then(Option::as_ref).is_some_and(|reference| !is_traversable_unpack_reference(reference)) { continue; }
                         *value = coerce_numeric_union(value.clone(), &type_name);
                     }
                     *argument = Value::Array(converted);
@@ -3210,7 +4847,7 @@ fn coerce_numeric_arguments(
             for (extra_index, (_, value)) in converted.iter_mut().enumerate() {
                 let reference_index = index + extra_index;
                 if function.parameter_by_reference.get(index).copied().unwrap_or(false)
-                    && reference_names.get(reference_index).is_some_and(Option::is_some)
+                    && reference_names.get(reference_index).and_then(Option::as_ref).is_some_and(|reference| !is_traversable_unpack_reference(reference))
                 {
                     continue;
                 }
@@ -3352,14 +4989,17 @@ fn invoke_magic_method(
         Value::Object(object) => object.borrow().class_name.clone(),
         _ => class_name,
     };
-    locals.insert("static_class".to_string(), Value::String(static_class.clone()));
+    locals.insert("\0static_class".to_string(), Value::String(static_class.clone()));
     for (parameter, argument) in function.parameters.iter().cloned().zip(magic_arguments) { locals.insert(parameter, argument); }
-    let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?.unwrap_or(Value::Null);
-    let result = super::validate_return_type_in_scope(result, function, classes, Some(&static_class))?;
+    let mut local_order = if locals.contains_key("this") { vec!["this".to_string()] } else { Vec::new() };
+    local_order.extend(function.parameters.iter().cloned());
+    super::initialize_local_order(&mut locals, local_order);
+    let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?.unwrap_or(Value::Null);
+    let result = clean_frame_after_error(super::validate_return_type_in_scope(result, function, classes, Some(&static_class)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+    finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     Ok(result)
 }
 
-/// Call a user-defined function or dispatch a supported callback builtin.
 fn callable_parameter_references(
     callable: &Value,
     functions: &HashMap<String, BytecodeFunction>,
@@ -3373,7 +5013,10 @@ fn callable_parameter_references(
             }
             Some(closure.function.clone())
         }
-        Value::String(name) => functions.get(&name.to_ascii_lowercase()).cloned(),
+        Value::String(name) => functions.get(&name.to_ascii_lowercase()).cloned().or_else(|| {
+            let (class_name, method) = name.split_once("::")?;
+            find_method(class_name.trim_start_matches('\\'), &method.to_ascii_lowercase(), classes).cloned()
+        }),
         Value::Array(array) => {
             let entries = array.iter().collect::<Vec<_>>();
             if entries.len() != 2 { None } else {
@@ -3415,6 +5058,15 @@ fn invoke_array_callback(
     let references = callable_parameter_references(callback, functions, classes);
     if !references.iter().any(|by_reference| *by_reference) {
         return match callback {
+            Value::String(name) if name.contains("::") => {
+                let (class_name, method) = name.split_once("::").expect("contains separator");
+                let target = Value::array(vec![
+                    (ArrayKey::Integer(0), Value::String(class_name.trim_start_matches('\\').to_string())),
+                    (ArrayKey::Integer(1), Value::String(method.to_string())),
+                ]);
+                invoke_array_callable(&target, arguments, &[], &[], caller_variables, caller_bindings, caller_global_scope, frame_id,
+                    functions, classes, static_properties, global_variables, output, steps, false)
+            }
             Value::String(name) => invoke_callable(name, arguments, functions, classes, static_properties, global_variables, output, steps),
             Value::Closure(closure) => invoke_closure(closure, arguments, &[], &[], caller_variables, caller_bindings, caller_global_scope, frame_id, functions, classes, static_properties, global_variables, output, steps, false),
             Value::Array(_) => invoke_array_callable(callback, arguments, &[], &[], caller_variables, caller_bindings, caller_global_scope, frame_id, functions, classes, static_properties, global_variables, output, steps, false),
@@ -3440,6 +5092,15 @@ fn invoke_array_callback(
             name, values, &reference_arguments, &names, false, &mut local_variables, &mut local_bindings,
             global_variables, false, frame_id, functions, classes, static_properties, output, steps,
         ),
+        Value::String(name) if name.contains("::") => {
+            let (class_name, method) = name.split_once("::").expect("contains separator");
+            let target = Value::array(vec![
+                (ArrayKey::Integer(0), Value::String(class_name.trim_start_matches('\\').to_string())),
+                (ArrayKey::Integer(1), Value::String(method.to_string())),
+            ]);
+            invoke_array_callable(&target, values, &reference_arguments, &names, &mut local_variables, &mut local_bindings,
+                false, frame_id, functions, classes, static_properties, global_variables, output, steps, false)
+        }
         Value::Closure(closure) => invoke_closure(
             closure, values, &reference_arguments, &names, &mut local_variables, &mut local_bindings,
             false, frame_id, functions, classes, static_properties, global_variables, output, steps, false,
@@ -3500,6 +5161,7 @@ fn hex2bin_with_diagnostic(arguments: &[Value], globals: &mut GlobalVariables) -
         globals.report_diagnostic(crate::RuntimeDiagnostic {
             level: crate::DiagnosticLevel::Warning,
             message: message.into(), source_file: None, source_line: None,
+            output_offset: 0,
         });
     }
     Ok(result)
@@ -3512,9 +5174,147 @@ fn chr_with_diagnostic(arguments: &[Value], globals: &mut GlobalVariables) -> Re
             level: crate::DiagnosticLevel::Deprecated,
             message: "chr(): Providing a value not in-between 0 and 255 is deprecated, this is because a byte value must be in the [0, 255] interval. The value used will be constrained using % 256".into(),
             source_file: None, source_line: None,
+            output_offset: 0,
         });
     }
     crate::string_builtins::call("chr", arguments)
+}
+
+fn json_encode_builtin(
+    arguments: &[Value],
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let value = arguments.first().ok_or("json_encode() expects exactly 1 argument")?;
+    let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(0);
+    let depth = arguments.get(2).map(|value| value.number() as i64).unwrap_or(512);
+    let throw_on_error = flags & 4194304 != 0;
+    if depth > i32::MAX as i64 || depth < i32::MIN as i64 {
+        return Err(format!("ValueError:json_encode(): Argument #3 ($depth) must be between 1 and {}", i32::MAX));
+    }
+    if depth < 1 { return Err("ValueError:json_encode(): Argument #3 ($depth) must be greater than 0".into()); }
+    if flags & !(4095 | 1048576 | 2097152 | 4194304) != 0 {
+        let code = 4;
+        if throw_on_error && flags & 512 == 0 {
+            return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
+        }
+        global_variables.json_last_error = code;
+        return Ok(Value::Bool(false));
+    }
+    let mut serialize = |object: &Value| -> Result<Option<Value>, String> {
+        let Value::Object(instance) = object else { return Ok(None); };
+        let class_name = instance.borrow().class_name.clone();
+        let Some(method) = super::objects::find_method(&class_name, "jsonserialize", classes) else { return Ok(None); };
+        if method.is_static || !method.parameters.is_empty() || method.visibility != crate::MemberVisibility::Public {
+            return Err(format!("{class_name}::jsonSerialize() must be a public non-static method without parameters"));
+        }
+        let mut locals = HashMap::from([
+            ("this".to_string(), object.clone()),
+            ("\0static_class".to_string(), Value::String(class_name.clone())),
+        ]);
+        super::initialize_local_order(&mut locals, ["this".to_string()]);
+        let result = execute_user_frame(&method.instructions, functions, classes, static_properties, &mut locals,
+            global_variables, false, &super::function_scope(method), HashMap::new(), output, steps)?
+            .unwrap_or(Value::Null);
+        let result = clean_frame_after_error(super::validate_return_type_in_scope(result, method, classes, Some(&class_name)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+        finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
+        Ok(Some(result))
+    };
+    match crate::json_builtins::encode_with_serializer(value, depth as usize, crate::json_builtins::EncodeOptions {
+        pretty: flags & 128 != 0,
+        unescaped_slashes: flags & 64 != 0,
+        unescaped_unicode: flags & 256 != 0,
+        unescaped_line_terminators: flags & 2048 != 0,
+        force_object: flags & 16 != 0,
+        hex_flags: flags & 15,
+        preserve_zero_fraction: flags & 1024 != 0,
+        numeric_check: flags & 32 != 0,
+        partial_output: flags & 512 != 0,
+    }, classes, &mut serialize) {
+        Ok((json, error_code)) => {
+            if !throw_on_error || flags & 512 != 0 || error_code != 0 { global_variables.json_last_error = error_code; }
+            Ok(Value::String(json))
+        }
+        Err(error) => {
+            let code = json_error_code(&error);
+            if throw_on_error && flags & 512 == 0 {
+                return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
+            }
+            global_variables.json_last_error = code;
+            Ok(Value::Bool(false))
+        }
+    }
+}
+
+fn json_decode_builtin(
+    arguments: &[Value],
+    classes: &HashMap<String, BytecodeClass>,
+    global_variables: &mut GlobalVariables,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let source = arguments.first().ok_or("json_decode() expects exactly 1 argument")?.show();
+    let depth = arguments.get(2).map(|value| value.number() as i64).unwrap_or(512);
+    let flags = arguments.get(3).map(|value| value.number() as i64).unwrap_or(0);
+    let associative = arguments.get(1).map_or(flags & 1 != 0, |value| {
+        matches!(value.dereference(), Value::Null) && flags & 1 != 0 || value.truthy()
+    });
+    let throw_on_error = flags & 4194304 != 0;
+    if depth < 1 || depth > i32::MAX as i64 {
+        return Err(format!("ValueError:json_decode(): Argument #3 ($depth) must be between 1 and {}", i32::MAX));
+    }
+    if flags & !(3 | 1048576 | 2097152 | 4194304) != 0 {
+        let code = 4;
+        if throw_on_error {
+            return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
+        }
+        global_variables.json_last_error = code;
+        return Ok(Value::Null);
+    }
+    match crate::json_builtins::decode(&source, associative, depth as usize, flags & 2 != 0) {
+        Ok(value) => {
+            if !throw_on_error { global_variables.json_last_error = 0; }
+            Ok(value)
+        }
+        Err(error) => {
+            let code = json_error_code(&error);
+            if throw_on_error {
+                return Err(json_exception_marker(global_variables, *steps, code, json_error_message(code), classes)?);
+            }
+            global_variables.json_last_error = code;
+            Ok(Value::Null)
+        }
+    }
+}
+
+fn json_validate_builtin(arguments: &[Value], global_variables: &mut GlobalVariables) -> Result<Value, String> {
+    let value = arguments.first().ok_or("json_validate() expects exactly 1 argument")?;
+    let source = match value.dereference() {
+        Value::String(source) => source,
+        Value::Integer(number) => number.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(value) => if value { "1".into() } else { String::new() },
+        Value::Null => String::new(),
+        other => return Err(format!("TypeError:json_validate(): Argument #1 ($json) must be of type string, {} given", other.type_name().to_ascii_lowercase())),
+    };
+    let depth = arguments.get(1).map(|value| value.number() as i64).unwrap_or(512);
+    let flags = arguments.get(2).map(|value| value.number() as i64).unwrap_or(0);
+    if depth < 1 || depth > i32::MAX as i64 {
+        return Err(format!("ValueError:json_validate(): Argument #2 ($depth) must be between 1 and {}", i32::MAX));
+    }
+    if flags & !1048576 != 0 {
+        return Err("ValueError:json_validate(): Argument #3 ($flags) must be a valid flag (allowed flags: JSON_INVALID_UTF8_IGNORE)".into());
+    }
+    match crate::json_builtins::decode(&source, true, depth as usize, false) {
+        Ok(_) => { global_variables.json_last_error = 0; Ok(Value::Bool(true)) }
+        Err(error) => {
+            global_variables.json_last_error = json_error_code(&error);
+            Ok(Value::Bool(false))
+        }
+    }
 }
 
 pub(super) fn invoke_callable(
@@ -3534,15 +5334,34 @@ pub(super) fn invoke_callable(
         }
         let arguments = complete_arguments(arguments, function, &format!("{name}()"))?;
         validate_arguments(&arguments, function, classes)?;
-        let local_variables = function.parameters.iter().cloned()
+        let mut local_variables = function.parameters.iter().cloned()
             .zip(arguments.into_iter().take(function.parameters.len())).collect::<HashMap<_, _>>();
+        super::initialize_local_order(&mut local_variables, function.parameters.iter().cloned());
         if super::is_generator_function(function) {
             return super::new_generator(function.clone(), local_variables, HashMap::new(), *steps, classes);
         }
-        let mut local_variables = local_variables;
-        let result = execute_code(&function.instructions, functions, classes, static_properties, &mut local_variables, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?
+        let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut local_variables, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?
             .unwrap_or(Value::Null);
-        let result = validate_return_type(result, function, classes)?;
+        let result = clean_frame_after_error(validate_return_type(result, function, classes), &mut local_variables, functions, classes, static_properties, global_variables, output, steps)?;
+        finish_user_frame(local_variables, &result, functions, classes, static_properties, global_variables, output, steps)?;
+        return Ok(result);
+    }
+    if normalized_name == "count" {
+        let mut callback_variables = HashMap::new();
+        let mut callback_bindings = HashMap::new();
+        let mut invoke = |callable: &Value, callback_arguments: Vec<Value>| {
+            invoke_array_callable(
+                callable, callback_arguments, &[], &[], &mut callback_variables, &mut callback_bindings,
+                true, 0, functions, classes, static_properties, global_variables, output, steps, false,
+            )
+        };
+        let mut unused_walk = |_: &Value, _: Value, _: Value, _: Option<Value>| Err("Unexpected array walk callback".into());
+        let mut stringify = |value: &Value| Ok(value.show());
+        let mut diagnostics = Vec::new();
+        let (result, _) = crate::array_builtins::call(
+            "count", arguments, classes, &mut invoke, &mut unused_walk, &mut stringify, &mut diagnostics,
+        )?;
+        for diagnostic in diagnostics { global_variables.report_diagnostic(diagnostic); }
         return Ok(result);
     }
     if name.eq_ignore_ascii_case("strval") {
@@ -3560,6 +5379,29 @@ pub(super) fn invoke_callable(
         if arguments.len() > 1 { return Err(format!("gettimeofday() expects at most 1 argument, {} given", arguments.len())); }
         return gettimeofday_value(arguments.first().is_some_and(Value::truthy));
     }
+    if name.eq_ignore_ascii_case("getenv") {
+        return getenv_value(&arguments, global_variables);
+    }
+    if name.eq_ignore_ascii_case("putenv") {
+        return putenv_value(&arguments, global_variables);
+    }
+    if name.eq_ignore_ascii_case("json_encode") {
+        return json_encode_builtin(&arguments, functions, classes, static_properties, global_variables, output, steps);
+    }
+    if name.eq_ignore_ascii_case("json_decode") {
+        return json_decode_builtin(&arguments, classes, global_variables, steps);
+    }
+    if name.eq_ignore_ascii_case("json_validate") {
+        return json_validate_builtin(&arguments, global_variables);
+    }
+    if name.eq_ignore_ascii_case("json_last_error") {
+        if !arguments.is_empty() { return Err("json_last_error() expects exactly 0 arguments".into()); }
+        return Ok(Value::Integer(global_variables.json_last_error));
+    }
+    if name.eq_ignore_ascii_case("json_last_error_msg") {
+        if !arguments.is_empty() { return Err("json_last_error_msg() expects exactly 0 arguments".into()); }
+        return Ok(Value::String(json_error_message(global_variables.json_last_error).into()));
+    }
     if name.eq_ignore_ascii_case("strtok") {
         let mut arguments = arguments;
         coerce_stringable_builtin_args("strtok", &mut arguments, crate::string_builtins::string_argument_positions("strtok"), functions, classes, static_properties, global_variables, output, steps)?;
@@ -3571,7 +5413,14 @@ pub(super) fn invoke_callable(
     if name.eq_ignore_ascii_case("chr") {
         return chr_with_diagnostic(&arguments, global_variables);
     }
-    crate::array_builtins::call_callback_builtin(name, arguments)
+    let mut diagnostics = Vec::new();
+    let mut stringify = |value: &Value| super::objects::stringify(
+        value, functions, classes, static_properties, global_variables, output, steps,
+    );
+    let result = crate::array_builtins::call_callback_builtin(name, arguments, classes, &mut diagnostics, &mut stringify)?;
+    drop(stringify);
+    for diagnostic in diagnostics { global_variables.report_diagnostic(diagnostic); }
+    Ok(result)
 }
 
 /// Invoke a two-item PHP callable array containing an object or class name and method name.
@@ -3592,6 +5441,32 @@ fn invoke_array_callable(
     steps: &mut u64,
     strict_types: bool,
 ) -> Result<Value, String> {
+    invoke_array_callable_scoped(
+        callable, arguments, reference_names, argument_names, caller_variables, caller_bindings,
+        caller_global_scope, caller_frame_id, functions, classes, static_properties, global_variables,
+        output, steps, strict_types, None,
+    )
+}
+
+/// Invoke a callable with an optional class scope, used by ReflectionMethod's visibility bypass.
+fn invoke_array_callable_scoped(
+    callable: &Value,
+    arguments: Vec<Value>,
+    reference_names: &[Option<ReferenceArgument>],
+    argument_names: &[Option<String>],
+    caller_variables: &mut HashMap<String, Value>,
+    caller_bindings: &mut HashMap<String, VariableBinding>,
+    caller_global_scope: bool,
+    caller_frame_id: u64,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+    strict_types: bool,
+    access_scope: Option<&str>,
+) -> Result<Value, String> {
     let Value::Array(items) = callable else { return Err("Value is not callable".into()); };
     if items.len() != 2
         || items.get(0).map_or(true, |(key, _)| key != &ArrayKey::Integer(0))
@@ -3609,7 +5484,7 @@ fn invoke_array_callable(
             let class_name = object.borrow().class_name.clone();
             let function = find_method(&class_name, &method, classes)
                 .ok_or_else(|| format!("Call to undefined method {class_name}::{method}()"))?;
-            ensure_access(function.visibility, function.declaring_class.as_deref(), None, classes, &method)?;
+            ensure_access(function.visibility, function.declaring_class.as_deref(), access_scope, classes, &method)?;
             if function.is_static { return Err(format!("Non-static callback target {class_name}::{method}() is static")); }
             (class_name, function, Some(Value::Object(object)))
         }
@@ -3617,7 +5492,7 @@ fn invoke_array_callable(
             let class_name = class_name.to_ascii_lowercase();
             let function = find_method(&class_name, &method, classes)
                 .ok_or_else(|| format!("Call to undefined method {class_name}::{method}()"))?;
-            ensure_access(function.visibility, function.declaring_class.as_deref(), None, classes, &method)?;
+            ensure_access(function.visibility, function.declaring_class.as_deref(), access_scope, classes, &method)?;
             if !function.is_static { return Err(format!("Non-static method {class_name}::{method}() cannot be called statically")); }
             (class_name, function, None)
         }
@@ -3627,16 +5502,20 @@ fn invoke_array_callable(
         arguments, reference_names, function, &argument_names, &format!("{class_name}::{method}()"),
         caller_variables, caller_bindings, global_variables, caller_global_scope, caller_frame_id, classes, strict_types,
     )?;
-    if let Some(receiver) = receiver_object { locals.insert("this".into(), receiver); }
-    locals.insert("static_class".into(), Value::String(class_name.clone()));
+    if let Some(receiver) = receiver_object {
+        locals.insert("this".into(), receiver);
+        super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()));
+    }
+    locals.insert("\0static_class".into(), Value::String(class_name.clone()));
     if super::is_generator_function(function) {
         return super::new_generator(function.clone(), locals, parameter_bindings, *steps, classes);
     }
-    let result = execute_code(
+    let result = execute_user_frame(
         &function.instructions, functions, classes, static_properties, &mut locals,
         global_variables, false, &function_scope(function), parameter_bindings, output, steps,
     )?.unwrap_or(Value::Null);
-    let result = super::validate_return_type_in_scope(result, function, classes, Some(&class_name))?;
+    let result = clean_frame_after_error(super::validate_return_type_in_scope(result, function, classes, Some(&class_name)), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+    finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     Ok(result)
 }
 
@@ -3695,10 +5574,76 @@ fn invoke_with_references(
     if super::is_generator_function(function) {
         return super::new_generator(function.clone(), locals, parameter_bindings, *steps, classes);
     }
-    let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?
+    let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), parameter_bindings, output, steps)?
         .unwrap_or(Value::Null);
-    let result = validate_return_type(result, function, classes)?;
+    let result = clean_frame_after_error(validate_return_type(result, function, classes), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
+    finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     Ok(result)
+}
+
+pub(super) fn finish_user_frame(
+    locals: HashMap<String, Value>,
+    result: &Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let frame_values = Value::from_array_entries(locals.into_iter()
+        .map(|(name, value)| (ArrayKey::String(name), value)).collect());
+    super::objects::run_destructors_removed_from_value(
+        frame_values, result, functions, classes, static_properties, global_variables, output, steps,
+    )
+}
+
+/// Execute a user frame and destroy its locals while unwinding an exception.
+/// Successful frames remain owned by their caller so returned values and captures survive.
+pub(super) fn execute_user_frame(
+    code: &[Op],
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    locals: &mut HashMap<String, Value>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    access_scope: &str,
+    bindings: HashMap<String, VariableBinding>,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Option<Value>, String> {
+    match execute_code(
+        code, functions, classes, static_properties, locals, global_variables,
+        global_scope, access_scope, bindings, output, steps,
+    ) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let frame = std::mem::take(locals);
+            finish_user_frame(frame, &Value::Null, functions, classes, static_properties, global_variables, output, steps)?;
+            Err(error)
+        }
+    }
+}
+
+fn clean_frame_after_error<T>(
+    result: Result<T, String>,
+    locals: &mut HashMap<String, Value>,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<T, String> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let frame = std::mem::take(locals);
+            finish_user_frame(frame, &Value::Null, functions, classes, static_properties, global_variables, output, steps)?;
+            Err(error)
+        }
+    }
 }
 
 /// Execute a closure in a fresh local frame initialized from its captured values.
@@ -3719,17 +5664,25 @@ fn invoke_closure(
     steps: &mut u64,
     strict_types: bool,
 ) -> Result<Value, String> {
-    let (function, captures, capture_order, reference_captures, callable_target) = {
+    let (function, captures, capture_order, reference_captures, callable_target, callable_access_scope) = {
         let closure = closure.borrow();
-        (closure.function.clone(), closure.captures.clone(), closure.capture_order.clone(), closure.reference_captures.clone(), closure.callable_target.clone())
+        (closure.function.clone(), closure.captures.clone(), closure.capture_order.clone(), closure.reference_captures.clone(), closure.callable_target.clone(), closure.callable_access_scope.clone())
     };
     if let Some(target) = callable_target {
         return match target {
-            Value::Array(_) => invoke_array_callable(
-                &target, arguments, reference_names, argument_names, caller_variables, caller_bindings,
-                caller_global_scope, caller_frame_id, functions, classes, static_properties,
-                global_variables, output, steps, strict_types,
-            ),
+            Value::Array(_) => if let Some(scope) = callable_access_scope.as_deref() {
+                invoke_array_callable_scoped(
+                    &target, arguments, reference_names, argument_names, caller_variables, caller_bindings,
+                    caller_global_scope, caller_frame_id, functions, classes, static_properties,
+                    global_variables, output, steps, strict_types, Some(scope),
+                )
+            } else {
+                invoke_array_callable(
+                    &target, arguments, reference_names, argument_names, caller_variables, caller_bindings,
+                    caller_global_scope, caller_frame_id, functions, classes, static_properties,
+                    global_variables, output, steps, strict_types,
+                )
+            },
             Value::String(name) => {
                 let packed_arguments = pack_callable_arguments(
                     arguments, reference_names, argument_names, caller_variables, caller_bindings,
@@ -3761,13 +5714,15 @@ fn invoke_closure(
         return super::new_generator(function.clone(), locals, frame_bindings, *steps, classes);
     }
     let closure_scope = format!("<closure:{:p}>", Rc::as_ptr(closure));
-    let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &closure_scope, frame_bindings, output, steps)?
+    let result = execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &closure_scope, frame_bindings, output, steps)?
         .unwrap_or(Value::Null);
-    let result = validate_return_type(result, function, classes)?;
+    let result = clean_frame_after_error(validate_return_type(result, function, classes), &mut locals, functions, classes, static_properties, global_variables, output, steps)?;
     let mut closure = closure.borrow_mut();
     for name in closure.captures.keys().cloned().collect::<Vec<_>>() {
         if let Some(value) = locals.get(&name) { closure.captures.insert(name, value.clone()); }
     }
+    drop(closure);
+    finish_user_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     Ok(result)
 }
 

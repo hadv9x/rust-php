@@ -15,6 +15,16 @@ pub(super) enum ForeachIterator {
     UserIterator { object: Value, advance_pending: bool },
 }
 
+fn report_invalid_foreach_argument(value: &Value, globals: &mut GlobalVariables) {
+    globals.report_diagnostic(crate::RuntimeDiagnostic {
+        level: crate::DiagnosticLevel::Warning,
+        message: format!("foreach() argument must be of type array|object, {} given", value.type_name()),
+        source_file: None,
+        source_line: None,
+        output_offset: 0,
+    });
+}
+
 pub(super) fn call_iterator_method(
     object: Value,
     method: &str,
@@ -56,7 +66,7 @@ pub(super) fn execute_instruction(
     steps: &mut u64,
 ) -> Result<bool, String> {
     match instruction {
-        Op::IterStart(id) => {
+        Op::IterStart(id, access_scope) => {
             let mut value = stack.pop().ok_or("Invalid bytecode stack")?;
             let mut aggregate_depth = 0usize;
             while let Value::Object(object) = value.dereference() {
@@ -87,9 +97,8 @@ pub(super) fn execute_instruction(
                     let class_name = object.borrow().class_name.clone();
                     let normalized_class = class_name.to_ascii_lowercase();
                     if !super::is_a_type(&normalized_class, "traversable", classes, &mut std::collections::HashSet::new()) {
-                        return Err(format!("foreach(): object of type {class_name} is not Traversable"));
-                    }
-                    if super::is_a_type(&normalized_class, "iteratoraggregate", classes, &mut std::collections::HashSet::new()) {
+                        ForeachIterator::Array(super::objects::foreach_entries(&object, classes, access_scope.as_deref(), false), 0)
+                    } else if super::is_a_type(&normalized_class, "iteratoraggregate", classes, &mut std::collections::HashSet::new()) {
                         let iterator = call_iterator_method(Value::Object(object), "getiterator", stack, variables, bindings, globals,
                             global_scope, frame_id, functions, classes, static_properties, output, steps)?;
                         match iterator {
@@ -131,21 +140,91 @@ pub(super) fn execute_instruction(
                     ForeachIterator::UserIterator { object: iterator, advance_pending: false }
                     }
                 }
-                Value::Null => ForeachIterator::Array(Vec::new(), 0),
-                _ => return Err("foreach expects an array".into()),
+                Value::Null => {
+                    report_invalid_foreach_argument(&Value::Null, globals);
+                    ForeachIterator::Array(Vec::new(), 0)
+                }
+                value => {
+                    report_invalid_foreach_argument(&value, globals);
+                    ForeachIterator::Array(Vec::new(), 0)
+                }
             };
             iterators.insert(*id, iterator);
         }
-        Op::IterStartReference(id, variable, key_count) => {
+        Op::IterStartReference(id, variable, key_count, access_scope) => {
             if stack.len() < key_count + 1 { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
             let offsets = raw_keys.into_iter().map(|key| key.array_key()).collect::<Result<Vec<_>, _>>()?;
             let root = stack.pop().ok_or("Invalid bytecode stack")?;
             let value = root.array_get_path(&offsets)?;
+            if offsets.is_empty() {
+                match root.dereference() {
+                    Value::Object(object) => {
+                        let mut iterable = Value::Object(object);
+                        for depth in 0..=32 {
+                            match iterable {
+                                Value::Object(object) => {
+                                    let class_name = object.borrow().class_name.clone();
+                                    let normalized_class = class_name.to_ascii_lowercase();
+                                    if !super::is_a_type(&normalized_class, "traversable", classes, &mut std::collections::HashSet::new()) {
+                                        iterators.insert(*id, ForeachIterator::Array(super::objects::foreach_entries(&object, classes, access_scope.as_deref(), true), 0));
+                                        return Ok(true);
+                                    }
+                                    if super::is_a_type(&normalized_class, "iteratoraggregate", classes, &mut std::collections::HashSet::new()) {
+                                        if depth == 32 { return Err("IteratorAggregate nesting is too deep".into()); }
+                                        iterable = call_iterator_method(Value::Object(object), "getiterator", stack, variables, bindings, globals,
+                                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                                        if matches!(iterable.dereference(), Value::Array(_)) {
+                                            return Err("IteratorAggregate::getIterator() must return a Traversable object".into());
+                                        }
+                                        continue;
+                                    }
+                                    if !super::is_a_type(&normalized_class, "iterator", classes, &mut std::collections::HashSet::new()) {
+                                        return Err(format!("Object of type {class_name} is not an Iterator"));
+                                    }
+                                    let required = ["rewind", "valid", "current", "key", "next"];
+                                    if required.iter().any(|method| super::objects::find_method(&class_name, method, classes).is_none()) {
+                                        return Err(format!("Object of type {class_name} does not provide the Iterator methods"));
+                                    }
+                                    let iterator = Value::Object(object);
+                                    let _ = call_iterator_method(iterator.clone(), "rewind", stack, variables, bindings, globals,
+                                        global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                                    iterators.insert(*id, ForeachIterator::UserIterator { object: iterator, advance_pending: false });
+                                    return Ok(true);
+                                }
+                                Value::Generator(generator) => {
+                                    let allowed = generator.try_borrow().map_err(|_| "Generator is already running")?.by_reference;
+                                    if !allowed { return Err("Cannot iterate a non-referenceable generator by reference".into()); }
+                                    super::rewind_generator(&generator, functions, classes, static_properties, globals, output, steps)?;
+                                    iterators.insert(*id, ForeachIterator::Generator(generator, true));
+                                    return Ok(true);
+                                }
+                                _ => return Err("IteratorAggregate::getIterator() must return a Traversable object".into()),
+                            }
+                        }
+                    }
+                    Value::Generator(generator) => {
+                        let allowed = generator.try_borrow().map_err(|_| "Generator is already running")?.by_reference;
+                        if !allowed { return Err("Cannot iterate a non-referenceable generator by reference".into()); }
+                        super::rewind_generator(&generator, functions, classes, static_properties, globals, output, steps)?;
+                        iterators.insert(*id, ForeachIterator::Generator(generator, true));
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+            }
             let initial_entries = match value {
                 Value::Array(entries) => entries.into_iter().collect::<Vec<_>>(),
-                Value::Null => Vec::new(),
-                _ => return Err("foreach expects an array".into()),
+                Value::Null => {
+                    report_invalid_foreach_argument(&Value::Null, globals);
+                    iterators.insert(*id, ForeachIterator::Array(Vec::new(), 0));
+                    return Ok(true);
+                }
+                value => {
+                    report_invalid_foreach_argument(&value, globals);
+                    iterators.insert(*id, ForeachIterator::Array(Vec::new(), 0));
+                    return Ok(true);
+                }
             };
             for (key, _) in &initial_entries {
                 let mut path = offsets.clone();
@@ -196,8 +275,14 @@ pub(super) fn execute_instruction(
                 }
             };
             if let Some((key, value)) = current {
-                if *by_reference && matches!(iterators.get(id), Some(ForeachIterator::Generator(_, _))) {
-                    return Err("Cannot iterate a Generator by reference".into());
+                if *by_reference
+                    && matches!(iterators.get(id), Some(ForeachIterator::Generator(_, _)))
+                    && !matches!(value, Value::Reference(_))
+                { return Err("Error:Cannot use a non-referenceable value with foreach by reference".into()); }
+                if *by_reference
+                    && matches!(iterators.get(id), Some(ForeachIterator::UserIterator { .. }))
+                    && !matches!(value, Value::Reference(_)) {
+                    return Err("Error:An iterator cannot be used with foreach by reference".into());
                 }
                 if let Some(name) = key_name {
                     write_variable(name.clone(), key, variables, bindings, globals, global_scope)?;

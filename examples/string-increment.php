@@ -15,6 +15,9 @@ $empty = '';
 $punctuation = 'a-b';
 $punctuation++;
 echo gettype($numeric++), ':', $numeric, ':', ++$empty, ':', $punctuation, "\n";
+$unicode = 'é';
+++$unicode; // Non-ASCII strings remain unchanged and follow nonnumeric-string diagnostics.
+echo bin2hex($unicode), "\n";
 echo str_increment('A9'), ':', str_decrement('AA'), "\n";
 foreach ([fn() => str_increment(''), fn() => str_increment('a-b'), fn() => str_decrement('A')] as $operation) {
     try {

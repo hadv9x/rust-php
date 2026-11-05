@@ -1106,7 +1106,10 @@ fn fetch_into(statement: &Rc<RefCell<PhpObject>>, row: Value) -> Result<Value, S
     let Value::Array(row) = row.dereference() else { return Ok(Value::Object(target)); };
     let mut target = target.borrow_mut();
     for (key, value) in row.iter() {
-        if let ArrayKey::String(name) = key { target.properties.insert(name.clone(), value.clone()); }
+        if let ArrayKey::String(name) = key {
+            if !target.properties.contains_key(name) { target.property_order.push(name.clone()); }
+            target.properties.insert(name.clone(), value.clone());
+        }
     }
     drop(target);
     let target = statement.borrow().properties.get("\0fetch_into").cloned().unwrap_or(Value::Null);

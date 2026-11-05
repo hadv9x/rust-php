@@ -1,9 +1,77 @@
 //! Object creation, property access, class constants, cloning, and magic hooks.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
-use crate::{bytecode::{CompoundOperation, Op}, BytecodeClass, BytecodeConstant, BytecodeFunction, BytecodeProperty, MemberVisibility, PhpObject, Value};
-use super::{complete_arguments, execute_code, function_scope, validate_arguments, validate_return_type, GlobalVariables, StaticProperties, VariableBinding};
+use crate::{bytecode::{CompoundOperation, Op}, ArrayKey, BytecodeClass, BytecodeConstant, BytecodeFunction, BytecodeProperty, MemberVisibility, PhpObject, Value};
+use super::{complete_arguments, function_scope, validate_arguments, validate_return_type, GlobalVariables, StaticProperties, VariableBinding};
+
+fn is_builtin_runtime_class_name(name: &str) -> bool {
+    crate::exception_builtins::is_class(name) || matches!(name,
+        "generator" | "stdclass" | "pdo" | "pdostatement" | "reflectionclass" | "reflectionclassconstant" | "reflectionconstant"
+        | "reflectionobject" | "reflectionenum" | "reflectionenumunitcase" | "reflectionenumbackedcase" | "reflectionnamedtype"
+        | "reflectiontype" | "reflectionuniontype" | "reflectionintersectiontype" | "reflectionfunction"
+        | "reflectionmethod" | "reflectionproperty" | "reflectionattribute" | "reflectionparameter"
+        | "attribute" | "countable" | "iterator" | "iteratoraggregate" | "traversable" | "stringable"
+        | "jsonserializable" | "mongodb\\client" | "mongodb\\database" | "mongodb\\collection"
+        | "mongodb\\cursor" | "mongodb\\insertresult" | "mongodb\\insertmanyresult" | "mongodb\\updateresult"
+        | "mongodb\\deleteresult")
+}
+
+fn isset_array_key(value: &Value) -> Result<ArrayKey, String> {
+    let type_name = match value.dereference() {
+        Value::Object(object) => object.borrow().class_name.clone(),
+        value => value.type_name().to_string(),
+    };
+    value.array_key().map_err(|_| format!("TypeError:Cannot access offset of type {type_name} in isset or empty"))
+}
+
+fn unset_array_key(value: &Value, container: &Value) -> Result<ArrayKey, String> {
+    let type_name = match value.dereference() {
+        Value::Object(object) => object.borrow().class_name.clone(),
+        value => value.type_name().to_string(),
+    };
+    value.array_key().map_err(|_| format!("Error:Cannot unset offset of type {type_name} on {}", container.type_name()))
+}
+
+fn reflection_parameter_object(function: &BytecodeFunction, position: usize, mut origin: HashMap<String, Value>) -> Value {
+    let is_method_parameter = origin.contains_key("\0target_class");
+    let attributes = function.parameter_attributes.get(position).map(Vec::as_slice).unwrap_or_default();
+    let reflected_attributes = attributes.iter().map(|attribute| {
+        let repeated = attributes.iter().filter(|candidate| candidate.name.eq_ignore_ascii_case(&attribute.name)).count() > 1;
+        Value::Object(Rc::new(RefCell::new(PhpObject {
+            class_name: "ReflectionAttribute".into(),
+            properties: HashMap::from([
+                ("\0attribute_name".into(), Value::String(attribute.name.clone())),
+                ("\0attribute_arguments".into(), super::functions::reflection_attribute_arguments(&attribute.arguments)),
+                ("\0target_class".into(), Value::String(function.display_name.clone())),
+                ("\0target_function".into(), Value::String(function.display_name.clone())),
+                ("\0target_type".into(), Value::Integer(32)),
+                ("\0target_position".into(), Value::Integer(position as i64)),
+                ("\0is_repeated".into(), Value::Bool(repeated)),
+            ]),
+            property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+        })))
+    }).enumerate().map(|(index, attribute)| (ArrayKey::Integer(index as i64), attribute)).collect();
+    origin.extend(HashMap::from([
+        ("\0parameter_name".into(), Value::String(function.parameters[position].clone())),
+        ("\0parameter_position".into(), Value::Integer(position as i64)),
+        ("\0parameter_type".into(), function.parameter_types.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
+        ("\0parameter_by_reference".into(), Value::Bool(function.parameter_by_reference.get(position).copied().unwrap_or(false))),
+        ("\0parameter_variadic".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false))),
+        ("\0parameter_promoted".into(), Value::Bool(function.parameter_promoted.get(position).copied().unwrap_or(false))),
+        ("\0parameter_has_default".into(), Value::Bool(function.parameter_defaults.get(position).is_some_and(Option::is_some))),
+        ("\0parameter_optional".into(), Value::Bool(function.parameter_variadic.get(position).copied().unwrap_or(false) || (function.parameter_defaults.get(position).is_some_and(Option::is_some) && position >= super::functions::required_parameter_count(function)))),
+        ("\0parameter_default".into(), function.parameter_defaults.get(position).and_then(Clone::clone).unwrap_or(Value::Null)),
+        ("\0parameter_default_constant_name".into(), function.parameter_default_constant_names.get(position).and_then(Clone::clone).map(Value::String).unwrap_or(Value::Null)),
+    ]));
+    if !is_method_parameter {
+        origin.insert("\0parameter_attributes".into(), Value::from_array_entries(reflected_attributes));
+    }
+    Value::Object(Rc::new(RefCell::new(PhpObject {
+        class_name: "ReflectionParameter".into(), properties: origin,
+        property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+    })))
+}
 
 /// Execute object construction and instance-property instructions.
 pub(super) fn execute_instruction(
@@ -29,9 +97,28 @@ pub(super) fn execute_instruction(
                 match stack.pop().ok_or_else(|| "Missing dynamic class name".to_string())? { Value::String(class) => class, value => value.show() }
             } else { name.clone() };
             let resolved_name = if dynamic_name == "static" {
-                match variables.get("static_class") { Some(Value::String(class)) => class.clone(), _ => return Err("static:: used outside a class method".into()) }
+                match variables.get("\0static_class") { Some(Value::String(class)) => class.clone(), _ => return Err("static:: used outside a class method".into()) }
             } else { dynamic_name };
             let name = &resolved_name;
+            let dynamic_key = name.trim_start_matches('\\').to_ascii_lowercase();
+            if !classes.contains_key(&dynamic_key) && !is_builtin_runtime_class_name(&dynamic_key)
+                && !global_variables.autoload_callbacks.is_empty()
+            {
+                super::functions::invoke_registered_autoloaders(name, variables, bindings, global_variables,
+                    global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+            }
+            let mut merged_functions = None;
+            let mut merged_classes = None;
+            if global_variables.dynamic_symbol_generation != 0 {
+                let mut all_functions = functions.clone();
+                all_functions.extend(global_variables.dynamic_functions.clone());
+                merged_functions = Some(all_functions);
+                let mut all_classes = classes.clone();
+                all_classes.extend(global_variables.dynamic_classes.clone());
+                merged_classes = Some(all_classes);
+            }
+            let functions = merged_functions.as_ref().unwrap_or(functions);
+            let classes = merged_classes.as_ref().unwrap_or(classes);
             if let Some(class) = classes.get(&name.to_ascii_lowercase()) {
                 if let Some(trait_name) = class.unresolved_traits.first() {
                     return Err(format!("Trait '{}' not found", trait_name));
@@ -53,6 +140,38 @@ pub(super) fn execute_instruction(
                 }))));
                 return Ok(true);
             }
+            if name.eq_ignore_ascii_case("ReflectionClassConstant") {
+                let (arguments, _) = super::builtin_arguments::bind("reflectionclassconstant::__construct", arguments, &reference_names, &argument_names)?;
+                let requested = arguments.first().ok_or("ReflectionClassConstant::__construct() expects exactly 2 arguments")?;
+                let target = match requested.dereference() {
+                    Value::Object(object) => object.borrow().class_name.clone(),
+                    value => value.show(),
+                };
+                let constant_name = arguments.get(1).ok_or("ReflectionClassConstant::__construct() expects exactly 2 arguments")?.show();
+                let (_, constant) = find_class_constant(&target, &constant_name, classes)
+                    .ok_or_else(|| format!("ReflectionException:Constant {target}::{constant_name} does not exist"))?;
+                let declaring = classes.get(&constant.declaring_class).map_or_else(|| constant.declaring_class.clone(), |class| class.name.clone());
+                stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "ReflectionClassConstant".into(),
+                    properties: HashMap::from([("\0target_class".into(), Value::String(target)), ("\0constant_name".into(), Value::String(constant_name)), ("\0declaring_class".into(), Value::String(declaring))]),
+                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                }))));
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("ReflectionConstant") {
+                let (arguments, _) = super::builtin_arguments::bind("reflectionconstant::__construct", arguments, &reference_names, &argument_names)?;
+                let requested_value = arguments.first().ok_or("ReflectionConstant::__construct() expects exactly 1 argument")?;
+                let requested = requested_value.show();
+                if !super::constant_exists(&requested, global_variables) {
+                    return Err(format!("ReflectionException:Constant {requested} does not exist"));
+                }
+                stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "ReflectionConstant".into(),
+                    properties: HashMap::from([("\0constant_name".into(), Value::String(requested.trim_start_matches('\\').to_string()))]),
+                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                }))));
+                return Ok(true);
+            }
             if name.eq_ignore_ascii_case("ReflectionClass") {
                 let (arguments, _) = super::builtin_arguments::bind("reflectionclass::__construct", arguments, &reference_names, &argument_names)?;
                 let requested_value = arguments.first().ok_or("ReflectionClass::__construct() expects exactly 1 argument")?;
@@ -67,6 +186,20 @@ pub(super) fn execute_instruction(
                     property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
                 })));
                 stack.push(object);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("ReflectionObject") {
+                let (arguments, _) = super::builtin_arguments::bind("reflectionobject::__construct", arguments, &reference_names, &argument_names)?;
+                let requested_value = arguments.first().ok_or("ReflectionObject::__construct() expects exactly 1 argument")?;
+                let Value::Object(reflected) = requested_value.dereference() else {
+                    return Err(format!("TypeError:ReflectionObject::__construct(): Argument #1 ($object) must be of type object, {} given", requested_value.type_name()));
+                };
+                let target = reflected.borrow().class_name.clone();
+                stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "ReflectionObject".into(),
+                    properties: HashMap::from([("\0target_class".into(), Value::String(target))]),
+                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                }))));
                 return Ok(true);
             }
             if name.eq_ignore_ascii_case("ReflectionFunction") {
@@ -88,6 +221,143 @@ pub(super) fn execute_instruction(
                 }))));
                 return Ok(true);
             }
+            if name.eq_ignore_ascii_case("ReflectionParameter") {
+                let (arguments, _) = super::builtin_arguments::bind("reflectionparameter::__construct", arguments, &reference_names, &argument_names)?;
+                let callable = arguments.first().ok_or("ReflectionParameter::__construct() expects exactly 2 arguments")?;
+                let selector = arguments.get(1).ok_or("ReflectionParameter::__construct() expects exactly 2 arguments")?;
+                let (function, mut origin) = match callable.dereference() {
+                    Value::Closure(closure) => {
+                        let function = closure.borrow().function.clone();
+                        (function, HashMap::from([
+                            ("\0function_name".into(), Value::String("Closure".into())),
+                            ("\0closure".into(), callable.clone()),
+                        ]))
+                    }
+                    Value::Object(object) => {
+                        let class_name = object.borrow().class_name.clone();
+                        let function = find_method(&class_name, "__invoke", classes)
+                            .ok_or_else(|| format!("ReflectionException:Object of class {class_name} is not a callable"))?.clone();
+                        let declaring = function.declaring_class.clone().unwrap_or_else(|| class_name.clone());
+                        (function, HashMap::from([
+                            ("\0target_class".into(), Value::String(declaring)),
+                            ("\0method_name".into(), Value::String("__invoke".into())),
+                        ]))
+                    }
+                    Value::Array(items) if items.len() == 2 && items[0].0 == ArrayKey::Integer(0) && items[1].0 == ArrayKey::Integer(1) => {
+                        let receiver = &items[0].1;
+                        let method_name = match items[1].1.dereference() {
+                            Value::String(method) => method,
+                            value => return Err(format!("TypeError:ReflectionParameter::__construct(): Callable method name must be a string, {} given", value.type_name())),
+                        };
+                        let class_name = match receiver.dereference() {
+                            Value::Object(object) => object.borrow().class_name.clone(),
+                            Value::String(class) => class,
+                            value => return Err(format!("TypeError:ReflectionParameter::__construct(): Callable class must be a string or object, {} given", value.type_name())),
+                        };
+                        let function = find_method(&class_name, &method_name.to_ascii_lowercase(), classes)
+                            .ok_or_else(|| format!("ReflectionException:Method {class_name}::{method_name}() does not exist"))?.clone();
+                        let declaring = function.declaring_class.clone().unwrap_or_else(|| class_name.clone());
+                        (function.clone(), HashMap::from([
+                            ("\0target_class".into(), Value::String(declaring)),
+                            ("\0method_name".into(), Value::String(function.display_name.to_ascii_lowercase())),
+                        ]))
+                    }
+                    Value::Array(_) => return Err("ReflectionException:Callable must be a two-element array".into()),
+                    Value::String(requested) => {
+                        if let Some((class_name, method_name)) = requested.split_once("::") {
+                            let function = find_method(class_name, &method_name.to_ascii_lowercase(), classes)
+                                .ok_or_else(|| format!("ReflectionException:Method {class_name}::{method_name}() does not exist"))?.clone();
+                            let declaring = function.declaring_class.clone().unwrap_or_else(|| class_name.to_string());
+                            (function.clone(), HashMap::from([
+                                ("\0target_class".into(), Value::String(declaring)),
+                                ("\0method_name".into(), Value::String(function.display_name.to_ascii_lowercase())),
+                            ]))
+                        } else {
+                            let function = functions.get(&requested.to_ascii_lowercase())
+                                .ok_or_else(|| format!("ReflectionException:Function {requested}() does not exist"))?.clone();
+                            let function_name = function.display_name.clone();
+                            (function, HashMap::from([("\0function_name".into(), Value::String(function_name))]))
+                        }
+                    }
+                    value => return Err(format!("TypeError:ReflectionParameter::__construct(): Argument #1 ($function) must be of type array|string|object, {} given", value.type_name())),
+                };
+                let position = match selector.dereference() {
+                    Value::Integer(position) if position >= 0 => position as usize,
+                    Value::Integer(_) => return Err("ReflectionException:Parameter number must be a non-negative integer".into()),
+                    Value::String(name) => function.parameters.iter().position(|parameter| parameter == &name)
+                        .ok_or_else(|| format!("ReflectionException:Parameter ${name} does not exist"))?,
+                    value => return Err(format!("TypeError:ReflectionParameter::__construct(): Argument #2 ($param) must be of type string|int, {} given", value.type_name())),
+                };
+                if position >= function.parameters.len() {
+                    return Err(format!("ReflectionException:Parameter number {position} does not exist"));
+                }
+                // The parameter's declaring class is the declaring class of inherited methods.
+                if let Some(Value::String(target)) = origin.get("\0target_class") {
+                    if let Some(declaring) = classes.get(&target.to_ascii_lowercase()).map(|class| class.name.clone()) {
+                        origin.insert("\0target_class".into(), Value::String(declaring));
+                    }
+                }
+                stack.push(reflection_parameter_object(&function, position, origin));
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("ReflectionMethod") {
+                let single_argument_form = arguments.len() == 1;
+                let (arguments, _) = super::builtin_arguments::bind("reflectionmethod::__construct", arguments, &reference_names, &argument_names)?;
+                let requested = arguments.first().ok_or("ReflectionMethod::__construct() expects at least 1 argument")?;
+                let (class_name, method_name) = match requested.dereference() {
+                    Value::Object(object) => {
+                        if single_argument_form { return Err("ReflectionMethod::__construct() expects exactly 2 arguments".into()); }
+                        let class_name = object.borrow().class_name.clone();
+                        let method_name = match arguments.get(1).map(Value::dereference) {
+                            Some(Value::String(method)) => method,
+                            Some(value) => return Err(format!("TypeError:ReflectionMethod::__construct(): Argument #2 ($method) must be of type string, {} given", value.type_name())),
+                            None => return Err("ReflectionMethod::__construct() expects exactly 2 arguments".into()),
+                        };
+                        (class_name, method_name)
+                    }
+                    Value::String(combined) if single_argument_form => {
+                        let Some((class_name, method_name)) = combined.split_once("::") else {
+                            return Err("ReflectionException:Method name must be a class name followed by :: and a method name".into());
+                        };
+                        if class_name.is_empty() || method_name.is_empty() {
+                            return Err("ReflectionException:Method name must be a class name followed by :: and a method name".into());
+                        }
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: "Calling ReflectionMethod::__construct() with 1 argument is deprecated since 8.4".into(),
+                            source_file: Some(global_variables.source_file.clone()),
+                            source_line: *source_line,
+                            output_offset: 0,
+                        });
+                        (class_name.to_string(), method_name.to_string())
+                    }
+                    Value::String(class_name) => {
+                        let method_name = match arguments.get(1).map(Value::dereference) {
+                            Some(Value::String(method)) => method,
+                            Some(value) => return Err(format!("TypeError:ReflectionMethod::__construct(): Argument #2 ($method) must be of type string, {} given", value.type_name())),
+                            None => return Err("ReflectionMethod::__construct() expects exactly 2 arguments".into()),
+                        };
+                        (class_name, method_name)
+                    }
+                    value => return Err(format!("TypeError:ReflectionMethod::__construct(): Argument #1 ($objectOrMethod) must be of type object|string, {} given", value.type_name())),
+                };
+                let class = classes.get(&class_name.to_ascii_lowercase())
+                    .ok_or_else(|| format!("ReflectionException:Class {class_name} does not exist"))?;
+                let function = super::objects::find_method(&class_name, &method_name.to_ascii_lowercase(), classes)
+                    .ok_or_else(|| format!("ReflectionException:Method {class_name}::{method_name}() does not exist"))?;
+                let declaring_class = function.declaring_class.as_deref()
+                    .and_then(|name| classes.get(&name.to_ascii_lowercase()))
+                    .map_or_else(|| class.name.clone(), |declaring| declaring.name.clone());
+                stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "ReflectionMethod".into(),
+                    properties: HashMap::from([
+                        ("\0target_class".into(), Value::String(declaring_class)),
+                        ("\0method_name".into(), Value::String(function.display_name.clone())),
+                    ]),
+                    property_order: Vec::new(), active_property_hooks: Default::default(), exception: None,
+                }))));
+                return Ok(true);
+            }
             if classes.get(&name.to_ascii_lowercase()).is_some_and(|class| class.is_enum) {
                 return Err(format!("Cannot instantiate enum {name}"));
             }
@@ -99,6 +369,12 @@ pub(super) fn execute_instruction(
             if !classes.contains_key(&name.to_ascii_lowercase()) {
                 if let Some(class_name) = crate::exception_builtins::canonical_name(name)
                     .or_else(|| name.rsplit('\\').next().and_then(crate::exception_builtins::canonical_name)) {
+                    let (arguments, _) = super::builtin_arguments::bind(
+                        &class_name.to_ascii_lowercase(),
+                        arguments,
+                        &reference_names,
+                        &argument_names,
+                    )?;
                     let object = crate::exception_builtins::construct(class_name, &arguments, classes)?;
                     set_exception_source_location(&object, *source_line, &global_variables.source_file, frame_scope, variables.contains_key("this"), global_variables);
                     stack.push(object);
@@ -112,6 +388,21 @@ pub(super) fn execute_instruction(
             if name.eq_ignore_ascii_case("MongoDB\\Client") {
                 let arguments = super::builtin_arguments::bind("mongodb\\client::__construct", arguments, &reference_names, &argument_names)?.0;
                 stack.push(crate::mongo_php::construct(&name, &arguments)?);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("stdClass") {
+                if !arguments.is_empty() {
+                    return Err("Error:Class stdClass does not have a constructor, so you cannot pass any constructor arguments".into());
+                }
+                let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "stdClass".into(),
+                    properties: HashMap::new(),
+                    property_order: Vec::new(),
+                    active_property_hooks: Default::default(),
+                    exception: None,
+                })));
+                global_variables.register_destructor_object(&object);
+                stack.push(object);
                 return Ok(true);
             }
             let class = classes.get(&name.to_ascii_lowercase()).ok_or_else(|| format!("Class '{name}' not found"))?;
@@ -136,8 +427,10 @@ pub(super) fn execute_instruction(
                     variables, bindings, global_variables, global_scope, frame_id, classes, *strict_types,
                 )?;
                 locals.insert("this".to_string(), object.clone());
-                locals.insert("static_class".to_string(), Value::String(name.clone()));
-                execute_code(&constructor.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(constructor), parameter_bindings, output, steps)?;
+                locals.insert("\0static_class".to_string(), Value::String(name.clone()));
+                super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(constructor.parameters.iter().cloned()));
+                super::functions::execute_user_frame(&constructor.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(constructor), parameter_bindings, output, steps)?;
+                finish_object_frame(locals, &Value::Null, functions, classes, static_properties, global_variables, output, steps)?;
             } else if native_throwable {
                 let (arguments, _) = super::builtin_arguments::bind("exception", arguments, &reference_names, &argument_names)?;
                 crate::exception_builtins::initialize_object(&object, name, &arguments, classes)?;
@@ -152,10 +445,19 @@ pub(super) fn execute_instruction(
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
             stack.push(read_property(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?);
         }
+        Op::GetPropertyCoalesce(property, access_scope) => {
+            let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
+            stack.push(read_property_for_coalesce(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?);
+        }
         Op::GetDynamicProperty(access_scope) => {
             let property = stack.pop().ok_or("Invalid bytecode stack")?.show();
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
             stack.push(read_property(&receiver, &property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?);
+        }
+        Op::GetDynamicPropertyCoalesce(access_scope) => {
+            let property = stack.pop().ok_or("Invalid bytecode stack")?.show();
+            let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
+            stack.push(read_property_for_coalesce(&receiver, &property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?);
         }
         Op::SetDynamicProperty(access_scope, in_constructor) => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?.dereference();
@@ -434,7 +736,7 @@ pub(super) fn execute_instruction(
         }
         Op::CoalescePropertyJump(target, property, access_scope) => {
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
-            let current = read_property(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
+            let current = read_property_for_coalesce(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
             if matches!(current, Value::Null) { stack.push(receiver); }
             else { stack.push(current); *program_counter = *target; }
         }
@@ -450,7 +752,7 @@ pub(super) fn execute_instruction(
             let raw_keys = stack.split_off(split);
             let keys = raw_keys.iter().map(Value::array_key).collect::<Result<Vec<_>, _>>()?;
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
-            let current = read_property(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
+            let current = read_property_for_coalesce(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
             let value = current.array_get_path(&keys)?;
             if matches!(value, Value::Null) {
                 stack.push(receiver);
@@ -466,7 +768,7 @@ pub(super) fn execute_instruction(
             let raw_keys = stack.split_off(stack.len() - key_count);
             let keys = raw_keys.iter().map(Value::array_key).collect::<Result<Vec<_>, _>>()?;
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
-            let current = read_property(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
+            let current = read_property_for_coalesce(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
             let updated = current.clone().array_set_path(&keys, value.clone())?;
             assign_property(&receiver, property, updated, access_scope.as_deref(), *in_constructor, functions, classes, static_properties, global_variables, output, steps)?;
             stack.push(value);
@@ -560,10 +862,36 @@ pub(super) fn execute_instruction(
                 }
                 let mut locals = HashMap::from([
                     ("this".to_string(), cloned_object.clone()),
-                    ("static_class".to_string(), Value::String(class_name)),
+                    ("\0static_class".to_string(), Value::String(class_name)),
                 ]);
-                let result = execute_code(&hook.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(hook), HashMap::new(), output, steps)?.unwrap_or(Value::Null);
-                let _validated_result = validate_return_type(result, hook, classes)?;
+                // PHP 8.3 permits readonly properties to be initialized again by __clone().
+                // They are unset on the clone before the hook runs, so the normal readonly
+                // write check can allow a single write from the declaring scope.
+                let mut readonly_slots = Vec::new();
+                let mut class_cursor = Some(original_object.borrow().class_name.clone());
+                while let Some(name) = class_cursor {
+                    let Some(metadata) = classes.get(&name.to_ascii_lowercase()) else { break; };
+                    for (property_name, property) in &metadata.properties {
+                        if property.is_readonly {
+                            readonly_slots.push(instance_property_storage_key(property, property_name));
+                        }
+                    }
+                    class_cursor = metadata.parent.clone();
+                }
+                if let Value::Object(object) = &cloned_object {
+                    let mut object = object.borrow_mut();
+                    for slot in readonly_slots { object.properties.remove(&slot); }
+                }
+                super::initialize_local_order(&mut locals, ["this".to_string()]);
+                let clone_id = match &cloned_object { Value::Object(object) => Rc::as_ptr(object) as usize, _ => unreachable!() };
+                global_variables.readonly_clone_objects.push(clone_id);
+                let hook_result = super::functions::execute_user_frame(&hook.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(hook), HashMap::new(), output, steps);
+                if let Some(position) = global_variables.readonly_clone_objects.iter().rposition(|id| *id == clone_id) {
+                    global_variables.readonly_clone_objects.remove(position);
+                }
+                let result = hook_result?.unwrap_or(Value::Null);
+                let validated_result = validate_return_type(result, hook, classes)?;
+                finish_object_frame(locals, &validated_result, functions, classes, static_properties, global_variables, output, steps)?;
             }
             stack.push(cloned_object);
         }
@@ -635,7 +963,7 @@ pub(super) fn execute_instruction(
         Op::IssetChainArrayOffsets(key_count, terminal, failure_target) => {
             if stack.len() < key_count + 1 { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let keys = raw_keys.into_iter().map(|key| key.array_key()).collect::<Result<Vec<_>, _>>()?;
+            let keys = raw_keys.iter().map(isset_array_key).collect::<Result<Vec<_>, _>>()?;
             let current = stack.pop().ok_or("Invalid bytecode stack")?;
             match current.array_get_path(&keys) {
                 Ok(value) if !matches!(value.dereference(), Value::Null) => {
@@ -647,7 +975,7 @@ pub(super) fn execute_instruction(
         Op::IssetPropertyArray(property, key_count, access_scope) => {
             if stack.len() < key_count + 1 { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let keys = raw_keys.into_iter().map(|key| key.array_key()).collect::<Result<Vec<_>, _>>()?;
+            let keys = raw_keys.iter().map(isset_array_key).collect::<Result<Vec<_>, _>>()?;
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
             let Value::Object(object) = &receiver else { stack.push(Value::Bool(false)); return Ok(true); };
             let class_name = object.borrow().class_name.clone();
@@ -701,7 +1029,7 @@ pub(super) fn execute_instruction(
         Op::IssetDynamicPropertyArray(key_count, access_scope) => {
             if stack.len() < key_count + 2 { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let keys = raw_keys.iter().map(Value::array_key).collect::<Result<Vec<_>, _>>()?;
+            let keys = raw_keys.iter().map(isset_array_key).collect::<Result<Vec<_>, _>>()?;
             let property = stack.pop().ok_or("Missing dynamic property name")?.show();
             let receiver = stack.pop().ok_or("Missing dynamic property receiver")?;
             let Value::Object(object) = &receiver else { stack.push(Value::Bool(false)); return Ok(true); };
@@ -737,7 +1065,10 @@ pub(super) fn execute_instruction(
                 ensure_access(metadata.visibility, Some(&metadata.declaring_class), access_scope.as_deref(), classes, property).is_ok()
             });
             if directly_accessible {
-                remove_object_property(object, &instance_property_storage_key(metadata.expect("accessible property metadata"), property), property);
+                let metadata = metadata.expect("accessible property metadata");
+                let storage_key = instance_property_storage_key(metadata, property);
+                validate_readonly_unset(object, metadata, &storage_key, property, access_scope.as_deref(), classes)?;
+                remove_object_property(object, &storage_key, property);
             } else if metadata.is_none() && object.borrow().properties.contains_key(property) {
                 remove_object_property(object, property, property);
             } else if let Some(magic) = find_method(&class_name, "__unset", classes) {
@@ -751,7 +1082,9 @@ pub(super) fn execute_instruction(
             let class_name = object.borrow().class_name.clone();
             if let Some(metadata) = find_property_in_scope(&class_name, &property, access_scope.as_deref(), classes) {
                 ensure_access(metadata.visibility, Some(&metadata.declaring_class), access_scope.as_deref(), classes, &property)?;
-                remove_object_property(object, &instance_property_storage_key(metadata, &property), &property);
+                let storage_key = instance_property_storage_key(metadata, &property);
+                validate_readonly_unset(object, metadata, &storage_key, &property, access_scope.as_deref(), classes)?;
+                remove_object_property(object, &storage_key, &property);
             } else if object.borrow().properties.contains_key(&property) {
                 remove_object_property(object, &property, &property);
             } else if let Some(magic) = find_method(&class_name, "__unset", classes) {
@@ -761,9 +1094,9 @@ pub(super) fn execute_instruction(
         Op::UnsetPropertyArray(property, key_count, access_scope) => {
             if stack.len() < key_count + 1 { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let keys = raw_keys.iter().map(Value::array_key).collect::<Result<Vec<_>, _>>()?;
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
             let current = read_property(&receiver, property, access_scope.as_deref(), functions, classes, static_properties, global_variables, output, steps)?;
+            let keys = raw_keys.iter().map(|key| unset_array_key(key, &current)).collect::<Result<Vec<_>, _>>()?;
             let (updated, removed) = current.clone().array_unset_path_with_removed(&keys)?;
             assign_property(&receiver, property, updated, access_scope.as_deref(), false, functions, classes, static_properties, global_variables, output, steps)?;
             drop(current);
@@ -1015,13 +1348,13 @@ pub(super) fn execute_instruction(
         Op::UnsetStaticPropertyArray(class_name, property, key_count, access_scope) => {
             if stack.len() < *key_count { return Err("Invalid bytecode stack".into()); }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let keys = raw_keys.iter().map(Value::array_key).collect::<Result<Vec<_>, _>>()?;
             let resolved_class = resolve_static_class(class_name, variables)?;
             let (owner, metadata) = static_property_owner(&resolved_class, property, classes)
                 .ok_or_else(|| format!("Undefined static property {resolved_class}::${property}"))?;
             ensure_access(metadata.visibility, Some(&metadata.declaring_class), access_scope.as_deref(), classes, property)?;
             let key = (owner.to_string(), property.clone());
             let current = static_properties.get(&key).cloned().unwrap_or(Value::Null);
+            let keys = raw_keys.iter().map(|key| unset_array_key(key, &current)).collect::<Result<Vec<_>, _>>()?;
             let (updated, removed) = current.clone().array_unset_path_with_removed(&keys)?;
             store_static_property(static_properties, key, updated);
             drop(current);
@@ -1076,6 +1409,13 @@ pub(super) fn execute_instruction(
             store_static_property(static_properties, key, value.clone());
             stack.push(value);
         }
+        Op::GetStaticPropertyCoalesce(class_name, property, access_scope) => {
+            let resolved_class = resolve_static_class(class_name, variables)?;
+            let (owner, metadata) = static_property_owner(&resolved_class, property, classes)
+                .ok_or_else(|| format!("Undefined static property {resolved_class}::${property}"))?;
+            ensure_access(metadata.visibility, Some(&metadata.declaring_class), access_scope.as_deref(), classes, property)?;
+            stack.push(static_properties.get(&(owner.to_string(), property.clone())).cloned().unwrap_or(Value::Null));
+        }
         Op::CoalesceStaticPropertyJump(target, class_name, property, access_scope) => {
             let resolved_class = resolve_static_class(class_name, variables)?;
             let (owner, metadata) = static_property_owner(&resolved_class, property, classes)
@@ -1112,6 +1452,25 @@ pub(super) fn execute_instruction(
                 stack.push(value);
                 return Ok(true);
             }
+            if let Some(value) = crate::reflection_method_class_constant(class_name, constant) {
+                stack.push(Value::Integer(value));
+                return Ok(true);
+            }
+            if let Some(value) = crate::reflection_property_class_constant(class_name, constant) {
+                stack.push(Value::Integer(value));
+                return Ok(true);
+            }
+            if class_name.eq_ignore_ascii_case("Attribute") {
+                let value = match constant.to_ascii_uppercase().as_str() {
+                    "TARGET_CLASS" => 1, "TARGET_FUNCTION" => 2, "TARGET_METHOD" => 4,
+                    "TARGET_PROPERTY" => 8, "TARGET_CLASS_CONSTANT" => 16,
+                    "TARGET_PARAMETER" => 32, "TARGET_CONSTANT" => 64,
+                    "TARGET_ALL" => 127, "IS_REPEATABLE" => 128,
+                    _ => return Err(format!("Undefined class constant Attribute::{constant}")),
+                };
+                stack.push(Value::Integer(value));
+                return Ok(true);
+            }
             let (_, metadata) = find_class_constant(class_name, constant, classes)
                 .ok_or_else(|| format!("Undefined class constant {class_name}::{constant}"))?;
             ensure_access(metadata.visibility, Some(&metadata.declaring_class), access_scope.as_deref(), classes, constant)?;
@@ -1144,6 +1503,46 @@ fn set_exception_source_location(value: &Value, line: Option<usize>, file: &str,
             }
         }
     }
+}
+
+fn read_property_for_coalesce(
+    receiver: &Value,
+    property: &str,
+    access_scope: Option<&str>,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let Value::Object(object) = receiver else { return Ok(Value::Null); };
+    let class_name = object.borrow().class_name.clone();
+    let metadata = find_property_in_scope(&class_name, property, access_scope, classes);
+    let accessible = metadata.is_some_and(|metadata| ensure_access(
+        metadata.visibility, Some(&metadata.declaring_class), access_scope, classes, property,
+    ).is_ok());
+    if accessible {
+        let metadata = metadata.expect("accessible property metadata");
+        let storage_key = instance_property_storage_key(metadata, property);
+        if metadata.get_hook.is_none() {
+            let value = object.borrow().properties.get(&storage_key).cloned();
+            if value.is_none() && metadata.type_name.is_some() { return Ok(Value::Null); }
+            return Ok(value.unwrap_or(Value::Null).dereference());
+        }
+        let value = read_property(receiver, property, access_scope, functions, classes, static_properties, global_variables, output, steps)?;
+        return Ok(if matches!(value.dereference(), Value::Null) { Value::Null } else { value });
+    }
+    if metadata.is_none() && object.borrow().properties.contains_key(property) {
+        return Ok(object.borrow().properties.get(property).cloned().unwrap_or(Value::Null).dereference());
+    }
+    if let Some(magic) = find_method(&class_name, "__isset", classes) {
+        let present = call_magic(receiver, magic, vec![Value::String(property.to_owned())], functions, classes, static_properties, global_variables, output, steps)?;
+        if !present.truthy() { return Ok(Value::Null); }
+        let value = read_property(receiver, property, access_scope, functions, classes, static_properties, global_variables, output, steps)?;
+        return Ok(if matches!(value.dereference(), Value::Null) { Value::Null } else { value });
+    }
+    Ok(Value::Null)
 }
 
 pub(super) fn read_property(
@@ -1228,7 +1627,8 @@ pub(super) fn assign_property(
         let metadata = metadata.expect("direct access requires property metadata");
         if let Some(type_name) = &metadata.type_name { ensure_property_type(&value, type_name, property, classes)?; }
         let storage_key = instance_property_storage_key(metadata, property);
-        if metadata.is_readonly && (!in_constructor || access_scope != Some(metadata.declaring_class.as_str()) || object.borrow().properties.contains_key(&storage_key)) {
+        let cloning_readonly = global_variables.readonly_clone_objects.contains(&(Rc::as_ptr(object) as usize));
+        if metadata.is_readonly && ((!in_constructor && !cloning_readonly) || access_scope != Some(metadata.declaring_class.as_str()) || object.borrow().properties.contains_key(&storage_key)) {
             return Err(format!("Cannot modify readonly property {}::${property}", metadata.declaring_class));
         }
         let hook_key = format!("set:{property}");
@@ -1265,7 +1665,43 @@ pub(super) fn assign_property(
     Ok(())
 }
 
-fn existing_property_for_assignment(
+pub(super) fn bind_property_reference(
+    receiver: &Value,
+    property: &str,
+    reference: Rc<RefCell<Value>>,
+    access_scope: Option<&str>,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Result<Option<Value>, String> {
+    let Value::Object(object) = receiver else { return Err("Attempt to assign property on non-object".into()); };
+    let class_name = object.borrow().class_name.clone();
+    if classes.get(&class_name.to_ascii_lowercase()).is_some_and(|class| class.is_enum) {
+        return Err(format!("Cannot modify enum property {class_name}::${property}"));
+    }
+    let metadata = find_property_in_scope(&class_name, property, access_scope, classes);
+    if let Some(metadata) = metadata {
+        ensure_access(metadata.set_visibility.unwrap_or(metadata.visibility), Some(&metadata.declaring_class), access_scope, classes, property)?;
+        let declaring_name = classes.get(&metadata.declaring_class.to_ascii_lowercase()).map_or(metadata.declaring_class.as_str(), |class| class.name.as_str());
+        if metadata.is_readonly {
+            return Err(format!("Cannot indirectly modify readonly property {declaring_name}::${property}"));
+        }
+        if metadata.type_name.is_some() {
+            return Err(format!("Typed property {declaring_name}::${property} must not be referenced"));
+        }
+    } else if !object.borrow().properties.contains_key(property) {
+        if find_method(&class_name, "__get", classes).is_some() {
+            return Err(format!("Cannot assign by reference to overloaded property {class_name}::${property}; __get() must return by reference"));
+        }
+    }
+    let storage_key = metadata.map_or_else(|| property.to_string(), |metadata| instance_property_storage_key(metadata, property));
+    let mut object = object.borrow_mut();
+    let previous = object.properties.insert(storage_key, Value::Reference(reference));
+    if previous.is_none() && metadata.is_none_or(|metadata| metadata.visibility != MemberVisibility::Private) {
+        object.property_order.push(property.to_string());
+    }
+    Ok(previous)
+}
+
+pub(super) fn existing_property_for_assignment(
     receiver: &Value,
     property: &str,
     access_scope: Option<&str>,
@@ -1289,6 +1725,45 @@ fn remove_object_property(object: &Rc<RefCell<PhpObject>>, storage_key: &str, pr
     if storage_key == property { object.property_order.retain(|name| name != property); }
 }
 
+fn validate_readonly_unset(
+    object: &Rc<RefCell<PhpObject>>,
+    metadata: &BytecodeProperty,
+    storage_key: &str,
+    property: &str,
+    access_scope: Option<&str>,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Result<(), String> {
+    if !metadata.is_readonly { return Ok(()); }
+    let initialized = object.borrow().properties.contains_key(storage_key);
+    let declaring_class = classes.get(&metadata.declaring_class.to_ascii_lowercase())
+        .map_or(metadata.declaring_class.as_str(), |class| class.name.as_str());
+    if initialized {
+        return Err(format!("Error:Cannot unset readonly property {declaring_class}::${property}"));
+    }
+    if !access_scope.is_some_and(|scope| scope.eq_ignore_ascii_case(declaring_class)) {
+        let scope = access_scope.unwrap_or("global scope");
+        return Err(format!("Error:Cannot unset readonly property {declaring_class}::${property} from {scope}"));
+    }
+    Ok(())
+}
+
+fn finish_object_frame(
+    locals: HashMap<String, Value>,
+    result: &Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let frame_values = Value::from_array_entries(locals.into_iter()
+        .map(|(name, value)| (ArrayKey::String(name), value)).collect());
+    run_destructors_removed_from_value(
+        frame_values, result, functions, classes, static_properties, global_variables, output, steps,
+    )
+}
+
 /// Invoke a public instance magic method with checked arguments and return type.
 /// Call a magic property hook with the receiver in `$this` and checked argument types.
 fn call_magic(
@@ -1309,18 +1784,26 @@ fn call_magic(
     let class_name = match receiver { Value::Object(object) => object.borrow().class_name.clone(), _ => unreachable!() };
     let mut locals = HashMap::from([
         ("this".to_string(), receiver.clone()),
-        ("static_class".to_string(), Value::String(class_name.clone())),
+        ("\0static_class".to_string(), Value::String(class_name.clone())),
     ]);
     for (parameter, argument) in function.parameters.iter().cloned().zip(arguments) { locals.insert(parameter, argument); }
-    let result = execute_code(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?.unwrap_or(Value::Null);
-    let result = super::validate_return_type_in_scope(result, function, classes, Some(&class_name))?;
+    super::initialize_local_order(&mut locals, std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()));
+    let result = super::functions::execute_user_frame(&function.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(function), HashMap::new(), output, steps)?.unwrap_or(Value::Null);
+    let result = match super::validate_return_type_in_scope(result, function, classes, Some(&class_name)) {
+        Ok(result) => result,
+        Err(error) => {
+            finish_object_frame(locals, &Value::Null, functions, classes, static_properties, global_variables, output, steps)?;
+            return Err(error);
+        }
+    };
+    finish_object_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     Ok(result)
 }
 
 /// Resolve `static::` against the called class stored in the current VM frame.
 fn resolve_static_class(class_name: &str, variables: &HashMap<String, Value>) -> Result<String, String> {
     if class_name != "static" { return Ok(class_name.to_ascii_lowercase()); }
-    match variables.get("static_class") {
+    match variables.get("\0static_class") {
         Some(Value::String(class)) => Ok(class.clone()),
         _ => Err("static:: used outside a class method".into()),
     }
@@ -1347,9 +1830,11 @@ pub(super) fn stringify(
         return Err(format!("{}::__toString() must be a non-static method without parameters", class_name));
     }
     let mut locals = HashMap::from([("this".to_string(), value.clone())]);
-    match execute_code(&method.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(method), HashMap::new(), output, steps)?
-        .unwrap_or(Value::Null)
-    {
+    super::initialize_local_order(&mut locals, ["this".to_string()]);
+    let result = super::functions::execute_user_frame(&method.instructions, functions, classes, static_properties, &mut locals, global_variables, false, &function_scope(method), HashMap::new(), output, steps)?
+        .unwrap_or(Value::Null);
+    finish_object_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
+    match result {
         Value::String(string) => Ok(string),
         Value::Integer(value) => Ok(value.to_string()),
         Value::Number(value) => Ok(Value::Number(value).show()),
@@ -1373,6 +1858,204 @@ pub(super) fn run_registered_destructors(
         invoke_destructor(object, functions, classes, static_properties, globals, output, steps)?;
     }
     Ok(())
+}
+
+/// Collect unreachable object cycles on an explicit `gc_collect_cycles()` call.
+/// The shutdown queue keeps one strong handle to each PHP object so destructors
+/// can run at script shutdown; account for those handles separately from PHP
+/// references when deciding whether an object is a live root.
+pub(super) fn collect_object_cycles(
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    globals: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<usize, String> {
+    fn graph(
+        globals: &GlobalVariables,
+    ) -> (HashMap<usize, Rc<RefCell<PhpObject>>>, HashMap<usize, Vec<usize>>, HashMap<usize, usize>, HashMap<usize, usize>) {
+        #[derive(Default)]
+        struct SeenContainers {
+            references: HashSet<usize>,
+            closures: HashSet<usize>,
+            generators: HashSet<usize>,
+        }
+
+        fn edges(
+            value: &Value,
+            known: &HashMap<usize, Rc<RefCell<PhpObject>>>,
+            output: &mut Vec<usize>,
+            seen: &mut SeenContainers,
+        ) {
+            match value {
+                Value::Object(object) => {
+                    let identity = Rc::as_ptr(object) as usize;
+                    if known.contains_key(&identity) { output.push(identity); }
+                }
+                Value::Array(array) => for (_, child) in array.iter() { edges(child, known, output, seen); },
+                Value::Reference(reference) => {
+                    let identity = Rc::as_ptr(reference) as usize;
+                    if seen.references.insert(identity) { edges(&reference.borrow(), known, output, seen); }
+                }
+                Value::Closure(closure) => {
+                    let identity = Rc::as_ptr(closure) as usize;
+                    if seen.closures.insert(identity) {
+                        let closure = closure.borrow();
+                        for capture in closure.captures.values() { edges(capture, known, output, seen); }
+                        if let Some(target) = &closure.callable_target { edges(target, known, output, seen); }
+                    }
+                }
+                Value::Generator(generator) => {
+                    let identity = Rc::as_ptr(generator) as usize;
+                    if seen.generators.insert(identity) {
+                        let generator = generator.borrow();
+                        for variable in generator.variables.values() { edges(variable, known, output, seen); }
+                        if let Some((key, value)) = &generator.current {
+                            edges(key, known, output, seen);
+                            edges(value, known, output, seen);
+                        }
+                        if let Some(value) = &generator.return_value { edges(value, known, output, seen); }
+                        let continuation = &generator.continuation;
+                        for value in &continuation.stack { edges(value, known, output, seen); }
+                        for iterator in continuation.iterators.values() {
+                            match iterator {
+                                super::control::ForeachIterator::Array(values, _) => for (_, value) in values { edges(value, known, output, seen); },
+                                super::control::ForeachIterator::Generator(nested, _) => edges(&Value::Generator(nested.clone()), known, output, seen),
+                                super::control::ForeachIterator::UserIterator { object, .. } => edges(object, known, output, seen),
+                            }
+                        }
+                        for iterator in continuation.yield_from.values() {
+                            match iterator {
+                                super::YieldFromIterator::Array(values, _) => for (_, value) in values { edges(value, known, output, seen); },
+                                super::YieldFromIterator::Generator(nested) => edges(&Value::Generator(nested.clone()), known, output, seen),
+                                super::YieldFromIterator::UserIterator { object, .. } => edges(object, known, output, seen),
+                            }
+                        }
+                        for exit in &continuation.pending_exits {
+                            if let super::PendingExit::Return(value) = exit { edges(value, known, output, seen); }
+                        }
+                        if let Some((key, value)) = &continuation.yielded {
+                            if let Some(key) = key { edges(key, known, output, seen); }
+                            edges(value, known, output, seen);
+                        }
+                        for binding in continuation.bindings.values() {
+                            if let VariableBinding::ObjectProperty { receiver, .. } = binding { edges(receiver, known, output, seen); }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut objects = HashMap::new();
+        let mut queued_counts = HashMap::<usize, usize>::new();
+        for value in &globals.destructor_queue {
+            if let Value::Object(object) = value.dereference() {
+                let identity = Rc::as_ptr(&object) as usize;
+                *queued_counts.entry(identity).or_default() += 1;
+                objects.entry(identity).or_insert(object);
+            }
+        }
+        let mut outgoing = HashMap::new();
+        for (identity, object) in &objects {
+            let mut object_edges = Vec::new();
+            let mut seen = SeenContainers::default();
+            for value in object.borrow().properties.values() {
+                edges(value, &objects, &mut object_edges, &mut seen);
+            }
+            outgoing.insert(*identity, object_edges);
+        }
+        // Count real object-bearing slots once. A shared closure/generator may
+        // be reachable from multiple owner objects, but its captured/frame
+        // values are stored only once and must not be overcounted as roots.
+        let mut incoming = HashMap::<usize, usize>::new();
+        let mut all_edges = Vec::new();
+        let mut seen = SeenContainers::default();
+        for object in objects.values() {
+            for value in object.borrow().properties.values() {
+                edges(value, &objects, &mut all_edges, &mut seen);
+            }
+        }
+        for child in all_edges { *incoming.entry(child).or_default() += 1; }
+        (objects, outgoing, incoming, queued_counts)
+    }
+
+    fn reachable_from_roots(
+        objects: &HashMap<usize, Rc<RefCell<PhpObject>>>,
+        outgoing: &HashMap<usize, Vec<usize>>,
+        incoming: &HashMap<usize, usize>,
+        queued_counts: &HashMap<usize, usize>,
+    ) -> HashSet<usize> {
+        let mut roots = Vec::new();
+        for (identity, object) in objects {
+            // One handle is held by this temporary graph and queued_counts by
+            // the shutdown queue. Remaining handles are PHP-visible roots.
+            let expected_internal = 1 + queued_counts.get(identity).copied().unwrap_or(0) + incoming.get(identity).copied().unwrap_or(0);
+            if Rc::strong_count(object) > expected_internal { roots.push(*identity); }
+        }
+        let mut reachable = HashSet::new();
+        while let Some(identity) = roots.pop() {
+            if !reachable.insert(identity) { continue; }
+            if let Some(children) = outgoing.get(&identity) { roots.extend(children.iter().copied()); }
+        }
+        reachable
+    }
+
+    let (objects, outgoing, incoming, queued_counts) = graph(globals);
+    if objects.is_empty() { return Ok(0); }
+    let reachable = reachable_from_roots(&objects, &outgoing, &incoming, &queued_counts);
+    let unreachable: HashSet<usize> = objects.keys().filter(|identity| !reachable.contains(identity)).copied().collect();
+
+    // Ordinary unreferenced objects are released by reference counting. Only
+    // start a collection if an unreachable strongly connected object cycle is
+    // present; descendants of that cycle are released with the same sweep.
+    let has_cycle = unreachable.iter().any(|start| {
+        let mut pending = outgoing.get(start).cloned().unwrap_or_default();
+        let mut visited = HashSet::new();
+        while let Some(identity) = pending.pop() {
+            if identity == *start { return true; }
+            if !visited.insert(identity) || !unreachable.contains(&identity) { continue; }
+            pending.extend(outgoing.get(&identity).into_iter().flatten().copied());
+        }
+        false
+    });
+    if !has_cycle { return Ok(0); }
+    drop(objects);
+
+    // Run destructors before breaking the cycle, allowing them to inspect the
+    // original object graph. Reverse registration order matches shutdown order.
+    let mut garbage: Vec<_> = globals.destructor_queue.iter().rev().filter_map(|value| {
+        let Value::Object(object) = value.dereference() else { return None; };
+        let identity = Rc::as_ptr(&object) as usize;
+        unreachable.contains(&identity).then_some(object)
+    }).collect();
+    let mut invoked = HashSet::new();
+    for object in &garbage {
+        let identity = Rc::as_ptr(object) as usize;
+        if invoked.insert(identity) {
+            invoke_destructor(object.clone(), functions, classes, static_properties, globals, output, steps)?;
+        }
+    }
+    garbage.clear();
+
+    // Destructors may resurrect objects. Recompute liveness after they return;
+    // preserve every resurrected object and anything reachable from it.
+    let (current_objects, current_outgoing, current_incoming, current_queued_counts) = graph(globals);
+    let current_reachable = reachable_from_roots(&current_objects, &current_outgoing, &current_incoming, &current_queued_counts);
+    let collected: HashSet<usize> = unreachable.into_iter()
+        .filter(|identity| current_objects.contains_key(identity) && !current_reachable.contains(identity))
+        .collect();
+    if collected.is_empty() { return Ok(0); }
+    for identity in &collected {
+        if let Some(object) = current_objects.get(identity) { object.borrow_mut().properties.clear(); }
+    }
+    globals.destructor_queue.retain(|value| match value.dereference() {
+        Value::Object(object) => !collected.contains(&(Rc::as_ptr(&object) as usize)),
+        _ => true,
+    });
+    globals.forget_collected_objects(&collected);
+    Ok(collected.len())
 }
 
 pub(super) fn run_destructor_if_unreferenced(
@@ -1437,10 +2120,12 @@ fn invoke_destructor(
     }
     let mut locals = HashMap::from([
         ("this".to_string(), Value::Object(object)),
-        ("static_class".to_string(), Value::String(class_name)),
+        ("\0static_class".to_string(), Value::String(class_name)),
     ]);
-    let result = execute_code(&destructor.instructions, functions, classes, static_properties, &mut locals, globals, false, &function_scope(destructor), HashMap::new(), output, steps)?;
+    super::initialize_local_order(&mut locals, ["this".to_string()]);
+    let result = super::functions::execute_user_frame(&destructor.instructions, functions, classes, static_properties, &mut locals, globals, false, &function_scope(destructor), HashMap::new(), output, steps)?;
     let _validated_result = validate_return_type(result.unwrap_or(Value::Null), destructor, classes)?;
+    finish_object_frame(locals, &Value::Null, functions, classes, static_properties, globals, output, steps)?;
     Ok(())
 }
 
@@ -1458,7 +2143,8 @@ pub(super) fn collect_properties(class_name: &str, classes: &HashMap<String, Byt
     let class = classes.get(&normalized_name).ok_or_else(|| format!("Class '{class_name}' not found"))?;
     if let Some(parent) = &class.parent { collect_properties(parent, classes, target)?; }
     target.extend(class.properties.iter().filter_map(|(name, property)| {
-        property.default.clone().map(|value| (instance_property_storage_key(property, name), value))
+        property.default.clone().or_else(|| property.type_name.is_none().then_some(Value::Null))
+            .map(|value| (instance_property_storage_key(property, name), value))
     }));
     Ok(())
 }
@@ -1470,6 +2156,76 @@ pub(super) fn collect_property_order(class_name: &str, classes: &HashMap<String,
         if !target.contains(property) { target.push(property.clone()); }
     }
     Ok(())
+}
+
+pub(super) fn foreach_entries(
+    object: &Rc<RefCell<PhpObject>>,
+    classes: &HashMap<String, BytecodeClass>,
+    access_scope: Option<&str>,
+    by_reference: bool,
+) -> Vec<(ArrayKey, Value)> {
+    let mut object = object.borrow_mut();
+    let class_name = object.class_name.clone();
+    let property_order = object.property_order.clone();
+    let mut chain = Vec::new();
+    let mut current = Some(class_name.as_str());
+    while let Some(name) = current {
+        let Some(class) = classes.get(&name.to_ascii_lowercase()) else { break; };
+        chain.push(class);
+        current = class.parent.as_deref();
+    }
+    chain.reverse();
+
+    let declared_names = chain.iter().flat_map(|class| class.property_order.iter().cloned()).collect::<HashSet<_>>();
+    let mut selected = Vec::<(String, BytecodeProperty)>::new();
+    let mut visible_names = HashSet::new();
+    for class in &chain {
+        for name in &class.property_order {
+            let Some(metadata) = class.properties.get(name) else { continue; };
+            if metadata.visibility == MemberVisibility::Private {
+                if !access_scope.is_some_and(|scope| metadata.declaring_class.eq_ignore_ascii_case(scope)) { continue; }
+                selected.push((name.clone(), metadata.clone()));
+            } else {
+                let accessible = match metadata.visibility {
+                    MemberVisibility::Public => true,
+                    MemberVisibility::Protected => access_scope.is_some_and(|scope| {
+                        is_subclass_of(scope, &metadata.declaring_class, classes)
+                            || is_subclass_of(&metadata.declaring_class, scope, classes)
+                    }),
+                    MemberVisibility::Private => unreachable!(),
+                };
+                if accessible && visible_names.insert(name.clone()) {
+                    selected.push((name.clone(), metadata.clone()));
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    for (name, metadata) in selected {
+        let storage_key = instance_property_storage_key(&metadata, &name);
+        let Some(value) = object.properties.get_mut(&storage_key) else { continue; };
+        let value = foreach_value(value, by_reference);
+        result.push((ArrayKey::String(name), value));
+    }
+    for name in property_order {
+        if name.starts_with('\0') || declared_names.contains(&name) { continue; }
+        let Some(value) = object.properties.get_mut(&name) else { continue; };
+        result.push((ArrayKey::String(name), foreach_value(value, by_reference)));
+    }
+    result
+}
+
+fn foreach_value(value: &mut Value, by_reference: bool) -> Value {
+    if !by_reference { return value.clone(); }
+    match value {
+        Value::Reference(reference) => Value::Reference(reference.clone()),
+        current => {
+            let reference = Rc::new(RefCell::new(current.clone()));
+            *current = Value::Reference(reference.clone());
+            Value::Reference(reference)
+        }
+    }
 }
 
 /// Locate the declaring storage slot for an inherited static property.
@@ -1489,7 +2245,7 @@ fn static_property_owner<'a>(class_name: &'a str, property: &str, classes: &'a H
 }
 
 /// Find a constant on a class, parent, or implemented interface.
-fn find_class_constant<'a>(
+pub(super) fn find_class_constant<'a>(
     class_name: &str,
     constant: &str,
     classes: &'a HashMap<String, BytecodeClass>,
@@ -1549,7 +2305,7 @@ pub(super) fn instance_property_storage_key(property: &BytecodeProperty, name: &
 }
 
 /// Enforce scalar, nullable, or nominal class types on property writes.
-fn ensure_property_type(
+pub(super) fn ensure_property_type(
     value: &Value,
     type_name: &str,
     property: &str,

@@ -68,3 +68,33 @@ $missingReadArray = [];
 $missingRead = $missingReadArray['missing'];
 echo 'missing array read: ', gettype($missingRead), "\n";
 echo 'silent missing checks: ', isset($missingReadArray['missing']), ':', empty($missingReadArray['missing']), ':', ($missingReadArray['missing'] ?? 'fallback'), "\n";
+
+function &sharedValueGenerator(&$value) { yield $value; }
+$iteratorShared = 10;
+$arrayCopy = iterator_to_array(['shared' => &$iteratorShared]);
+$arrayCopy['shared'] = 11;
+echo 'array iterator reference: ', $iteratorShared, "\n";
+$generatorCopy = iterator_to_array(sharedValueGenerator($iteratorShared));
+$generatorCopy[0] = 12;
+echo 'generator iterator reference: ', $iteratorShared, "\n";
+
+$foreachSource = [1, 2];
+$foreachCopy = $foreachSource;
+foreach ($foreachCopy as &$foreachValue) { $foreachValue *= 10; }
+$foreachValue = 9; // The loop variable remains aliased to the final element.
+echo 'foreach copy/reference: ', implode(',', $foreachSource), ':', implode(',', $foreachCopy), "\n";
+
+$destructureSource = [10, ['value' => 20]];
+[$firstValue, ['value' => &$nestedAlias]] = $destructureSource;
+$nestedAlias = 22;
+echo 'destructuring reference: ', $destructureSource[0], ':', $destructureSource[1]['value'], "\n";
+$destructureHolder = ['slot' => 0];
+[&$destructureHolder['slot']] = $destructureSource;
+$destructureHolder['slot'] = 11;
+echo 'destructuring offset reference: ', $destructureSource[0], "\n";
+
+$transformShared = 1;
+$transformSource = [&$transformShared];
+$transformCopies = [array_merge($transformSource), array_slice($transformSource, 0), array_reverse($transformSource), array_replace([], $transformSource), array_chunk($transformSource, 1)];
+$transformCopies[4][0][0] = 2;
+echo 'transformed array reference: ', $transformShared, "\n";

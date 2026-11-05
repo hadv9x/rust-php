@@ -16,6 +16,19 @@ pub(crate) fn natural_string_order(left: &str, right: &str, insensitive: bool) -
     sorting::natural_order(left, right, insensitive)
 }
 
+pub(crate) fn non_representable_float_to_int_message(number: f64) -> String {
+    let rendered = if number == f64::INFINITY { "INF".into() }
+        else if number == f64::NEG_INFINITY { "-INF".into() }
+        else {
+            let scientific = format!("{number:.1E}");
+            if let Some((mantissa, exponent)) = scientific.split_once('E') {
+                let exponent = exponent.parse::<i32>().unwrap_or(0);
+                format!("{mantissa}E{}{:.2}", if exponent >= 0 { "+" } else { "-" }, exponent.unsigned_abs())
+            } else { scientific }
+        };
+    format!("The float {rendered} is not representable as an int, cast occurred")
+}
+
 /// Compare values using PHP's regular array-sort comparison rules.
 pub(crate) fn regular_value_order(left: &Value, right: &Value) -> Result<std::cmp::Ordering, String> {
     sorting::compare_values(left, right, 0)
@@ -67,7 +80,7 @@ pub(crate) fn call(
         return Ok((value, mutation.into_iter().collect()));
     }
     if name == "array_walk_recursive" {
-        let (value, mutation) = callbacks::array_walk_recursive(&args, invoke_walk)?;
+        let (value, mutation) = callbacks::array_walk_recursive(&args, invoke_walk, diagnostics)?;
         return Ok((value, mutation.into_iter().collect()));
     }
     if matches!(name, "usort" | "uasort" | "uksort") {
@@ -75,7 +88,7 @@ pub(crate) fn call(
         return Ok((value, mutation.into_iter().collect()));
     }
     if name == "array_multisort" {
-        return sorting::multisort(&args);
+        return sorting::multisort(&args, stringify);
     }
     if name == "array_unique" {
         return Ok((transform::array_unique(&args, stringify)?, Vec::new()));
@@ -87,8 +100,10 @@ pub(crate) fn call(
         "array_intersect_ukey" => Some((true, true, false, true, false)),
         "array_udiff" | "array_uintersect" => Some((name == "array_uintersect", false, true, false, false)),
         "array_udiff_assoc" | "array_uintersect_assoc" => Some((name == "array_uintersect_assoc", false, true, false, true)),
-        "array_udiff_uassoc" | "array_udiff_ukey" => Some((false, false, true, true, false)),
-        "array_uintersect_uassoc" | "array_uintersect_ukey" => Some((true, false, true, true, false)),
+        "array_udiff_uassoc" => Some((false, false, true, true, false)),
+        "array_udiff_ukey" => Some((false, true, false, true, false)),
+        "array_uintersect_uassoc" => Some((true, false, true, true, false)),
+        "array_uintersect_ukey" => Some((true, true, false, true, false)),
         _ => None,
     };
     if let Some((intersect, ignore_values, compare_values, compare_keys, exact_keys)) = callback_diff {
@@ -114,10 +129,10 @@ pub(crate) fn call(
     if let Some((value, mutation)) = mutation { return Ok((value, mutation.into_iter().collect())); }
 
     let result = match name {
-        "count" | "sizeof" => query::count(&args, classes, invoke),
+        "count" | "sizeof" => query::count(&args, classes, invoke, diagnostics),
         "array_keys" => query::array_keys(&args),
         "array_values" => query::array_values(&args),
-        "array_key_exists" | "key_exists" => query::key_exists(&args),
+        "array_key_exists" | "key_exists" => query::key_exists(&args, diagnostics),
         "array_is_list" => query::array_is_list(&args),
         "in_array" => query::in_array(&args),
         "array_merge" => transform::array_merge(&args),
@@ -132,7 +147,7 @@ pub(crate) fn call(
         "array_find_key" => callbacks::array_find(&args, true, invoke),
         "array_map" => callbacks::array_map(&args, invoke),
         "array_reduce" => callbacks::array_reduce(&args, invoke),
-        "array_column" => construct::array_column(&args, classes),
+        "array_column" => construct::array_column(&args, classes, diagnostics),
         "array_search" => query::array_search(&args),
         "array_rand" => mutation::array_rand(&args),
         "array_sum" => query::array_sum(&args),
@@ -140,12 +155,12 @@ pub(crate) fn call(
         "array_slice" => transform::array_slice(&args),
         "array_chunk" => transform::array_chunk(&args),
         "array_pad" => transform::array_pad(&args),
-        "array_combine" => construct::array_combine(&args),
-        "array_flip" => construct::array_flip(&args),
+        "array_combine" => construct::array_combine(&args, diagnostics),
+        "array_flip" => construct::array_flip(&args, diagnostics),
         "array_change_key_case" => construct::array_change_key_case(&args),
-        "array_count_values" => construct::array_count_values(&args),
+        "array_count_values" => construct::array_count_values(&args, diagnostics),
         "array_fill" => construct::array_fill(&args),
-        "array_fill_keys" => construct::array_fill_keys(&args),
+        "array_fill_keys" => construct::array_fill_keys(&args, diagnostics),
         "range" => construct::range(&args, diagnostics),
         "array_diff" => transform::array_diff(&args, transform::DiffMode::Values, false),
         "array_intersect" => transform::array_diff(&args, transform::DiffMode::Values, true),
@@ -163,6 +178,12 @@ pub(crate) fn call(
 }
 
 /// Invoke the small set of scalar builtins accepted as array callbacks.
-pub(crate) fn call_callback_builtin(name: &str, arguments: Vec<Value>) -> Result<Value, String> {
-    callbacks::call_callback_builtin(name, arguments)
+pub(crate) fn call_callback_builtin(
+    name: &str,
+    arguments: Vec<Value>,
+    classes: &HashMap<String, BytecodeClass>,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
+    stringify: &mut dyn FnMut(&Value) -> Result<String, String>,
+) -> Result<Value, String> {
+    callbacks::call_callback_builtin(name, arguments, classes, diagnostics, stringify)
 }

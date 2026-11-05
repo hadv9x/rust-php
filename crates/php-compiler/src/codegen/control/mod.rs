@@ -3,7 +3,7 @@
 use php_runtime::bytecode::Op;
 use php_syntax::Stmt;
 
-use super::{CodeGenerator, ControlContext};
+use super::CodeGenerator;
 
 impl CodeGenerator<'_> {
     /// Compare the switch value against each case, then emit bodies in source order for fall-through.
@@ -34,7 +34,7 @@ impl CodeGenerator<'_> {
         let default_jump = self.instructions.len();
         self.instructions.push(Op::Jump(0));
 
-        self.control_stack.push(ControlContext::default());
+        self.push_control_context();
         let mut body_positions = Vec::with_capacity(cases.len());
         for case in cases {
             body_positions.push(self.instructions.len());

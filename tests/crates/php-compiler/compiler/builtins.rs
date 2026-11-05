@@ -16,6 +16,88 @@ fn scalar_conversion_builtins_support_direct_named_and_callback_calls() {
 }
 
 #[test]
+fn function_exists_includes_the_vm_builtin_signature_inventory() {
+    let source = r#"<?php
+        echo function_exists('count_chars'), ':', function_exists('strip_tags'), ':';
+        echo function_exists('str_getcsv'), ':', function_exists('array_first'), ':';
+        echo function_exists('PDO::query'), ':', function_exists('ValueError'), ':';
+        echo function_exists('not_a_php_function');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:::");
+}
+
+#[test]
+fn json_encode_dispatches_as_an_array_callback_with_json_serializable_support() {
+    let source = r#"<?php
+        class CallbackJsonValue implements JsonSerializable {
+            public $value;
+            public function __construct($value) { $this->value = $value; }
+            public function jsonSerialize() { return ['wrapped' => $this->value]; }
+        }
+        $values = [[1, 2], ['ok' => true], new CallbackJsonValue('yes')];
+        echo json_encode(array_map('json_encode', $values)), ':', json_last_error(), ':', function_exists('json_encode');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), r#"["[1,2]","{\"ok\":true}","{\"wrapped\":\"yes\"}"]:0:1"#);
+}
+
+#[test]
+fn json_decode_dispatches_as_an_array_callback_and_updates_error_state() {
+    let source = r#"<?php
+        $decoded = array_map('json_decode', ['{"name":"Ada"}', '[1,2]', '{bad']);
+        echo $decoded[0]->name, ':', $decoded[1][1], ':', $decoded[2] === null, ':', json_last_error(), ':';
+        $valid = array_map('json_decode', ['true', 'null']);
+        echo $valid[0], ':', $valid[1] === null, ':', json_last_error(), ':', function_exists('json_decode');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Ada:2:1:4:1:1:0:1");
+}
+
+#[test]
+fn json_error_helpers_dispatch_through_call_user_func() {
+    let source = r#"<?php
+        json_decode('{broken');
+        echo call_user_func('json_last_error'), ':', call_user_func('json_last_error_msg'), ':';
+        json_decode('true');
+        echo call_user_func('json_last_error'), ':', call_user_func('json_last_error_msg');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:Syntax error:0:No error");
+}
+
+#[test]
+fn json_validate_dispatches_as_an_array_callback_and_updates_error_state() {
+    let source = r#"<?php
+        $valid = array_map('json_validate', ['{"ok":true}', '[1,2]', '{bad']);
+        echo implode(':', $valid), ':', json_last_error(), ':';
+        $validAgain = array_map('json_validate', ['null']);
+        echo $validAgain[0], ':', json_last_error();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1::4:1:0");
+}
+
+#[test]
+fn getenv_reads_environment_lists_values_and_dispatches_as_callback() {
+    let source = r#"<?php
+        $path = getenv(name: 'PATH', local_only: true);
+        $all = getenv();
+        $callback = array_map('getenv', ['PATH']);
+        $missing = getenv(name: 'RUST_PHP_COMPAT_TEST_VARIABLE_THAT_IS_NOT_SET');
+        $localName = 'RUST_PHP_COMPAT_LOCAL_ENV_STORE';
+        $set = putenv($localName . '=first');
+        $local = getenv(name: $localName, local_only: true);
+        $listed = getenv();
+        $putenvCallback = array_map('putenv', [$localName . '=callback']);
+        $callbackValue = getenv($localName);
+        putenv($localName . '=');
+        $empty = getenv($localName);
+        $removed = putenv($localName);
+        echo is_string($path), ':', strlen($path) > 0, ':', array_key_exists('PATH', $all), ':';
+        echo $callback[0] === getenv('PATH'), ':', $missing === false, ':', function_exists('getenv'), ':';
+        echo $set, ':', $local, ':', array_key_exists($localName, $listed), ':', $putenvCallback[0], ':';
+        echo $callbackValue, ':', $empty === '', ':', $removed, ':', getenv($localName) === false, ':', function_exists('putenv'), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:1:1:1:first:1:1:callback:1:1:1:1\n");
+}
+
+#[test]
 fn intval_callback_uses_the_base_argument_for_each_value() {
     let source = r#"<?php
         echo implode(',', array_map('intval', ['ff', '101', '0x2a'], [16, 2, 0])), "\n";
@@ -101,6 +183,12 @@ fn common_php_predefined_constants_are_available() {
 fn mbstring_case_constants_are_available_in_constant_expressions() {
     let source = r#"<?php const CASE_FOLD = MB_CASE_FOLD; echo CASE_FOLD, ':', MB_CASE_FOLD_SIMPLE, "\n";"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3:7\n");
+}
+
+#[test]
+fn pcntl_signal_handler_constants_are_available_in_defaults() {
+    let source = r#"<?php namespace Laravel\Prompts; function resetSignal($handler = SIG_DFL) { return $handler; } echo resetSignal(), ':', SIG_IGN, ':', SIG_ERR, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:1:-1\n");
 }
 
 #[test]

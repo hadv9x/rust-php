@@ -14,6 +14,10 @@ pub mod bytecode;
 pub use vm::PhpGenerator;
 
 use std::sync::{OnceLock, RwLock};
+use std::rc::Rc;
+
+/// Compiler-provided runtime loader used by dynamic include and require expressions.
+pub type IncludeLoader = Rc<dyn Fn(&str, &str, &str) -> Result<BytecodeProgram, String>>;
 
 static DATABASE_REGISTRY: OnceLock<RwLock<php_db::DatabaseRegistry>> = OnceLock::new();
 
@@ -73,6 +77,35 @@ pub fn intl_class_constant(class: &str, constant: &str) -> Option<Value> {
     Some(Value::Integer(value))
 }
 
+/// Resolve the modifier constants exposed by PHP's built-in ReflectionMethod class.
+pub fn reflection_method_class_constant(class: &str, constant: &str) -> Option<i64> {
+    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("ReflectionMethod") { return None; }
+    match constant.to_ascii_uppercase().as_str() {
+        "IS_PUBLIC" => Some(1),
+        "IS_PROTECTED" => Some(2),
+        "IS_PRIVATE" => Some(4),
+        "IS_STATIC" => Some(16),
+        "IS_FINAL" => Some(32),
+        "IS_ABSTRACT" => Some(64),
+        _ => None,
+    }
+}
+
+/// Resolve the modifier constants exposed by PHP's built-in ReflectionProperty class.
+pub fn reflection_property_class_constant(class: &str, constant: &str) -> Option<i64> {
+    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("ReflectionProperty") { return None; }
+    match constant.to_ascii_uppercase().as_str() {
+        "IS_PUBLIC" => Some(1),
+        "IS_PROTECTED" => Some(2),
+        "IS_PRIVATE" => Some(4),
+        "IS_STATIC" => Some(16),
+        "IS_PRIVATE_SET" => Some(32),
+        "IS_PROTECTED_SET" => Some(64),
+        "IS_READONLY" => Some(128),
+        _ => None,
+    }
+}
+
 /// Per-program safeguards for VM work and captured output.
 #[derive(Clone, Copy, Debug)]
 pub struct ExecutionLimits {
@@ -111,8 +144,12 @@ pub struct BytecodeFunction {
     pub parameter_by_reference: Vec<bool>,
     /// Whether each declared parameter collects extra positional arguments.
     pub parameter_variadic: Vec<bool>,
+    /// Whether each constructor parameter is promoted to a property.
+    pub parameter_promoted: Vec<bool>,
     /// Literal defaults for optional positional parameters.
     pub parameter_defaults: Vec<Option<Value>>,
+    /// Source-level names for named-constant parameter defaults, aligned with parameters.
+    pub parameter_default_constant_names: Vec<Option<String>>,
     pub return_type: Option<String>,
     /// Whether scalar return declarations use strict typing from the defining file.
     pub strict_types: bool,
@@ -134,7 +171,9 @@ impl BytecodeFunction {
     /// Build a VM function or method from parameter names and compiled instructions.
     pub fn new(name: String, parameters: Vec<String>, parameter_types: Vec<Option<String>>, parameter_by_reference: Vec<bool>, parameter_variadic: Vec<bool>, parameter_defaults: Vec<Option<Value>>, return_type: Option<String>, returns_by_reference: bool, instructions: Vec<bytecode::Op>, is_static: bool, is_abstract: bool, is_final: bool, visibility: MemberVisibility, declaring_class: Option<String>) -> Self {
         let parameter_attributes = vec![Vec::new(); parameters.len()];
-        Self { display_name: name.clone(), name, parameters, parameter_types, parameter_by_reference, parameter_variadic, parameter_defaults, return_type, strict_types: false, returns_by_reference, instructions, is_static, is_abstract, is_final, visibility, declaring_class, attributes: Vec::new(), parameter_attributes }
+        let parameter_promoted = vec![false; parameters.len()];
+        let parameter_default_constant_names = vec![None; parameters.len()];
+        Self { display_name: name.clone(), name, parameters, parameter_types, parameter_by_reference, parameter_variadic, parameter_promoted, parameter_defaults, parameter_default_constant_names, return_type, strict_types: false, returns_by_reference, instructions, is_static, is_abstract, is_final, visibility, declaring_class, attributes: Vec::new(), parameter_attributes }
     }
 }
 
@@ -143,23 +182,33 @@ pub struct BytecodeProgram {
     instructions: Vec<bytecode::Op>,
     functions: std::collections::HashMap<String, BytecodeFunction>,
     classes: std::collections::HashMap<String, BytecodeClass>,
+    constant_attributes: std::collections::HashMap<String, Vec<BytecodeAttribute>>,
     source_file: String,
+    include_loader: Option<IncludeLoader>,
 }
 
 /// Runtime metadata for a class or interface.
+#[derive(Clone)]
 pub struct BytecodeClass {
     /// Class or interface spelling as declared in PHP source; map keys remain lowercase.
     pub name: String,
+    /// Name exposed by PHP reflection, including source location for anonymous classes.
+    pub reflection_name: String,
     /// Attribute declarations retained for PHP reflection.
     pub attributes: Vec<BytecodeAttribute>,
     pub parent: Option<String>,
     pub interfaces: Vec<String>,
+    /// Traits declared directly in this class or trait's `use` list.
+    pub traits: Vec<String>,
+    /// Aliases declared in this class or trait's own trait-use adaptations.
+    pub trait_aliases: Vec<(String, String)>,
     pub is_interface: bool,
     pub is_trait: bool,
     /// Trait names that can only be validated if this lazily created anonymous class executes.
     pub unresolved_traits: Vec<String>,
     pub is_abstract: bool,
     pub is_final: bool,
+    pub is_readonly: bool,
     pub is_enum: bool,
     pub enum_backing_type: Option<String>,
     pub enum_cases: Vec<String>,
@@ -168,7 +217,11 @@ pub struct BytecodeClass {
     pub property_order: Vec<String>,
     pub static_properties: std::collections::HashMap<String, BytecodeProperty>,
     pub constants: std::collections::HashMap<String, BytecodeConstant>,
+    /// Class constants in declaration/composition order for reflection.
+    pub constant_order: Vec<String>,
     pub methods: std::collections::HashMap<String, BytecodeFunction>,
+    /// Method names in class composition order; maps remain for case-insensitive lookup.
+    pub method_order: Vec<String>,
     /// Attributes attached to declared methods, keyed by lowercase method name.
     pub method_attributes: std::collections::HashMap<String, Vec<BytecodeAttribute>>,
     /// Source spelling of declared method names, keyed by lowercase method name.
@@ -201,6 +254,7 @@ pub struct BytecodeProperty {
     pub declaring_class: String,
     pub type_name: Option<String>,
     pub is_readonly: bool,
+    pub is_promoted: bool,
     /// Compiled PHP 8.4 getter hook, if declared.
     pub get_hook: Option<BytecodeFunction>,
     /// Compiled PHP 8.4 setter hook, if declared.
@@ -215,6 +269,8 @@ pub struct BytecodeConstant {
     pub visibility: MemberVisibility,
     pub declaring_class: String,
     pub is_final: bool,
+    pub type_name: Option<String>,
+    pub attributes: Vec<BytecodeAttribute>,
 }
 
 impl BytecodeProgram {
@@ -224,20 +280,28 @@ impl BytecodeProgram {
         functions: std::collections::HashMap<String, BytecodeFunction>,
         classes: std::collections::HashMap<String, BytecodeClass>,
     ) -> Self {
-        Self { instructions, functions, classes, source_file: String::new() }
+        Self { instructions, functions, classes, constant_attributes: std::collections::HashMap::new(), source_file: String::new(), include_loader: None }
+    }
+
+    /// Set attribute metadata attached to user-defined global constants.
+    pub fn set_constant_attributes(&mut self, attributes: std::collections::HashMap<String, Vec<BytecodeAttribute>>) {
+        self.constant_attributes = attributes;
     }
 
     /// Set the source path used for exception location metadata.
     pub fn set_source_file(&mut self, source_file: String) { self.source_file = source_file; }
 
+    /// Attach the compiler's source loader for runtime-selected include paths.
+    pub fn set_include_loader(&mut self, loader: IncludeLoader) { self.include_loader = Some(loader); }
+
     /// Execute in a fresh variable/output context and return captured stdout.
     pub fn execute(&self) -> Result<String, String> {
-        vm::execute(&self.instructions, &self.functions, &self.classes, &self.source_file)
+        vm::with_include_loader(self.include_loader.clone(), || vm::execute(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, &self.source_file))
     }
 
     /// Execute with predefined PHP global variables and capture web response metadata.
     pub fn execute_with_globals(&self, globals: std::collections::HashMap<String, Value>) -> Result<ExecutionResult, String> {
-        vm::execute_with_globals(&self.instructions, &self.functions, &self.classes, globals, &self.source_file)
+        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, &self.source_file))
     }
 
     /// Execute with request-specific VM instruction and output limits.
@@ -246,7 +310,17 @@ impl BytecodeProgram {
         globals: std::collections::HashMap<String, Value>,
         limits: ExecutionLimits,
     ) -> Result<ExecutionResult, String> {
-        vm::execute_with_globals_and_limits(&self.instructions, &self.functions, &self.classes, globals, limits, &self.source_file)
+        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals_and_limits(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, limits, &self.source_file))
+    }
+
+    /// Execute with request globals, limits, and diagnostics raised before the script begins.
+    pub fn execute_with_globals_limits_and_diagnostics(
+        &self,
+        globals: std::collections::HashMap<String, Value>,
+        limits: ExecutionLimits,
+        initial_diagnostics: Vec<RuntimeDiagnostic>,
+    ) -> Result<ExecutionResult, String> {
+        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals_and_limits_and_diagnostics(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, limits, &self.source_file, initial_diagnostics))
     }
 }
 
@@ -276,4 +350,6 @@ pub struct RuntimeDiagnostic {
     pub source_file: Option<String>,
     /// One-based source line for the active statement, when available.
     pub source_line: Option<usize>,
+    /// Byte offset in captured PHP output where this diagnostic occurred.
+    pub output_offset: usize,
 }

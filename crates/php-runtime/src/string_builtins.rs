@@ -17,6 +17,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "substr_replace",
         "basename", "dirname", "pathinfo",
         "strip_tags",
+        "urlencode", "urldecode", "rawurlencode", "rawurldecode",
     ]
 }
 
@@ -45,6 +46,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "dirname" => &[0],
         "pathinfo" => &[0],
         "strip_tags" => &[0, 1],
+        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => &[0],
         "addcslashes" => &[0, 1],
         "str_pad" => &[0, 2],
         "htmlspecialchars" => &[0, 2],
@@ -89,6 +91,47 @@ fn add_cslashes(input: &str, charlist: &str) -> String {
         }
     }
     output
+}
+
+fn url_encode(input: &str, form: bool) -> String {
+    let mut output = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => output.push(byte as char),
+            b'~' if !form => output.push('~'),
+            b' ' if form => output.push('+'),
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
+}
+
+fn url_decode(input: &str, form: bool) -> String {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' if form => { output.push(b' '); index += 1; }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = |byte: u8| match byte {
+                    b'0'..=b'9' => Some(byte - b'0'),
+                    b'a'..=b'f' => Some(byte - b'a' + 10),
+                    b'A'..=b'F' => Some(byte - b'A' + 10),
+                    _ => None,
+                };
+                if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
+                    output.push(high * 16 + low);
+                    index += 3;
+                } else {
+                    output.push(b'%');
+                    index += 1;
+                }
+            }
+            byte => { output.push(byte); index += 1; }
+        }
+    }
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn known_entity_length(input: &str) -> Option<usize> {
@@ -727,7 +770,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         return Ok(Value::String(strip_tags(&arguments[0].show(), &allowed)));
     }
     let required = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -744,7 +787,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported string function: {name}")),
     };
     let maximum = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "str_increment" | "str_decrement" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "addcslashes" => 2,
         "number_format" => 4,
         "strspn" | "strcspn" => 4,
@@ -796,6 +839,10 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let string = arguments.first().ok_or_else(|| format!("{function}() expects a string"))?.show();
     let value = match function.as_str() {
         "strtolower" => Value::String(string.to_ascii_lowercase()),
+        "urlencode" => Value::String(url_encode(&string, true)),
+        "rawurlencode" => Value::String(url_encode(&string, false)),
+        "urldecode" => Value::String(url_decode(&string, true)),
+        "rawurldecode" => Value::String(url_decode(&string, false)),
         "strtoupper" => Value::String(string.to_ascii_uppercase()),
         "strrev" => Value::String(String::from_utf8_lossy(&string.as_bytes().iter().rev().copied().collect::<Vec<_>>()).into_owned()),
         "str_shuffle" => {

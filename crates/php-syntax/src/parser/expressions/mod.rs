@@ -5,7 +5,7 @@ use super::Parser;
 use crate::ast::IncrementTarget;
 
 impl Parser<'_> {
-    fn anonymous_class_declaration(&mut self, attributes: Vec<crate::ast::AttributeDecl>) -> Result<String, String> {
+    fn anonymous_class_declaration(&mut self, attributes: Vec<crate::ast::AttributeDecl>, is_readonly: bool, source_line: usize) -> Result<String, String> {
         let id = self.next_anonymous_class_id;
         self.next_anonymous_class_id += 1;
         let name = format!("class@anonymous#{id}");
@@ -37,37 +37,43 @@ impl Parser<'_> {
             if matches!(self.peek(), TokenKind::Word(word) if word == "use") {
                 self.take();
                 loop {
-                    match self.take() { TokenKind::Word(trait_name) => traits.push(self.qualify_name(trait_name)), token => return Err(self.error(&format!("Expected trait name in anonymous class, got {token:?}"))) }
+                    match self.take() { TokenKind::Word(trait_name) => traits.push(self.qualify_name(self.previous_word_spelling(&trait_name))), token => return Err(self.error(&format!("Expected trait name in anonymous class, got {token:?}"))) }
                     if !self.eat(&TokenKind::Comma) { break; }
                 }
                 if self.eat(&TokenKind::Semi) { continue; }
                 self.expect(TokenKind::Lb, "Expected ; or { after anonymous class trait use")?;
                 while !self.eat(&TokenKind::Rb) {
-                    let first = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait method adaptation, got {token:?}"))) };
+                    let first = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait method adaptation, got {token:?}"))) };
                     let (trait_name, method_name) = if self.eat(&TokenKind::DoubleColon) {
-                        let method = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
+                        let method = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
                         (self.qualify_name(first), method)
                     } else { (traits.last().cloned().ok_or_else(|| self.error("Unqualified trait adaptation requires a trait use"))?, first) };
                     let mut alias = None;
                     let mut visibility = None;
                     let mut excluded_traits = Vec::new();
+                    let mut is_final = false;
                     match self.take() {
                         TokenKind::Word(word) if word == "as" => {
-                            if let TokenKind::Word(word) = self.peek() {
-                                visibility = match word.as_str() { "public" => Some(crate::ast::Visibility::Public), "protected" => Some(crate::ast::Visibility::Protected), "private" => Some(crate::ast::Visibility::Private), _ => None };
-                                if visibility.is_some() { self.take(); }
+                            while let TokenKind::Word(word) = self.peek() {
+                                match word.as_str() {
+                                    "public" => { visibility = Some(crate::ast::Visibility::Public); self.take(); }
+                                    "protected" => { visibility = Some(crate::ast::Visibility::Protected); self.take(); }
+                                    "private" => { visibility = Some(crate::ast::Visibility::Private); self.take(); }
+                                    "final" => { is_final = true; self.take(); }
+                                    _ => break,
+                                }
                             }
-                            if let TokenKind::Word(name) = self.peek() { alias = Some(name.clone()); self.take(); }
-                            if alias.is_none() && visibility.is_none() { return Err(self.error("Trait alias must specify a name or visibility")); }
+                            if let TokenKind::Word(name) = self.peek() { let fallback = name.clone(); self.take(); alias = Some(self.previous_word_spelling(&fallback)); }
+                            if alias.is_none() && visibility.is_none() && !is_final { return Err(self.error("Trait alias must specify a name, visibility, or final modifier")); }
                         }
                         TokenKind::Word(word) if word == "insteadof" => loop {
-                            match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(name)), token => return Err(self.error(&format!("Expected excluded trait, got {token:?}"))) }
+                            match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(self.previous_word_spelling(&name))), token => return Err(self.error(&format!("Expected excluded trait, got {token:?}"))) }
                             if !self.eat(&TokenKind::Comma) { break; }
                         },
                         token => return Err(self.error(&format!("Expected insteadof or as, got {token:?}"))),
                     }
                     self.expect(TokenKind::Semi, "Expected ; after trait adaptation")?;
-                    trait_adaptations.push(crate::ast::TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility });
+                    trait_adaptations.push(crate::ast::TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility, is_final });
                 }
                 continue;
             }
@@ -96,8 +102,8 @@ impl Parser<'_> {
             let nullable = self.eat(&TokenKind::Question);
             let has_type = (matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Var(_) | TokenKind::Pipe | TokenKind::Ampersand))) || matches!(self.peek(), TokenKind::Lp);
             let type_name = if has_type { Some(self.parse_union_type(nullable)?) } else if nullable { return Err(self.error("Expected anonymous class property type after ?")); } else { None };
-            let (property, is_readonly) = match self.take() {
-                TokenKind::Var(property) => (property, false),
+            let property = match self.take() {
+                TokenKind::Var(property) => property,
                 token => return Err(self.error(&format!("Expected anonymous class method or property, got {token:?}"))),
             };
             let default = if self.eat(&TokenKind::Eq) { Some(self.expression(1)?) } else { None };
@@ -105,7 +111,7 @@ impl Parser<'_> {
             properties.push(crate::ast::PropertyDecl { name: property, attributes: member_attributes, default, is_static, is_readonly, visibility, set_visibility: None, type_name, get_hook: None, set_hook: None });
         }
         self.anonymous_classes.push(crate::ast::ClassDecl {
-            name: name.clone(), attributes, is_enum: false, enum_backing_type: None, is_abstract: false, is_final: false,
+            name: name.clone(), anonymous_source: Some((None, source_line)), attributes, is_enum: false, enum_backing_type: None, is_abstract: false, is_final: false, is_readonly,
             parent, interfaces, traits, trait_adaptations, properties,
             constants: Vec::new(), methods,
         });
@@ -455,8 +461,12 @@ impl Parser<'_> {
                 let source_line = self.source.get(..token_offset).unwrap_or_default().bytes().filter(|byte| *byte == b'\n').count() + 1;
                 let anonymous_attributes = self.attributes()?;
                 // PHP 8.2 permits `new readonly class (...) { ... }`.
-                if matches!(self.peek(), TokenKind::Word(name) if name == "readonly") { self.take(); }
+                let anonymous_class_readonly = if matches!(self.peek(), TokenKind::Word(name) if name == "readonly") { self.take(); true } else { false };
                 let anonymous_class = matches!(self.peek(), TokenKind::Word(name) if name == "class");
+                let anonymous_class_line = if anonymous_class {
+                    self.source.get(..self.peek_offset()).unwrap_or_default().bytes().filter(|byte| *byte == b'\n').count() + 1
+                } else { 0 };
+                if anonymous_class_readonly && !anonymous_class { return Err(self.error("The readonly modifier is only valid before an anonymous class")); }
                 if !anonymous_attributes.is_empty() && !anonymous_class { return Err(self.error("Attributes after new are only valid on an anonymous class")); }
                 let mut class_expression = match self.take() {
                     TokenKind::Word(name) if matches!(name.as_str(), "static" | "self" | "parent") => Ok(name),
@@ -502,7 +512,7 @@ impl Parser<'_> {
                     }
                 }
                 if anonymous_class {
-                    let class_name = self.anonymous_class_declaration(anonymous_attributes)?;
+                    let class_name = self.anonymous_class_declaration(anonymous_attributes, anonymous_class_readonly, anonymous_class_line)?;
                     Expr::NewObject(class_name, arguments, source_line)
                 } else {
                 match class_expression { Ok(name) => Expr::NewObject(name, arguments, source_line), Err(class) => Expr::DynamicNewObject(Box::new(class), arguments, source_line) }

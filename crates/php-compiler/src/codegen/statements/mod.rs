@@ -17,6 +17,18 @@ fn reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
     }
 }
 
+fn property_reference_path(expression: &Expr) -> Option<(Expr, String, Vec<&Expr>)> {
+    match expression {
+        Expr::Property(receiver, property) => Some(((**receiver).clone(), property.clone(), Vec::new())),
+        Expr::Index(array, key) => {
+            let (receiver, property, mut keys) = property_reference_path(array)?;
+            keys.push(key);
+            Some((receiver, property, keys))
+        }
+        _ => None,
+    }
+}
+
 impl CodeGenerator<'_> {
     /// Generate bytecode for each statement in source order and propagate code-generation errors.
     pub(super) fn statements(&mut self, statements: &[Stmt]) {
@@ -35,6 +47,9 @@ impl CodeGenerator<'_> {
                 let previous_strict_types = self.strict_types;
                 self.strict_types = *strict_types;
                 self.instructions.push(Op::SetFile(file.clone()));
+                if self.current_function.is_none() && self.current_class.is_none() {
+                    self.instructions.push(Op::MarkIncluded(file.clone()));
+                }
                 self.statements(body);
                 self.strict_types = previous_strict_types;
                 if let Some(previous) = previous {
@@ -67,7 +82,16 @@ impl CodeGenerator<'_> {
                 else { self.errors.push("include return outside an included-file scope".into()); }
             }
             Stmt::FunctionDeclaration(_) | Stmt::ClassDeclaration(_) | Stmt::InterfaceDeclaration(_) | Stmt::TraitDeclaration(_) => {},
-            Stmt::Include { .. } => self.errors.push("include/require needs a source file context; use compile_file()".into()),
+            Stmt::Include { kind, path } => {
+                self.expression(path);
+                self.instructions.push(Op::Include(match kind {
+                    php_syntax::IncludeKind::Include => php_runtime::bytecode::IncludeMode::Include,
+                    php_syntax::IncludeKind::IncludeOnce => php_runtime::bytecode::IncludeMode::IncludeOnce,
+                    php_syntax::IncludeKind::Require => php_runtime::bytecode::IncludeMode::Require,
+                    php_syntax::IncludeKind::RequireOnce => php_runtime::bytecode::IncludeMode::RequireOnce,
+                }));
+                self.instructions.push(Op::Pop);
+            }
             Stmt::Echo(expressions) => {
                 for expression in expressions {
                     self.expression(expression);
@@ -84,14 +108,28 @@ impl CodeGenerator<'_> {
                         self.errors.push("Cannot re-assign $GLOBALS".into());
                         return;
                     }
+                    let known = match value {
+                        Expr::String(_) | Expr::Array(_) | Expr::FirstClassCallable(_) => Some(value.clone()),
+                        Expr::Variable(source) => self.known_callables.get(source).cloned(),
+                        _ => None,
+                    };
+                    if let Some(known) = known { self.known_callables.insert(name.clone(), known); }
+                    else { self.known_callables.remove(name); }
+                    let assigned_type = super::expressions::assigned_type(value, &self.variable_types);
+                    if let Some(assigned_type) = assigned_type { self.variable_types.insert(name.clone(), assigned_type); }
+                    else { self.variable_types.remove(name); }
                     self.expression(value);
                     self.instructions.push(Op::Store(name.clone()));
                 }
                 AssignTarget::DynamicVariable(name) => {
+                    self.known_callables.clear();
+                    self.variable_types.clear();
                     self.expression(value);
                     self.instructions.push(Op::StoreDynamic(name.clone()));
                 }
                 AssignTarget::DynamicVariableExpr(name) => {
+                    self.known_callables.clear();
+                    self.variable_types.clear();
                     self.expression(name);
                     self.expression(value);
                     self.instructions.push(Op::StoreDynamicExpr);
@@ -126,7 +164,7 @@ impl CodeGenerator<'_> {
                 AssignTarget::Property { object, property } => {
                     self.instructions.push(Op::Load(object.clone()));
                     self.expression(value);
-                    self.instructions.push(Op::SetProperty(property.clone(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::SetProperty(property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 }
                 AssignTarget::StaticProperty { class, property } => {
                     self.expression(value);
@@ -142,7 +180,8 @@ impl CodeGenerator<'_> {
                 self.expression(value);
                 let mut target_key_count = 0;
                 let targets = targets.iter().map(|target| compile_destructure_target(self, target, &mut target_key_count)).collect();
-                self.instructions.push(Op::ListDestructure(targets, target_key_count, self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                let source_variable = match value { Expr::Variable(name) => Some(name.clone()), _ => None };
+                self.instructions.push(Op::ListDestructure(targets, target_key_count, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")), source_variable));
             }
             Stmt::Global(variables) => {
                 for variable in variables { self.instructions.push(Op::DeclareGlobal(variable.clone())); }
@@ -226,7 +265,7 @@ impl CodeGenerator<'_> {
                 for key in source_keys { self.expression(key); }
                 self.instructions.push(Op::BindDynamicPropertyArrayReference(
                     target_keys.len(), source.clone(), source_keys.len(), self.current_class.clone(),
-                    self.current_method.as_deref() == Some("__construct"),
+                    self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                 ));
             }
             Stmt::PropertyAppendReferenceAssign { receiver, property, source } => {
@@ -234,7 +273,7 @@ impl CodeGenerator<'_> {
                 if let Expr::Property(source_receiver, source_property) = source {
                     self.expression(source_receiver);
                     self.instructions.push(Op::LoadPropertyReference(source_property.clone(), self.current_class.clone()));
-                    self.instructions.push(Op::BindPropertyAppendReference(property.clone(), self.current_class.clone(), self.current_method.as_deref() == Some("__construct")));
+                    self.instructions.push(Op::BindPropertyAppendReference(property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
                 } else {
                     self.errors.push("Property array append reference requires a reference-returning property".into());
                 }
@@ -245,7 +284,7 @@ impl CodeGenerator<'_> {
                 for key in source_keys { self.expression(key); }
                 self.instructions.push(Op::BindPropertyArrayReference(
                     property.clone(), target_keys.len(), source.clone(), source_keys.len(),
-                    self.current_class.clone(), self.current_method.as_deref() == Some("__construct"),
+                    self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                 ));
             }
             Stmt::Static(variables) => {
@@ -319,7 +358,7 @@ impl CodeGenerator<'_> {
                             self.expression(value);
                             self.instructions.push(Op::CoalesceAssignProperty(
                                 property.clone(), self.current_class.clone(),
-                                self.current_method.as_deref() == Some("__construct"),
+                                self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                             ));
                             self.instructions.push(Op::Pop);
                             let end = self.instructions.len();
@@ -410,7 +449,7 @@ impl CodeGenerator<'_> {
                         self.expression(value);
                         self.instructions.push(Op::CompoundAssignProperty(
                             property.clone(), operation, self.current_class.clone(),
-                            self.current_method.as_deref() == Some("__construct"),
+                            self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                         ));
                         self.instructions.push(Op::Pop);
                     }
@@ -443,7 +482,10 @@ impl CodeGenerator<'_> {
                 }
             }
             Stmt::If { condition, then_body, else_body } => {
+                self.known_callables.clear();
                 self.expression(condition);
+                let condition_callables = self.known_callables.clone();
+                let condition_types = self.variable_types.clone();
                 let false_jump = self.instructions.len();
                 self.instructions.push(Op::JumpFalse(0));
                 self.statements(then_body);
@@ -454,12 +496,18 @@ impl CodeGenerator<'_> {
                     let end_jump = self.instructions.len();
                     self.instructions.push(Op::Jump(0));
                     self.instructions[false_jump] = Op::JumpFalse(self.instructions.len());
+                    self.known_callables = condition_callables;
+                    self.variable_types = condition_types;
                     self.statements(else_body);
                     self.instructions[end_jump] = Op::Jump(self.instructions.len());
                 }
+                self.known_callables.clear();
+                self.variable_types.clear();
             }
-            Stmt::Switch { .. } => self.switch_statement(statement),
+            Stmt::Switch { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.switch_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
             Stmt::TryCatch { try_body, catches, finally_body: None } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
                 let handler = self.instructions.len();
                 self.instructions.push(Op::TryStart(catches.iter().map(|catch| php_runtime::bytecode::CatchTarget {
                     target: 0, variable: catch.variable.clone(), types: catch.types.clone(),
@@ -471,6 +519,8 @@ impl CodeGenerator<'_> {
                 let mut targets = Vec::new();
                 let mut exits = Vec::new();
                 for catch in catches {
+                    self.known_callables.clear();
+                    self.variable_types.clear();
                     let target = self.instructions.len();
                     targets.push(php_runtime::bytecode::CatchTarget { target, variable: catch.variable.clone(), types: catch.types.clone() });
                     self.statements(&catch.body);
@@ -481,8 +531,12 @@ impl CodeGenerator<'_> {
                 self.instructions[handler] = Op::TryStart(targets);
                 for exit in exits { self.instructions[exit] = Op::Jump(end); }
                 self.instructions[skip_catch] = Op::Jump(end);
+                self.known_callables.clear();
+                self.variable_types.clear();
             }
             Stmt::TryCatch { try_body, catches, finally_body: Some(finally_body) } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
                 let finally_handler = self.instructions.len();
                 self.instructions.push(Op::FinallyStart(0, Vec::new()));
                 let catch_handler = self.instructions.len();
@@ -502,6 +556,8 @@ impl CodeGenerator<'_> {
                 let mut protected_ranges = vec![(try_start, try_end)];
                 let mut exits = Vec::new();
                 for catch in catches {
+                    self.known_callables.clear();
+                    self.variable_types.clear();
                     let target = self.instructions.len();
                     targets.push(php_runtime::bytecode::CatchTarget { target, variable: catch.variable.clone(), types: catch.types.clone() });
                     let catch_body_start = self.instructions.len();
@@ -509,6 +565,8 @@ impl CodeGenerator<'_> {
                     let catch_body_end = self.instructions.len();
                     protected_ranges.push((catch_body_start, catch_body_end));
                     self.instructions.push(Op::TryEnd); // Remove finally handler before running it after catch.
+                    self.known_callables.clear();
+                    self.variable_types.clear();
                     self.statements(finally_body);
                     exits.push(self.instructions.len());
                     self.instructions.push(Op::Jump(0));
@@ -522,8 +580,12 @@ impl CodeGenerator<'_> {
                 let end = self.instructions.len();
                 self.instructions[skip_catch] = Op::Jump(end);
                 for exit in exits { self.instructions[exit] = Op::Jump(end); }
+                self.known_callables.clear();
+                self.variable_types.clear();
             }
             Stmt::TryFinally { try_body, finally_body } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
                 let finally_handler = self.instructions.len();
                 self.instructions.push(Op::FinallyStart(0, Vec::new()));
                 let try_start = self.instructions.len();
@@ -535,26 +597,30 @@ impl CodeGenerator<'_> {
                 self.instructions.push(Op::Jump(0));
                 let exception_finally_start = self.instructions.len();
                 self.instructions[finally_handler] = Op::FinallyStart(exception_finally_start, vec![(try_start, try_end)]);
+                self.known_callables.clear();
+                self.variable_types.clear();
                 self.statements(finally_body);
                 self.instructions.push(Op::FinallyResume);
                 let end = self.instructions.len();
                 self.instructions[skip_exception_finally] = Op::Jump(end);
+                self.known_callables.clear();
+                self.variable_types.clear();
             }
             Stmt::Throw { value, line } => {
                 self.expression(value);
                 self.instructions.push(Op::ThrowAt(*line));
             }
-            Stmt::While { .. } | Stmt::Foreach { .. } => self.loop_statement(statement),
-            Stmt::DoWhile { .. } | Stmt::For { .. } => self.loop_statement(statement),
+            Stmt::While { .. } | Stmt::Foreach { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
+            Stmt::DoWhile { .. } | Stmt::For { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
             Stmt::Break(level) => self.loop_jump_expr(true, level),
             Stmt::Continue(level) => self.loop_jump_expr(false, level),
             Stmt::Goto(label) => {
                 let instruction = self.instructions.len();
                 self.instructions.push(Op::Jump(0));
-                self.pending_gotos.push((label.clone(), instruction));
+                self.pending_gotos.push((label.clone(), instruction, self.control_path()));
             }
             Stmt::Label(label) => {
-                if self.labels.insert(label.clone(), self.instructions.len()).is_some() {
+                if self.labels.insert(label.clone(), (self.instructions.len(), self.control_path())).is_some() {
                     self.errors.push(format!("Label '{label}' is already defined"));
                 }
             }
@@ -579,6 +645,8 @@ impl CodeGenerator<'_> {
                         self.errors.push("Cannot unset $GLOBALS".into());
                         return;
                     }
+                    self.known_callables.remove(variable);
+                    self.variable_types.remove(variable);
                     self.instructions.push(Op::UnsetVariable(variable.clone()));
                 } else {
                     for key in keys { self.expression(key); }
@@ -596,9 +664,14 @@ impl CodeGenerator<'_> {
                         if let Some((variable, keys)) = reference_path(value) {
                             for key in &keys { self.expression(key); }
                             self.instructions.push(Op::LoadReference(variable, keys.len()));
-                        } else if let Expr::Property(receiver, property) = value {
-                            self.expression(receiver);
-                            self.instructions.push(Op::LoadPropertyReference(property.clone(), self.current_class.clone()));
+                        } else if let Some((receiver, property, keys)) = property_reference_path(value) {
+                            self.expression(&receiver);
+                            if keys.is_empty() {
+                                self.instructions.push(Op::LoadPropertyReference(property, self.current_class.clone()));
+                            } else {
+                                for key in &keys { self.expression(key); }
+                                self.instructions.push(Op::LoadPropertyArrayReference(property, keys.len(), self.current_class.clone()));
+                            }
                         } else if let Expr::StaticProperty(class, property) = value {
                             let class = match class.as_str() {
                                 "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
@@ -653,5 +726,6 @@ pub(super) fn compile_destructure_target(
         property: target.property.clone(),
         property_array_key_count: if target.property_receiver.is_some() { target.array_keys.len() } else { 0 },
         nested: target.nested.as_ref().map(|targets| targets.iter().map(|target| compile_destructure_target(generator, target, target_key_count)).collect()),
+        by_reference: target.by_reference,
     }
 }

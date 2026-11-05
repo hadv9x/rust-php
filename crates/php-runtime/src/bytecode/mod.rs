@@ -47,6 +47,10 @@ pub enum Op {
     SetLine(usize),
     /// Set the active source file for the current execution frame.
     SetFile(String),
+    /// Record that this source file has begun executing for include_once semantics.
+    MarkIncluded(String),
+    /// Include a PHP source file selected at runtime. The path is on the operand stack.
+    Include(IncludeMode),
     Const(Value),
     /// Resolve a global or namespaced constant at runtime.
     LoadConstant(String),
@@ -172,6 +176,8 @@ pub enum Op {
     MakeArray(Vec<ArrayEntryKind>),
     ArrayGet,
     ArrayGetSilent,
+    /// Silent for missing offsets, but validates key types for isset()/empty().
+    ArrayGetIsset,
     ArraySetPath(usize),
     /// Set a value through a path that may append at intermediate levels.
     ArraySetMixedPath(Vec<bool>),
@@ -189,9 +195,9 @@ pub enum Op {
     /// Append to a nested path and write the updated root variable back.
     AssignArrayAppendPath(String, usize),
     /// Assign explicitly keyed or successive integer offsets to destructuring targets.
-    ListDestructure(Vec<DestructureTarget>, usize, Option<String>, bool),
+    ListDestructure(Vec<DestructureTarget>, usize, Option<String>, bool, Option<String>),
     /// Destructure an assigned value and preserve it as the expression result.
-    ListDestructureKeep(Vec<DestructureTarget>, usize, Option<String>, bool),
+    ListDestructureKeep(Vec<DestructureTarget>, usize, Option<String>, bool, Option<String>),
     Call(String, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, bool),
     /// Create a closure by copying the named variables from the current frame.
     MakeClosure(Box<crate::BytecodeFunction>, Vec<(String, bool)>),
@@ -225,7 +231,11 @@ pub enum Op {
     ThrowAt(usize),
     NewObject(String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, Option<usize>, bool),
     GetProperty(String, Option<String>),
+    /// Read a property for `??`, treating an uninitialized typed slot as null.
+    GetPropertyCoalesce(String, Option<String>),
     GetDynamicProperty(Option<String>),
+    /// Read a computed property for `??` using isset/property-overloading semantics.
+    GetDynamicPropertyCoalesce(Option<String>),
     SetDynamicProperty(Option<String>, bool),
     SetProperty(String, Option<String>, bool),
     /// Assign to an instance property and preserve the assigned value as an expression result.
@@ -256,6 +266,8 @@ pub enum Op {
     CoalesceStaticPropertyJump(usize, String, String, Option<String>),
     /// Store the right-hand value into a static property for `??=`.
     CoalesceAssignStaticProperty(String, String, Option<String>),
+    /// Read a static property for `??`, treating an uninitialized typed slot as null.
+    GetStaticPropertyCoalesce(String, String, Option<String>),
     /// Test a property without reading it, allowing the VM to dispatch __isset.
     IssetProperty(String, Option<String>),
     IssetChainProperty(String, bool, usize, Option<String>),
@@ -284,9 +296,9 @@ pub enum Op {
     CallParentMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
     CallStaticMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
     Return,
-    IterStart(usize),
+    IterStart(usize, Option<String>),
     /// Snapshot an array variable and convert each iterated slot to a reference cell.
-    IterStartReference(usize, String, usize),
+    IterStartReference(usize, String, usize, Option<String>),
     IterNext(usize, Option<String>, String, bool, usize),
     /// Materialize an array or Traversable before argument unpacking.
     ExpandUnpack,
@@ -302,6 +314,10 @@ pub enum Op {
     /// Keep the top stack value and jump if non-null; otherwise discard it and continue.
     CoalesceJump(usize),
 }
+
+/// Runtime include/require behavior attached to an include opcode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IncludeMode { Include, IncludeOnce, Require, RequireOnce }
 
 /// Describes the operands produced by one item in an array literal.
 #[derive(Clone, Copy, Debug)]
@@ -320,4 +336,5 @@ pub struct DestructureTarget {
     pub property: Option<String>,
     pub property_array_key_count: usize,
     pub nested: Option<Vec<DestructureTarget>>,
+    pub by_reference: bool,
 }

@@ -97,7 +97,7 @@ impl Parser<'_> {
     pub(super) fn previous_word_spelling(&self, fallback: &str) -> String {
         let Some(token) = self.cursor.checked_sub(1).and_then(|index| self.tokens.get(index)) else { return fallback.to_string(); };
         let source = &self.source[token.offset..];
-        let spelling = source.chars().take_while(|character| character.is_alphanumeric() || *character == '_').collect::<String>();
+        let spelling = source.chars().take_while(|character| character.is_alphanumeric() || matches!(*character, '_' | '\\')).collect::<String>();
         if spelling.is_empty() { fallback.to_string() } else { spelling }
     }
 
@@ -150,5 +150,10 @@ impl Parser<'_> {
 
 /// Parse source text into the syntax tree, reporting errors with source locations.
 pub fn parse(source: &str) -> Result<crate::Program, String> {
-    Parser { source, tokens: lex(source)?, cursor: 0, namespace: None, class_imports: HashMap::new(), function_imports: HashMap::new(), constant_imports: HashMap::new(), anonymous_classes: Vec::new(), next_anonymous_class_id: 0, word_operator_floor: 1, strict_types: false }.program()
+    parse_with_anonymous_class_id(source, 0)
+}
+
+/// Parse a source unit while continuing the anonymous-class sequence used by an enclosing compilation.
+pub fn parse_with_anonymous_class_id(source: &str, first_anonymous_class_id: usize) -> Result<crate::Program, String> {
+    Parser { source, tokens: lex(source)?, cursor: 0, namespace: None, class_imports: HashMap::new(), function_imports: HashMap::new(), constant_imports: HashMap::new(), anonymous_classes: Vec::new(), next_anonymous_class_id: first_anonymous_class_id, word_operator_floor: 1, strict_types: false }.program()
 }

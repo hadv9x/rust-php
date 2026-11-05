@@ -1,6 +1,21 @@
     use super::*;
     use std::io::Cursor;
 
+    #[test]
+    fn input_warning_log_fields_escape_newlines_and_include_source() {
+        let diagnostic = RuntimeDiagnostic {
+            level: php_runtime::DiagnosticLevel::Warning,
+            message: "bad input\nforged=entry".into(),
+            source_file: Some("/app/index.php".into()),
+            source_line: None,
+            output_offset: 0,
+        };
+        let fields = php_diagnostic_log_fields(&diagnostic);
+        assert!(fields.contains("file=Some(\"/app/index.php\")"));
+        assert!(fields.contains("message=\"bad input\\nforged=entry\""));
+        assert_eq!(render_diagnostic(&diagnostic), "Warning: bad input\nforged=entry in /app/index.php\n");
+    }
+
     fn parse_ini(path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
         let mut settings = std::collections::HashMap::new();
         parse_ini_into(path, &mut settings)?;
@@ -37,7 +52,7 @@
         body: &[u8],
         limits: ExecutionLimits,
     ) -> Result<WebResponse, RequestError> {
-        execute_request_with_context(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, None, false, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS)
+        execute_request_with_context(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, None, false, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
     }
 
     fn execute_request_with_session(
@@ -54,7 +69,7 @@
         store: SessionStore,
         secure_session_cookie: bool,
     ) -> Result<WebResponse, RequestError> {
-        execute_request_with_session_and_limits(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS)
+        execute_request_with_session_and_limits(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
     }
 
     struct Fixture(PathBuf);
@@ -99,13 +114,50 @@
     fn parses_php_ini_style_server_settings_and_comments() {
         let fixture = Fixture::new();
         let path = fixture.path().join("php-rust.ini");
-        std::fs::write(&path, "; comment\nroot = \"site public\"\nbind = 127.0.0.1:4321\n[server]\nmax_in_flight = 32\ncookie_secure = On\nlog = debug\n").unwrap();
+        std::fs::write(&path, "; comment\nroot = \"site public\"\ninclude_path = \"shared:vendor/php\"\nbind = 127.0.0.1:4321\n[server]\nmax_in_flight = 32\ncookie_secure = On\nlog = debug\n[PHP]\nmax_input_nesting_level = 12\ndisplay_errors = stderr\n").unwrap();
         let settings = parse_ini(&path).unwrap();
         assert_eq!(settings.get("PHP_RUST_ROOT").map(String::as_str), Some("site public"));
         assert_eq!(settings.get("PHP_RUST_BIND").map(String::as_str), Some("127.0.0.1:4321"));
+        assert_eq!(settings.get("PHP_INI_VALUE:include_path").map(String::as_str), Some("shared:vendor/php"));
         assert_eq!(settings.get("PHP_RUST_MAX_IN_FLIGHT").map(String::as_str), Some("32"));
+        assert_eq!(settings.get("PHP_RUST_MAX_INPUT_NESTING_LEVEL").map(String::as_str), Some("12"));
+        assert_eq!(settings.get("PHP_RUST_DISPLAY_ERRORS").map(String::as_str), Some("stderr"));
+        assert_eq!(DisplayErrors::parse(settings.get("PHP_RUST_DISPLAY_ERRORS").unwrap()).unwrap(), DisplayErrors::Stderr);
         assert_eq!(settings.get("PHP_RUST_COOKIE_SECURE").map(String::as_str), Some("On"));
         assert!(config_bool(&settings, "PHP_RUST_COOKIE_SECURE", false).unwrap());
+    }
+
+    #[test]
+    fn display_errors_routes_runtime_warnings_to_response_or_stderr_mode() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path().join("index.php"), "<?php echo 'body'; echo $missing; echo 'tail';").unwrap();
+        let execute = |display_errors| execute_request_with_context(
+            fixture.path(), "/", "", "GET", "HTTP/1.1", "", "localhost", &[], &[],
+            ExecutionLimits::default(), None, false, display_errors, MAX_BODY_BYTES,
+            DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL,
+        ).unwrap();
+        let displayed = execute(DisplayErrors::On);
+        let output = String::from_utf8(displayed.output).unwrap();
+        assert!(output.starts_with("bodyWarning: Undefined variable $missing in "), "{output}");
+        assert!(output.contains(" on line 1\n"), "{output}");
+        assert!(output.ends_with("tail"), "{output}");
+        assert!(output.find("Undefined variable").unwrap() < output.find("tail").unwrap(), "{output}");
+        assert_eq!(execute(DisplayErrors::Off).output, b"bodytail");
+    }
+
+    #[test]
+    fn server_ini_include_path_resolves_static_includes_inside_document_root() {
+        let fixture = Fixture::new();
+        let include_dir = fixture.path().join("shared");
+        std::fs::create_dir_all(&include_dir).unwrap();
+        std::fs::write(include_dir.join("bootstrap.php"), "<?php echo 'bootstrapped';").unwrap();
+        std::fs::write(fixture.path().join("index.php"), "<?php include 'bootstrap.php'; echo ':', get_include_path();").unwrap();
+        let response = execute_request_with_context_and_include_path(
+            fixture.path(), "/", "", "GET", "HTTP/1.1", "", "localhost", &[], &[],
+            ExecutionLimits::default(), None, false, DisplayErrors::Off, MAX_BODY_BYTES,
+            DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &[include_dir.clone()],
+        ).unwrap();
+        assert_eq!(response.output, format!("bootstrapped:{}", include_dir.display()).as_bytes());
     }
 
     #[test]
@@ -300,9 +352,18 @@
     }
 
     #[test]
+    fn multipart_names_follow_php_leading_space_and_dot_normalization() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path().join("index.php"), "<?php echo $_POST['profile_name_'] ?? 'missing', ':', $_POST['legacy_name'] ?? 'missing', ':', array_key_exists('', $_POST), ':', $_FILES['upload_file_']['name'] ?? 'missing';").unwrap();
+        let body = b"--Names\r\nContent-Disposition: form-data; name=\"  profile.name \"\r\n\r\nAda\r\n--Names\r\nContent-Disposition: form-data; name=\"legacy[name\"\r\n\r\nflattened\r\n--Names\r\nContent-Disposition: form-data; name=\"   \"\r\n\r\nignored\r\n--Names\r\nContent-Disposition: form-data; name=\"  upload.file \"; filename=\"avatar.png\"\r\nContent-Type: image/png\r\n\r\npng\r\n--Names--\r\n";
+        let response = execute_request(fixture.path(), "/", "", "POST", "HTTP/1.1", "multipart/form-data; boundary=Names", "localhost", &[], body).unwrap();
+        assert_eq!(response.output, b"Ada:flattened::avatar.png");
+    }
+
+    #[test]
     fn enforces_php_upload_max_filesize_from_mapped_config() {
         let body = b"--Cap\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"file.txt\"\r\nContent-Type: text/plain\r\n\r\nlarge\r\n--Cap--\r\n";
-        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Cap", body, 4, DEFAULT_MAX_INPUT_VARS).unwrap();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Cap", body, 4, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
         assert!(post.is_empty());
         assert!(temp_files.is_empty());
         let php_runtime::Value::Array(fields) = &files[0].1 else { panic!("expected PHP upload fields") };
@@ -313,8 +374,73 @@
     }
 
     #[test]
+    fn max_file_size_form_field_applies_only_to_later_uploads() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"early\"; filename=\"early.txt\"\r\nContent-Type: text/plain\r\n\r\none!\r\n--Limit\r\nContent-Disposition: form-data; name=\"MAX_FILE_SIZE\"\r\n\r\n2\r\n--Limit\r\nContent-Disposition: form-data; name=\"late\"; filename=\"late.txt\"\r\nContent-Type: text/plain\r\n\r\ntwo!\r\n--Limit--\r\n";
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        let form_limit = post.iter().find_map(|(name, value)| (name == "MAX_FILE_SIZE").then_some(value));
+        assert!(matches!(form_limit, Some(php_runtime::Value::String(value)) if value == "2"));
+        let upload = |name: &str| files.iter().find_map(|(field, value)| {
+            if field != name { return None; }
+            let php_runtime::Value::Array(fields) = value else { return None; };
+            Some(fields)
+        }).expect("upload field should exist");
+        fn upload_error(fields: &php_runtime::PhpArray) -> Option<&php_runtime::Value> {
+            fields.iter().find_map(|(key, value)| {
+            (key == &php_runtime::ArrayKey::String("error".into())).then_some(value)
+            })
+        }
+        assert!(matches!(upload_error(upload("early")), Some(php_runtime::Value::Number(code)) if *code == 0.0));
+        assert!(matches!(upload_error(upload("late")), Some(php_runtime::Value::Number(code)) if *code == 2.0));
+        assert_eq!(temp_files.len(), 1);
+        for path in temp_files { let _ = std::fs::remove_file(path); }
+    }
+
+    #[test]
+    fn upload_ini_limit_takes_precedence_over_max_file_size_form_limit() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"MAX_FILE_SIZE\"\r\n\r\n10\r\n--Limit\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"large.txt\"\r\nContent-Type: text/plain\r\n\r\nlarger\r\n--Limit--\r\n";
+        let (_, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 3, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        assert!(temp_files.is_empty());
+        let php_runtime::Value::Array(fields) = &files[0].1 else { panic!("expected PHP upload fields") };
+        let error = fields.iter().find_map(|(key, value)| (key == &php_runtime::ArrayKey::String("error".into())).then_some(value));
+        assert!(matches!(error, Some(php_runtime::Value::Number(code)) if *code == 1.0));
+    }
+
+    #[test]
     fn caps_urlencoded_input_variables_at_configured_limit() {
-        assert_eq!(parse_urlencoded("a=1&b=2&c=3", 2).len(), 2);
+        assert_eq!(parse_urlencoded("a=1&b=2&c=3", 2, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).len(), 2);
+    }
+
+    #[test]
+    fn input_names_accept_php_default_nesting_depth() {
+        fn depth(value: &php_runtime::Value) -> usize {
+            match value {
+                php_runtime::Value::Array(array) => 1 + array.iter().next().map_or(0, |(_, value)| depth(value)),
+                _ => 0,
+            }
+        }
+        let accepted = format!("root{}=leaf", "[x]".repeat(DEFAULT_MAX_INPUT_NESTING_LEVEL));
+        let parsed = parse_urlencoded(&accepted, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new());
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(depth(&parsed[0].1), DEFAULT_MAX_INPUT_NESTING_LEVEL);
+
+        let too_deep = format!("root{}=leaf", "[x]".repeat(DEFAULT_MAX_INPUT_NESTING_LEVEL + 1));
+        assert!(parse_urlencoded(&too_deep, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).is_empty());
+
+        let configured = parse_urlencoded("root[a][b]=leaf", DEFAULT_MAX_INPUT_VARS, 1, &mut Vec::new());
+        assert_eq!(parse_urlencoded("root[a]=leaf", DEFAULT_MAX_INPUT_VARS, 1, &mut Vec::new()).len(), 1);
+        assert!(configured.is_empty());
+    }
+
+    #[test]
+    fn request_uses_configured_input_nesting_limit() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path().join("index.php"), "<?php $last = error_get_last(); echo $_GET['root']['a'] ?? 'missing', ':', $last['message'] ?? 'no-warning';").unwrap();
+        let request = |query: &str| execute_request_with_context(
+            fixture.path(), "/", query, "GET", "HTTP/1.1", "", "localhost", &[], &[],
+            ExecutionLimits::default(), None, false, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, 1,
+        ).unwrap();
+        assert_eq!(request("root[a]=leaf").output, b"leaf:no-warning");
+        assert_eq!(request("root[a][b]=leaf").output, b"missing:Input variable nesting level exceeded 1. To increase the limit change max_input_nesting_level in php.ini.");
     }
 
     #[test]

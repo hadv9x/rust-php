@@ -11,6 +11,9 @@ $decoded = json_decode($encoded, true);
 $object = json_decode($encoded);
 $unicode = json_decode("\"\\uD83D\\uDE80\"");
 $invalid = json_decode("{bad json}");
+$mismatched = json_decode('[}');
+$mismatched_error = json_last_error_msg();
+$mismatched_valid = json_validate('[}');
 $nul_object = json_decode('{"\\u0000private":1}');
 $nul_object_error = json_last_error_msg();
 $nul_array = json_decode('{"\\u0000private":1}', true);
@@ -28,8 +31,23 @@ class OrderedJsonBase { public $zeta = 1; private $secret = 9; public $alpha = 2
 class OrderedJsonPayload extends OrderedJsonBase { protected $hidden = 8; public $middle = 3; }
 $ordered_object = new OrderedJsonPayload();
 $ordered_object->later = 4;
+function initializeJsonProperty(&$property, $value) { $property = $value; }
+class ReferenceOrderedJsonPayload {}
+$reference_ordered_object = new ReferenceOrderedJsonPayload();
+initializeJsonProperty($reference_ordered_object->zeta, 1);
+initializeJsonProperty($reference_ordered_object->alpha, 2);
+initializeJsonProperty($reference_ordered_object->z_nested['key'], 3);
+initializeJsonProperty($reference_ordered_object->a_nested['key'], 4);
 echo interface_exists("JsonSerializable"), ":", method_exists("JsonSerializable", "jsonSerialize"), ":", json_encode(new JsonPayload()), "\n";
+$callbackJson = array_map('json_encode', [[1, 2], new JsonPayload()]);
+echo 'json-callback:', json_encode($callbackJson), "\n";
+$decodedCallback = array_map('json_decode', ['{"callback":true}', '[4,5]']);
+echo 'decode-callback:', $decodedCallback[0]->callback, ':', $decodedCallback[1][1], ':', function_exists('json_decode'), "\n";
+echo 'error-callback:', call_user_func('json_last_error'), ':', call_user_func('json_last_error_msg'), "\n";
+$validationCallback = array_map('json_validate', ['{"callback":true}', '{broken']);
+echo 'validate-callback:', implode(':', $validationCallback), ':', json_last_error(), "\n";
 echo json_encode($ordered_object), "\n";
+echo json_encode($reference_ordered_object), "\n";
 echo $encoded, "\n";
 echo json_validate($encoded), ":", json_validate('{bad') ? "1" : "0", ":", json_last_error(), ":", json_last_error_msg(), "\n";
 $jsonWhitespace = " \t\r\nnull";
@@ -37,6 +55,7 @@ $invalidJsonWhitespace = "\fnull";
 echo json_validate($jsonWhitespace) ? "1" : "0", ":", json_decode($invalidJsonWhitespace) === null ? "1" : "0", ":", json_last_error(), "\n";
 echo $decoded["name"], ":", $decoded["scores"][1], ":", $object->active, ":", $unicode, ":";
 echo $invalid == null ? "invalid" : "unexpected", "\n";
+echo ($mismatched === null ? 'null' : 'value'), ':', $mismatched_error, ':', $mismatched_valid ? 'valid' : 'invalid', ':', json_last_error(), "\n";
 echo is_null($nul_object), ":", $nul_object_error, ":", count($nul_array), ":", json_last_error(), "\n";
 echo json_encode($numeric_keys), ":", json_encode($numeric_string_keys), "\n";
 echo json_encode($duplicate_members), "\n";

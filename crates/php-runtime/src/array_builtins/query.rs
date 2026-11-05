@@ -1,7 +1,8 @@
 //! Array inspection and comparison functions.
 
-use crate::{ArrayKey, BytecodeClass, Value};
+use crate::{ArrayKey, BytecodeClass, DiagnosticLevel, RuntimeDiagnostic, Value};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use super::common::*;
 
 /// Query array data with count semantics.
@@ -9,18 +10,65 @@ pub(super) fn count(
     args: &[Value],
     classes: &HashMap<String, BytecodeClass>,
     invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) -> Result<Value, String> {
     require_count("count", args, 1, 2)?;
     /// Count nested array entries recursively for `count($array, COUNT_RECURSIVE)`.
-    fn deep_count(value: &Value) -> i64 {
-        let value = value.dereference();
-        match &value {
-            Value::Array(items) => items.iter().map(|(_, child)| match child.dereference() {
-                Value::Array(nested) => nested.len() as i64 + deep_count(child),
-                _ => 0,
-            }).sum(),
-            _ => 0,
+    fn signature(value: &Value, output: &mut String) {
+        match value {
+            Value::Null => output.push('n'),
+            Value::Bool(value) => output.push_str(if *value { "b1;" } else { "b0;" }),
+            Value::Integer(value) => output.push_str(&format!("i{value};")),
+            Value::Number(value) => output.push_str(&format!("f{:016x};", value.to_bits())),
+            Value::String(value) => output.push_str(&format!("s{}:{value};", value.len())),
+            Value::Reference(reference) => output.push_str(&format!("r{:p};", Rc::as_ptr(reference))),
+            Value::Object(object) => output.push_str(&format!("o{:p};", Rc::as_ptr(object))),
+            Value::Closure(closure) => output.push_str(&format!("c{:p};", Rc::as_ptr(closure))),
+            Value::Generator(generator) => output.push_str(&format!("g{:p};", Rc::as_ptr(generator))),
+            Value::Stream(stream) => output.push_str(&format!("t{:p};", Rc::as_ptr(stream))),
+            Value::Array(array) => {
+                output.push('[');
+                for (key, value) in array.iter() {
+                    match key {
+                        ArrayKey::Integer(key) => output.push_str(&format!("k{key};")),
+                        ArrayKey::String(key) => output.push_str(&format!("K{}:{key};", key.len())),
+                    }
+                    signature(value, output);
+                }
+                output.push(']');
+            }
         }
+    }
+    fn deep_count(
+        value: &Value,
+        reference_edge: bool,
+        ancestors: &mut Vec<String>,
+        diagnostics: &mut Vec<RuntimeDiagnostic>,
+        recursion_warned: &mut bool,
+    ) -> i64 {
+        let dereferenced = value.dereference();
+        let Value::Array(items) = &dereferenced else { return 0; };
+        let mut shape = String::new();
+        signature(&dereferenced, &mut shape);
+        if reference_edge && ancestors.contains(&shape) {
+            if !*recursion_warned {
+                diagnostics.push(RuntimeDiagnostic {
+                    level: DiagnosticLevel::Warning,
+                    message: "count(): Recursion detected".into(),
+                    source_file: None,
+                    source_line: None,
+                    output_offset: 0,
+                });
+                *recursion_warned = true;
+            }
+            return 0;
+        }
+        ancestors.push(shape);
+        let count = items.len() as i64 + items.iter().filter_map(|(_, child)| {
+            matches!(child.dereference(), Value::Array(_)).then(|| deep_count(child, matches!(child, Value::Reference(_)), ancestors, diagnostics, recursion_warned))
+        }).sum::<i64>();
+        ancestors.pop();
+        count
     }
     let mode = args.get(1).map_or(0, |value| value.number() as i64);
     if !matches!(mode, 0 | 1) {
@@ -28,7 +76,7 @@ pub(super) fn count(
     }
     let value = args[0].dereference();
     let result = match &value {
-        Value::Array(items) if mode == 1 => items.len() as i64 + deep_count(&args[0]),
+        Value::Array(_) if mode == 1 => deep_count(&args[0], false, &mut Vec::new(), diagnostics, &mut false),
         Value::Array(items) => items.len() as i64,
         Value::Object(object) => {
             let class_name = object.borrow().class_name.clone();
@@ -89,9 +137,9 @@ pub(super) fn array_values(args: &[Value]) -> Result<Value, String> {
 }
 
 /// Query array data with key_exists semantics.
-pub(super) fn key_exists(args: &[Value]) -> Result<Value, String> {
+pub(super) fn key_exists(args: &[Value], diagnostics: &mut Vec<crate::RuntimeDiagnostic>) -> Result<Value, String> {
     require_count("array_key_exists", args, 2, 2)?;
-    let key = args[0].array_key()?;
+    let key = array_key(&args[0], diagnostics)?;
     Ok(Value::Bool(entries(&args[1], "array_key_exists")?.iter().any(|(candidate, _)| *candidate == key)))
 }
 

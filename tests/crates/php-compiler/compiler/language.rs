@@ -31,6 +31,37 @@ fn compile_file_resolves_magic_file_constants_in_class_defaults() {
 }
 
 #[test]
+fn compile_file_reflection_names_anonymous_classes_with_the_defining_path() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_anonymous_name_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php $anonymous = new class {}; echo get_class($anonymous);").unwrap();
+    let expected_path = entry.canonicalize().unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, format!("class@anonymous\0{}:1$0", expected_path.display()));
+}
+
+#[test]
+fn anonymous_class_metadata_stays_distinct_across_included_files() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_anonymous_includes_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let first = directory.join("first.php");
+    let second = directory.join("second.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&first, "<?php $includedAnonymous = new class {};").unwrap();
+    std::fs::write(&second, "<?php $includedAnonymous = new class {};").unwrap();
+    std::fs::write(&entry, "<?php include 'first.php'; $first = $includedAnonymous; include 'second.php'; $second = $includedAnonymous; echo get_class($first), '|', get_class($second);").unwrap();
+    let first = first.canonicalize().unwrap();
+    let second = second.canonicalize().unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, format!("class@anonymous\0{}:1$0|class@anonymous\0{}:1$1", first.display(), second.display()));
+}
+
+#[test]
 fn included_files_contribute_namespaced_constants() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!("rust_php_constants_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
@@ -42,6 +73,328 @@ fn included_files_contribute_namespaced_constants() {
     let output = compile_file(&entry).unwrap().execute().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
     assert_eq!(output, "42\n");
+}
+
+#[test]
+fn compile_file_resolves_include_through_a_statically_assigned_path_variable() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_variable_include_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'included:';").unwrap();
+    std::fs::write(&entry, "<?php $file = __DIR__ . '/part.php'; include $file; echo $file;").unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory.clone()).unwrap();
+    assert_eq!(output, format!("included:{}", included.display()));
+}
+
+#[test]
+fn compile_file_executes_runtime_selected_include_in_the_calling_scope() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php $shared = 'included'; return 'done';").unwrap();
+    std::fs::write(&entry, "<?php $result = include $selected; echo $shared, ':', $result;").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "included:done");
+}
+
+#[test]
+fn runtime_include_shares_function_local_variables_with_the_included_file() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_local_scope_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php $local = 'from-include'; return 'done';").unwrap();
+    std::fs::write(&entry, "<?php function load_selected($file) { $local = 'before'; $returned = include $file; return $local . ':' . $returned; } echo load_selected($selected);").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "from-include:done");
+}
+
+#[test]
+fn runtime_include_returns_one_when_the_file_does_not_return_a_value() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_default_return_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'included:';").unwrap();
+    std::fs::write(&entry, "<?php $result = include $selected; echo $result;").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "included:1");
+}
+
+#[test]
+fn missing_runtime_include_reports_source_location_and_returns_false() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_missing_dynamic_include_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php\ninclude $selected;\necho 'continued';\n").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String("missing-include-file.php".into()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    let expected_file = entry.canonicalize().unwrap().to_string_lossy().into_owned();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "continued");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].source_file.as_deref(), Some(expected_file.as_str()));
+    assert_eq!(result.diagnostics[0].source_line, Some(2));
+    assert!(result.diagnostics[0].message.contains("include(missing-include-file.php): Failed to open stream"));
+}
+
+#[test]
+fn missing_runtime_require_throws_a_catchable_error_with_source_location() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_missing_dynamic_require_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php\ntry { require $selected; } catch (Error $error) { echo get_class($error), ':', $error->getMessage(), ':', $error->getLine(); }\n").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String("missing-required-file.php".into()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(result.output.starts_with("Error:Failed opening required 'missing-required-file.php' (include_path='"));
+    assert!(result.output.contains("'):2"));
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert!(result.diagnostics[0].message.contains("require(missing-required-file.php): Failed to open stream: No such file or directory"));
+    assert_eq!(result.diagnostics[0].source_line, Some(2));
+}
+
+#[test]
+fn runtime_require_cannot_escape_its_configured_source_root() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_root_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let root = directory.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let entry = root.join("entry.php");
+    let outside = directory.join("outside.php");
+    std::fs::write(&outside, "<?php echo 'escaped';").unwrap();
+    std::fs::write(&entry, "<?php\ntry { require $selected; } catch (Error $error) { echo $error->getMessage(); }\n").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(outside.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &root, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(result.output.starts_with(&format!("Failed opening required '{}' (include_path='", outside.display())));
+    assert!(result.output.contains("')"));
+    assert_eq!(result.diagnostics.len(), 1);
+    assert!(result.diagnostics[0].message.contains("require(") && result.diagnostics[0].message.contains("included file escapes the configured source root"));
+}
+
+#[test]
+fn runtime_included_class_and_function_declarations_remain_available() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_declarations_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("declarations.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php class RuntimeLoaded { public static function value() { return 'class'; } } function runtime_loaded_function() { return 'function'; }").unwrap();
+    std::fs::write(&entry, "<?php include $selected; echo RuntimeLoaded::value(), ':', runtime_loaded_function();").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "class:function");
+}
+
+#[test]
+fn registered_autoload_callback_loads_dynamic_classes_and_interfaces() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_autoload_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let declarations = directory.join("declarations.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&declarations, "<?php interface RuntimeAutoloadContract {} class RuntimeAutoloaded implements RuntimeAutoloadContract { public function value() { return 'loaded'; } }").unwrap();
+    std::fs::write(&entry, "<?php $loader = function($name) { include $GLOBALS['autoload_file']; }; spl_autoload_register($loader); echo class_exists('RuntimeAutoloaded', false) ? 'wrong' : 'noautoload'; echo ':', class_exists('RuntimeAutoloaded') ? (new RuntimeAutoloaded())->value() : 'missing'; echo ':', interface_exists('RuntimeAutoloadContract') ? 'interface' : 'missing'; spl_autoload_unregister($loader); echo ':', spl_autoload_functions() === false ? 'unregistered' : 'still-registered';").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("autoload_file".into(), Value::String(declarations.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "noautoload:loaded:interface:unregistered");
+}
+
+#[test]
+fn registered_static_method_autoload_callback_loads_a_class() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_autoload_method_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let declarations = directory.join("declarations.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&declarations, "<?php class RuntimeMethodAutoloaded { public static function value() { return 'method'; } }").unwrap();
+    std::fs::write(&entry, "<?php class RuntimeLoader { public static function load($name) { include $GLOBALS['autoload_file']; } } spl_autoload_register([RuntimeLoader::class, 'load']); echo RuntimeMethodAutoloaded::value(); spl_autoload_unregister([RuntimeLoader::class, 'load']);").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("autoload_file".into(), Value::String(declarations.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "method");
+}
+
+#[test]
+fn autoload_callback_runs_for_direct_dynamic_class_instantiation() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_autoload_new_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let declarations = directory.join("declarations.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&declarations, "<?php class RuntimeNewAutoloaded { public function value() { return 'new'; } }").unwrap();
+    std::fs::write(&entry, "<?php spl_autoload_register(function($name) { include $GLOBALS['autoload_file']; }); echo (new RuntimeNewAutoloaded())->value();").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("autoload_file".into(), Value::String(declarations.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "new");
+}
+
+#[test]
+fn instanceof_triggers_autoload_for_an_unknown_interface() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_autoload_instanceof_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let declarations = directory.join("declarations.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&declarations, "<?php interface RuntimeInstanceofContract {} ").unwrap();
+    std::fs::write(&entry, "<?php class RuntimeInstanceofObject {} spl_autoload_register(function($name) { include $GLOBALS['autoload_file']; }); $object = new RuntimeInstanceofObject(); echo ($object instanceof RuntimeInstanceofContract) ? 'yes' : (interface_exists('RuntimeInstanceofContract', false) ? 'loaded' : 'missing');").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("autoload_file".into(), Value::String(declarations.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "loaded");
+}
+
+#[test]
+fn spl_autoload_register_without_callback_uses_namespace_file_paths() {
+    use php_runtime::ExecutionLimits;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_spl_autoload_default_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(directory.join("DefaultLoader")).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(directory.join("DefaultLoader/Thing.php"), "<?php namespace DefaultLoader; class Thing { public static function value() { return 'default'; } }").unwrap();
+    std::fs::write(&entry, "<?php echo function_exists('spl_autoload_register') && spl_autoload_extensions('.php') === '.inc,.php' ? 'ext:' : 'bad:'; spl_autoload_register(); echo class_exists('DefaultLoader\\\\Thing') ? \\DefaultLoader\\Thing::value() : 'missing';").unwrap();
+    let result = execute_file_with_globals_and_limits(&entry, &directory, Default::default(), ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "ext:default");
+}
+
+#[test]
+fn autoload_callbacks_support_prepend_order_invokable_objects_and_unregister() {
+    let source = r#"<?php
+        function first_autoloader($name) { echo 'a'; }
+        class InvokableAutoloader { public function __invoke($name) { echo 'b'; } }
+        spl_autoload_register('first_autoloader');
+        $loader = new InvokableAutoloader();
+        spl_autoload_register($loader, true, true);
+        class_exists('MissingAutoloadTarget');
+        echo ':', count(spl_autoload_functions());
+        echo ':', spl_autoload_unregister($loader);
+        echo ':', count(spl_autoload_functions());
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ba:2:1:1");
+}
+
+#[test]
+fn runtime_include_once_skips_files_already_loaded_dynamically() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_once_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'x';").unwrap();
+    std::fs::write(&entry, "<?php include $selected; include_once $selected;").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "x");
+}
+
+#[test]
+fn runtime_include_uses_the_current_php_include_path() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_path_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let include_directory = directory.join("inc");
+    std::fs::create_dir_all(&include_directory).unwrap();
+    let included = include_directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'path';").unwrap();
+    std::fs::write(&entry, "<?php set_include_path($includeDirectory); include $selected;").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String("part.php".into()));
+    globals.insert("includeDirectory".into(), Value::String(include_directory.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "path");
+}
+
+#[test]
+fn runtime_include_once_skips_files_loaded_by_static_includes() {
+    use php_runtime::{ExecutionLimits, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_dynamic_include_once_static_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'x';").unwrap();
+    std::fs::write(&entry, "<?php include __DIR__ . '/part.php'; include_once $selected;").unwrap();
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("selected".into(), Value::String(included.to_string_lossy().into_owned()));
+    let result = execute_file_with_globals_and_limits(&entry, &directory, globals, ExecutionLimits::default()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(result.output, "x");
+}
+
+#[test]
+fn static_include_path_facts_do_not_leak_from_function_locals() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_include_scope_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'included:';").unwrap();
+    std::fs::write(&entry, "<?php function runInclude() { $file = __DIR__ . '/part.php'; include $file; } runInclude(); include $file;").unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory.clone()).unwrap();
+    assert_eq!(output, "included:");
+}
+
+#[test]
+fn unsetting_a_statically_resolved_include_variable_invalidates_its_path_fact() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_include_unset_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("part.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'must-not-be-inlined';").unwrap();
+    std::fs::write(&entry, "<?php $file = __DIR__ . '/part.php'; unset($file); include $file;").unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "");
 }
 
 #[test]
@@ -58,6 +411,139 @@ fn web_program_cache_reuses_bytecode_and_invalidates_when_an_included_source_cha
     assert_eq!(execute(), "first");
     std::fs::write(&included, "<?php echo 'changed';").unwrap();
     assert_eq!(execute(), "changed");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn web_program_cache_detects_same_size_same_mtime_source_edits() {
+    use php_runtime::ExecutionLimits;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_cache_fingerprint_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let included = directory.join("included.php");
+    let entry = directory.join("entry.php");
+    std::fs::write(&included, "<?php echo 'alpha';").unwrap();
+    std::fs::write(&entry, "<?php include 'included.php';").unwrap();
+    let execute = || execute_file_with_globals_and_limits(&entry, &directory, Default::default(), ExecutionLimits::default()).unwrap().output;
+    assert_eq!(execute(), "alpha");
+    let original_metadata = std::fs::metadata(&included).unwrap();
+    let original_time = original_metadata.modified().unwrap();
+    std::fs::write(&included, "<?php echo 'bravo';").unwrap();
+    std::fs::File::options().write(true).open(&included).unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(original_time)).unwrap();
+    let updated_metadata = std::fs::metadata(&included).unwrap();
+    assert_eq!(original_metadata.len(), updated_metadata.len());
+    assert_eq!(original_time, updated_metadata.modified().unwrap());
+    assert_eq!(execute(), "bravo");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn configured_include_path_resolves_files_and_cache_tracks_search_directories() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let root = std::env::temp_dir().join(format!("rust_php_include_path_cache_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let entry = root.join("entry.php");
+    let first = root.join("first");
+    let second = root.join("second");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    std::fs::write(second.join("part.php"), "<?php echo 'second';").unwrap();
+    std::fs::write(&entry, "<?php include 'part.php'; echo ':', get_include_path();").unwrap();
+    let search_path = vec![first.clone(), second.clone()];
+    let execute = || php_compiler::execute_file_with_globals_limits_diagnostics_and_include_path(
+        &entry, &root, Default::default(), Default::default(), Vec::new(), &search_path,
+    ).unwrap().output;
+    assert_eq!(execute(), format!("second:{}:{}", first.display(), second.display()));
+    std::fs::write(first.join("part.php"), "<?php echo 'first';").unwrap();
+    assert_eq!(execute(), format!("first:{}:{}", first.display(), second.display()));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_include_path_does_not_change_file_exists_lookup() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let root = std::env::temp_dir().join(format!("rust_php_file_exists_include_path_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let entry = root.join("entry.php");
+    let include_dir = root.join("include");
+    std::fs::create_dir_all(&include_dir).unwrap();
+    std::fs::write(include_dir.join("optional.php"), "<?php echo 'included';").unwrap();
+    std::fs::write(&entry, "<?php if (file_exists($path = 'optional.php')) { include $path; } else { echo 'missing'; }").unwrap();
+    let result = php_compiler::execute_file_with_globals_limits_diagnostics_and_include_path(
+        &entry, &root, Default::default(), Default::default(), Vec::new(), &[include_dir],
+    ).unwrap();
+    assert_eq!(result.output, "missing");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn web_program_cache_invalidates_when_composer_manifest_changes() {
+    use php_runtime::ExecutionLimits;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_composer_cache_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(directory.join("first.php"), "<?php echo 'first';").unwrap();
+    std::fs::write(directory.join("other.php"), "<?php echo 'other';").unwrap();
+    let manifest = directory.join("composer.json");
+    std::fs::write(&manifest, r#"{"autoload":{"files":["first.php"]}}"#).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php require __DIR__ . '/vendor/autoload.php';").unwrap();
+    let execute = || execute_file_with_globals_and_limits(&entry, &directory, Default::default(), ExecutionLimits::default()).unwrap().output;
+    assert_eq!(execute(), "first");
+    let original_metadata = std::fs::metadata(&manifest).unwrap();
+    let original_time = original_metadata.modified().unwrap();
+    std::fs::write(&manifest, r#"{"autoload":{"files":["other.php"]}}"#).unwrap();
+    std::fs::File::options().write(true).open(&manifest).unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(original_time)).unwrap();
+    let updated_metadata = std::fs::metadata(&manifest).unwrap();
+    assert_eq!(original_metadata.len(), updated_metadata.len());
+    assert_eq!(original_time, updated_metadata.modified().unwrap());
+    assert_eq!(execute(), "other");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn web_program_cache_invalidates_when_a_composer_class_file_changes() {
+    use php_runtime::ExecutionLimits;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_composer_class_cache_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::create_dir_all(directory.join("src")).unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(directory.join("composer.json"), r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#).unwrap();
+    let class_file = directory.join("src/CacheValue.php");
+    std::fs::write(&class_file, "<?php namespace App; class CacheValue { static function value() { return 'alpha'; } }").unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php require __DIR__ . '/vendor/autoload.php'; echo App\\CacheValue::value();").unwrap();
+    let execute = || execute_file_with_globals_and_limits(&entry, &directory, Default::default(), ExecutionLimits::default()).unwrap().output;
+    assert_eq!(execute(), "alpha");
+    let original_metadata = std::fs::metadata(&class_file).unwrap();
+    let original_time = original_metadata.modified().unwrap();
+    std::fs::write(&class_file, "<?php namespace App; class CacheValue { static function value() { return 'bravo'; } }").unwrap();
+    std::fs::File::options().write(true).open(&class_file).unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(original_time)).unwrap();
+    let updated_metadata = std::fs::metadata(&class_file).unwrap();
+    assert_eq!(original_metadata.len(), updated_metadata.len());
+    assert_eq!(original_time, updated_metadata.modified().unwrap());
+    assert_eq!(execute(), "bravo");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn web_program_cache_tracks_new_composer_class_directory_entries() {
+    use php_runtime::ExecutionLimits;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_composer_directory_cache_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::create_dir_all(directory.join("src")).unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(directory.join("composer.json"), r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php require __DIR__ . '/vendor/autoload.php'; echo class_exists('App\\\\LaterClass', false) ? 'yes' : 'no';").unwrap();
+    let execute = || execute_file_with_globals_and_limits(&entry, &directory, Default::default(), ExecutionLimits::default()).unwrap().output;
+    assert_eq!(execute(), "no");
+    std::fs::write(directory.join("src/LaterClass.php"), "<?php namespace App; class LaterClass {} ").unwrap();
+    assert_eq!(execute(), "yes");
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -205,6 +691,23 @@ fn exceptions_expose_the_creation_frame_through_trace_apis() {
 }
 
 #[test]
+fn exception_stringification_includes_location_trace_and_previous_chain() {
+    let source = r#"<?php
+        function makeFailure() {
+            $cause = new LogicException('inner');
+            return new RuntimeException('outer', 0, $cause);
+        }
+        echo makeFailure();
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert!(output.contains("LogicException: inner in "), "{output}");
+    assert!(output.contains("Stack trace:\n#0 "), "{output}");
+    assert!(output.contains("RuntimeException: outer in "), "{output}");
+    assert!(output.contains("\n\nNext RuntimeException: outer"), "{output}");
+    assert!(output.ends_with("#1 {main}\n"), "{output}");
+}
+
+#[test]
 fn exception_trace_records_nested_callers_with_source_lines() {
     let source = r#"<?php
         function innerFailure() {
@@ -301,6 +804,43 @@ fn composer_autoload_supports_classmap_and_psr0_directories() {
     let output = compile_file(&entry).unwrap().execute().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
     assert_eq!(output, "psr0:classmap");
+}
+
+#[test]
+fn composer_autoload_files_follow_dependency_order_before_root_package() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_composer_dependency_order_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let package_a = directory.join("vendor/vendor-a/package-a");
+    let package_b = directory.join("vendor/vendor-b/package-b");
+    std::fs::create_dir_all(&package_a).unwrap();
+    std::fs::create_dir_all(&package_b).unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(&package_a.join("composer.json"), r#"{"name":"vendor/a","require":{"vendor/b":"*"},"autoload":{"files":["autoload.php"]}}"#).unwrap();
+    std::fs::write(&package_a.join("autoload.php"), "<?php echo 'A';").unwrap();
+    std::fs::write(&package_b.join("composer.json"), r#"{"name":"vendor/b","autoload":{"files":["autoload.php"]}}"#).unwrap();
+    std::fs::write(&package_b.join("autoload.php"), "<?php echo 'B';").unwrap();
+    std::fs::write(directory.join("composer.json"), r#"{"name":"root/project","require":{"vendor/a":"*"},"autoload":{"files":["autoload.php"]}}"#).unwrap();
+    std::fs::write(directory.join("autoload.php"), "<?php echo 'R';").unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php require __DIR__ . '/vendor/autoload.php';").unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "BAR");
+}
+
+#[test]
+fn composer_autoload_file_can_return_from_a_conditional_branch() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_composer_conditional_return_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(directory.join("composer.json"), r#"{"autoload":{"files":["bootstrap.php"]}}"#).unwrap();
+    std::fs::write(directory.join("bootstrap.php"), "<?php $GLOBALS['booted'] = 'yes'; if (true) { return; } $GLOBALS['after_return'] = 'bad';").unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php require __DIR__ . '/vendor/autoload.php'; echo $GLOBALS['booted'], isset($GLOBALS['after_return']) ? 'bad' : 'ok';").unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "yesok");
 }
 
 #[test]
@@ -425,6 +965,36 @@ fn goto_can_jump_back_to_a_function_local_label() {
 fn goto_rejects_an_undefined_label() {
     let error = match compile_source("<?php goto missing;") { Ok(_) => panic!("undefined goto label should fail compilation"), Err(error) => error };
     assert!(error.contains("undefined label 'missing'"));
+}
+
+#[test]
+fn goto_rejects_jumping_into_a_loop() {
+    let error = match compile_source("<?php goto inside; while (false) { inside: echo 'bad'; }") {
+        Ok(_) => panic!("goto into a loop should fail compilation"),
+        Err(error) => error,
+    };
+    assert!(error.contains("Cannot 'goto' into loop or switch statement"));
+}
+
+#[test]
+fn goto_can_jump_out_of_a_loop() {
+    let source = "<?php while (true) { goto done; } done: echo 'ok';";
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ok");
+}
+
+#[test]
+fn goto_out_of_try_executes_finally_before_target() {
+    let source = "<?php try { goto done; } finally { echo 'finally:'; } done: echo 'done';";
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "finally:done");
+}
+
+#[test]
+fn goto_rejects_jumping_between_sibling_loop_regions() {
+    let error = match compile_source("<?php while (false) { goto inside; } while (false) { inside: echo 'bad'; }") {
+        Ok(_) => panic!("goto into a sibling loop should fail compilation"),
+        Err(error) => error,
+    };
+    assert!(error.contains("Cannot 'goto' into loop or switch statement"));
 }
 
 #[test]

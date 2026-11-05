@@ -3,6 +3,7 @@
 
 root = public
 bind = 127.0.0.1:3000
+include_path = .:/usr/share/php
 max_in_flight = 128
 max_input_time = 15
 post_max_size = 2M
@@ -12,6 +13,7 @@ max_execution_steps = 10000000
 max_execution_time = 30
 default_mimetype = text/html
 default_charset = UTF-8
+display_errors = On
 max_output_bytes = 8388608
 session.cookie_secure = off
 log = info

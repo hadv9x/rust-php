@@ -183,6 +183,8 @@ class ServiceHolder {
 
 $holder = new ServiceHolder(42, new ServiceChild());
 echo $holder->summary(), "\n";
+$promotedId = (new ReflectionClass("ServiceHolder"))->getProperty("id");
+echo "promoted-property:", $promotedId->isPromoted(), ":", $promotedId->isReadOnly(), "\n";
 echo $holder->note, "\n";
 
 class StringableInvoice {
@@ -202,10 +204,47 @@ class ScalarStringifier {
 }
 echo new ScalarStringifier(), "\n";
 
+class HookFrameNotice {
+    public function __construct(private string $label) {}
+    public function __destruct() { echo "hook-frame-destroyed:", $this->label, "\n"; }
+}
+class ConstructorFrameExample {
+    public function __construct() {
+        $temporary = new HookFrameNotice("constructor");
+        echo "constructor-returning\n";
+    }
+    public function __get($name) {
+        $temporary = new HookFrameNotice("magic-get");
+        echo "get-returning\n";
+        return 7;
+    }
+}
+$constructorFrameExample = new ConstructorFrameExample();
+echo "constructed\n", $constructorFrameExample->missing, "\n";
+
 class ShutdownNotice {
     public function __construct(private string $label) {}
     public function __destruct() { echo "destroyed:", $this->label, "\n"; }
+    public function releaseMethodLocal() {
+        $methodNotice = new ShutdownNotice("method-frame-end");
+        echo "method-returning\n";
+    }
 }
+$destructureSlot = new ShutdownNotice("destructuring-slot");
+[$destructureSlot] = ["replacement"];
+echo "destructuring-replaced\n";
+function finishDestructorFrame() {
+    $frameNotice = new ShutdownNotice("function-frame-end");
+    echo "function-returning\n";
+}
+finishDestructorFrame();
+$methodFrameOwner = new ShutdownNotice("method-owner");
+$methodFrameOwner->releaseMethodLocal();
+$closureFrame = function() {
+    $closureNotice = new ShutdownNotice("closure-frame-end");
+    echo "closure-returning\n";
+};
+$closureFrame();
 $shutdownNotice = new ShutdownNotice("script-end");
 $arrayNotice = [new ShutdownNotice("array-unset")];
 unset($arrayNotice[0]);
@@ -239,6 +278,18 @@ class GreetingCard {
 
 $card = new GreetingCard();
 echo $card->greet(), ":", $card->otherGreeting(), "\n";
+
+trait FinalGreeting {
+    public function lockedGreeting(): string { return 'trait greeting'; }
+}
+class GreetingBase { public function lockedGreeting(): string { return 'base greeting'; } }
+class FinalGreetingCard extends GreetingBase {
+    use FinalGreeting { FinalGreeting::lockedGreeting as final; }
+}
+$anonymousFinalGreeting = new class {
+    use FinalGreeting { FinalGreeting::lockedGreeting as final; }
+};
+echo (new FinalGreetingCard())->lockedGreeting(), ':', $anonymousFinalGreeting->lockedGreeting(), "\n";
 
 interface ServiceFactory {
     public function make(): ServiceBase;
@@ -435,6 +486,17 @@ $copy = clone $source;
 $copy->value = 2;
 echo $source->value, ":", $copy->value, ":", $copy->wasCloned, "\n";
 
+class ReadonlyCloneValue {
+    public function __construct(public readonly int $value) {}
+    public function __clone() { $this->value = 11; }
+}
+$readonlyCloneSource = new ReadonlyCloneValue(10);
+$readonlyClone = clone $readonlyCloneSource;
+echo "readonly-clone:", $readonlyCloneSource->value, ":", $readonlyClone->value, "\n";
+$standardObject = new stdClass();
+$standardObject->example = 'dynamic';
+echo "stdClass:", get_class($standardObject), ":", $standardObject->example, "\n";
+
 // Omitting constructor and method arguments selects their declared defaults.
 $defaultCounter = new Counter();
 echo $defaultCounter->increment(), "\n";
@@ -557,5 +619,409 @@ class ReflectionBranch extends ReflectionRoot {}
 enum ReflectionState { case Ready; }
 $reflectionLeaf = new ReflectionClass("ReflectionLeaf");
 echo "reflection-flags:", $reflectionLeaf->isFinal(), ":", (new ReflectionClass("ReflectionMarker"))->isInterface(), ":", (new ReflectionClass("ReflectionBase"))->isAbstract(), ":", (new ReflectionClass("ReflectionState"))->isEnum(), "\n";
+echo "reflection-name-parts:", $reflectionLeaf->getShortName(), ":", $reflectionLeaf->getNamespaceName(), ":", $reflectionLeaf->inNamespace(), "\n";
+class ReflectionCloneableExample {}
+class ReflectionNonCloneableExample { private function __clone() {} }
+echo "reflection-cloneable:", (new ReflectionClass(ReflectionCloneableExample::class))->isCloneable(), ":", (new ReflectionClass(ReflectionNonCloneableExample::class))->isCloneable(), "\n";
+echo "reflection-instance:", (new ReflectionClass(ReflectionMarker::class))->isInstance($reflectionLeaf), ":", (new ReflectionEnum(ReflectionState::class))->isInstance(ReflectionState::Ready), "\n";
 echo "reflection-parent:", (new ReflectionClass("ReflectionBranch"))->getParentClass()->getName(), ":", (new ReflectionClass("ReflectionRoot"))->getParentClass(), "\n";
+class ReflectionAccessibleMethodExample { private function hidden() {} }
+$reflectionHiddenMethod = (new ReflectionClass(ReflectionAccessibleMethodExample::class))->getMethod("hidden");
+echo "reflection-method-accessible:", ($reflectionHiddenMethod->setAccessible(false) === null), "\n";
+class ReflectionPropertyParentExample { protected string $token = "parent"; public static int $count = 2; }
+class ReflectionPropertyChildExample extends ReflectionPropertyParentExample {}
+$reflectedToken = (new ReflectionClass("ReflectionPropertyChildExample"))->getProperty("token");
+echo "reflection-property-declaring:", $reflectedToken->getDeclaringClass()->getName(), ":", $reflectedToken->getType()->getName(), ":", $reflectedToken->hasType(), ":", $reflectedToken->getModifiers(), ":", $reflectedToken->isProtected(), "\n";
+$reflectionPropertyObject = new ReflectionPropertyChildExample();
+echo "reflection-property-value:", $reflectedToken->getValue($reflectionPropertyObject), "\n";
+$reflectedToken->setValue($reflectionPropertyObject, "updated");
+echo "reflection-property-set-value:", $reflectedToken->getValue($reflectionPropertyObject), "\n";
+echo "reflection-property-accessible:", ($reflectedToken->setAccessible(false) === null), ":", $reflectedToken->getValue($reflectionPropertyObject), "\n";
+$reflectedCount = (new ReflectionClass("ReflectionPropertyChildExample"))->getProperty("count");
+echo "reflection-property-static:", $reflectedCount->getModifiers(), ":", $reflectedCount->isStatic(), ":", ReflectionProperty::IS_STATIC, "\n";
+class PrivateReflectionLookupParentExample { private $hidden = "parent"; }
+class PrivateReflectionLookupChildExample extends PrivateReflectionLookupParentExample {}
+$privateLookup = new ReflectionClass(PrivateReflectionLookupChildExample::class);
+try { $privateLookup->getProperty("hidden"); }
+catch (ReflectionException $error) { echo "reflection-parent-private:", get_class($error), "\n"; }
+class UninitializedPropertyExample { public string $value; public $optional; }
+$uninitializedObject = new UninitializedPropertyExample();
+$uninitializedReflection = new ReflectionClass("UninitializedPropertyExample");
+echo "reflection-property-initialized:", ($uninitializedReflection->getProperty("value")->isInitialized($uninitializedObject) ? 1 : 0), ":", ($uninitializedReflection->getProperty("optional")->isInitialized($uninitializedObject) ? 1 : 0), "\n";
+class PropertyDefaultsExample { public $implicit; public ?int $uninitialized; public ?int $explicitNull = null; }
+$propertyDefaults = new ReflectionClass("PropertyDefaultsExample");
+echo "reflection-property-defaults:", ($propertyDefaults->getProperty("implicit")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("uninitialized")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("explicitNull")->hasDefaultValue() ? 1 : 0), "\n";
+class DefaultPropertyBaseExample { protected $inheritedDefault = "base"; }
+class DefaultPropertyChildExample extends DefaultPropertyBaseExample { private $ownDefault = "child"; public $unsetDefault; }
+$reflectedDefaults = (new ReflectionClass(DefaultPropertyChildExample::class))->getDefaultProperties();
+echo "reflection-default-properties:", $reflectedDefaults["inheritedDefault"], ":", $reflectedDefaults["ownDefault"], ":", ($reflectedDefaults["unsetDefault"] === null), "\n";
+class StaticPropertyBaseExample { protected static $baseCount = 2; }
+class StaticPropertyChildExample extends StaticPropertyBaseExample { public static $childCount = 3; }
+StaticPropertyChildExample::$childCount = 4;
+$reflectedStatics = (new ReflectionClass(StaticPropertyChildExample::class))->getStaticProperties();
+echo "reflection-static-properties:", $reflectedStatics["baseCount"], ":", $reflectedStatics["childCount"], "\n";
+echo "reflection-property-filter-count:", count((new ReflectionClass(StaticPropertyChildExample::class))->getProperties(filter: ReflectionProperty::IS_STATIC)), "\n";
+class PropertyHookTemporaryExample { public function __destruct() { echo "hook temporary released\n"; } }
+class PropertyHookLifetimeExample {
+    public int $value = 6;
+    public int $computed { get { $temporary = new PropertyHookTemporaryExample(); return $this->value; } }
+}
+echo "property-hook-lifetime:", (new PropertyHookLifetimeExample())->computed, "\n";
 echo "reflection-relations:", $reflectionLeaf->implementsInterface("ReflectionMarker"), ":", $reflectionLeaf->isSubclassOf("ReflectionMarker"), "\n";
+class ReflectionCtorParentExample { public function __construct() {} }
+class ReflectionCtorChildExample extends ReflectionCtorParentExample {}
+class ReflectionCtorEmptyExample {}
+echo "reflection-constructor:", (new ReflectionClass("ReflectionCtorChildExample"))->getConstructor()->isConstructor(), ":", ((new ReflectionClass("ReflectionCtorEmptyExample"))->getConstructor() === null), "\n";
+
+class CalledClassBase { public static function called(): string { return get_called_class(); } }
+class CalledClassChild extends CalledClassBase {}
+echo "called-class:", CalledClassBase::called(), ":", CalledClassChild::called(), "\n";
+
+interface ReflectionRootInterface {}
+interface ReflectionChildInterface extends ReflectionRootInterface {}
+class ReflectionInterfaceParent implements ReflectionRootInterface {}
+class ReflectionInterfaceChild extends ReflectionInterfaceParent implements ReflectionChildInterface {}
+$interfaceReflection = new ReflectionClass("ReflectionInterfaceChild");
+$interfaceNames = $interfaceReflection->getInterfaceNames();
+$interfaceObjects = $interfaceReflection->getInterfaces();
+echo "interface-names:", implode(",", $interfaceNames), ":", implode(",", array_keys($interfaceObjects)), ":", $interfaceObjects["ReflectionChildInterface"]->getName(), "\n";
+
+trait ReflectionMarkerTrait {}
+trait ReflectionComposedTrait { use ReflectionMarkerTrait; }
+echo "reflection-is-trait:", (new ReflectionClass(ReflectionMarkerTrait::class))->isTrait(), "\n";
+class ReflectionTraitExample { use ReflectionComposedTrait; }
+$traitReflection = new ReflectionClass("ReflectionTraitExample");
+$traitNames = $traitReflection->getTraitNames();
+$traitObjects = $traitReflection->getTraits();
+echo "trait-names:", implode(",", $traitNames), ":", $traitObjects["ReflectionComposedTrait"]->getName(), "\n";
+
+trait ReflectionAliasTrait { public function originalMethod(): string { return "alias"; } }
+class ReflectionAliasExample { use ReflectionAliasTrait { ReflectionAliasTrait::originalMethod as publicAlias; } }
+echo "trait-aliases:", json_encode((new ReflectionClass("ReflectionAliasExample"))->getTraitAliases()), "\n";
+echo "reflection-members:", (new ReflectionClass("ReflectionAliasExample"))->hasMethod("publicALIAS"), ":", (new ReflectionClass("ReflectionAliasExample"))->hasProperty("missing"), "\n";
+
+abstract class ReflectionMethodBase {
+    abstract protected function needsImplementation();
+    final public static function fixedStatic() {}
+    public function signature(int $required, string $optional = 'x'): ?string { return null; }
+    private function hidden() {}
+    public function __construct() {}
+    public function __destruct() {}
+}
+class ReflectionMethodChild extends ReflectionMethodBase { protected function needsImplementation() {} }
+$methodReflection = new ReflectionClass("ReflectionMethodChild");
+echo "reflection-method-declaring:", $methodReflection->getMethod("hidden")->getDeclaringClass()->getName(), "\n";
+echo "reflection-method-flags:", $methodReflection->getMethod("needsImplementation")->isProtected(), ":", (new ReflectionClass("ReflectionMethodBase"))->getMethod("needsImplementation")->isAbstract(), ":", $methodReflection->getMethod("hidden")->isPrivate(), ":", $methodReflection->getMethod("fixedStatic")->isStatic(), ":", $methodReflection->getMethod("fixedStatic")->isFinal(), ":", $methodReflection->getMethod("__construct")->isConstructor(), ":", $methodReflection->getMethod("__destruct")->isDestructor(), "\n";
+$signatureMethod = (new ReflectionClass("ReflectionMethodChild"))->getMethod("signature");
+echo "reflection-method-signature:", $signatureMethod->getNumberOfParameters(), ":", $signatureMethod->getNumberOfRequiredParameters(), ":", $signatureMethod->hasReturnType(), ":", $signatureMethod->getReturnType()->getName(), ":", $signatureMethod->getReturnType()->allowsNull(), "\n";
+foreach ($signatureMethod->getParameters() as $signatureParameter) {
+    echo "reflection-parameter:", $signatureParameter->getName(), ":", $signatureParameter->hasType(), ":", $signatureParameter->isOptional(), ":", $signatureParameter->isVariadic(), ":", $signatureParameter->isPassedByReference(), ":", $signatureParameter->isDefaultValueAvailable(), "\n";
+}
+function reflectedFunctionSignature($required, $optional = null): bool { return true; }
+$signatureFunction = new ReflectionFunction("reflectedFunctionSignature");
+echo "reflection-function-signature:", $signatureFunction->getNumberOfParameters(), ":", $signatureFunction->getNumberOfRequiredParameters(), ":", $signatureFunction->getReturnType()->getName(), "\n";
+function reflectedParameterNullability($untyped, int $required, ?string $nullable, mixed $mixed, string $defaultNull = null, string $defaultValue = 'x') {}
+$nullabilityParameters = (new ReflectionFunction("reflectedParameterNullability"))->getParameters();
+echo "reflection-parameter-nullability:", implode("", array_map(static fn($parameter) => $parameter->allowsNull() ? "1" : "0", $nullabilityParameters)), "\n";
+class ParameterOriginExample { public function run($value) {} }
+$originFunctionParameter = (new ReflectionFunction("reflectedFunctionSignature"))->getParameters()[0];
+$originMethodParameter = (new ReflectionMethod("ParameterOriginExample", "run"))->getParameters()[0];
+echo "reflection-parameter-origin:", $originFunctionParameter->getDeclaringFunction()->getName(), ":", ($originFunctionParameter->getDeclaringClass() === null ? "null" : "class"), ":", $originMethodParameter->getDeclaringFunction()->getName(), ":", $originMethodParameter->getDeclaringClass()->getName(), "\n";
+$directFunctionParameter = new ReflectionParameter("reflectedParameterNullability", 1);
+$directMethodParameter = new ReflectionParameter(["ParameterOriginExample", "run"], "value");
+echo "reflection-parameter-constructor:", $directFunctionParameter->getName(), ":", $directFunctionParameter->getType()->getName(), ":", $directMethodParameter->getDeclaringClass()->getName(), "\n";
+class PromotedParameterExample { public function __construct(public string $name, private int $level, $ordinary = null) {} }
+$promotedParameters = (new ReflectionMethod("PromotedParameterExample", "__construct"))->getParameters();
+echo "reflection-parameter-promoted:", ($promotedParameters[0]->isPromoted() ? "1" : "0"), ($promotedParameters[1]->isPromoted() ? "1" : "0"), ($promotedParameters[2]->isPromoted() ? "1" : "0"), "\n";
+const REFLECTION_PARAMETER_DEFAULT = 17;
+function reflectedConstantDefault($named = REFLECTION_PARAMETER_DEFAULT, $literal = 2) {}
+$constantDefaultParameters = (new ReflectionFunction("reflectedConstantDefault"))->getParameters();
+echo "reflection-parameter-constant-default:", ($constantDefaultParameters[0]->isDefaultValueConstant() ? "1" : "0"), ":", $constantDefaultParameters[0]->getDefaultValueConstantName(), ":", ($constantDefaultParameters[1]->isDefaultValueConstant() ? "1" : "0"), "\n";
+function reflectedReferencePassing(&$reference, $value) {}
+$passingParameters = (new ReflectionFunction("reflectedReferencePassing"))->getParameters();
+echo "reflection-parameter-pass-by-value:", ($passingParameters[0]->canBePassedByValue() ? "1" : "0"), ":", ($passingParameters[1]->canBePassedByValue() ? "1" : "0"), "\n";
+class ReflectionFunctionAbstractExample {
+    public int $stored = 1;
+    public function &referenceResult(): int { return $this->stored; }
+    public function variadicMethod(...$values) {}
+}
+function &reflectionFunctionAbstractReference(): int { static $value = 2; return $value; }
+function reflectionFunctionAbstractVariadic(...$values) {}
+$abstractMethodReflection = new ReflectionClass("ReflectionFunctionAbstractExample");
+$abstractClosureReflection = new ReflectionFunction(static function (...$values) {});
+echo "reflection-function-abstract:", $abstractMethodReflection->getMethod("referenceResult")->returnsReference(), ":", $abstractMethodReflection->getMethod("variadicMethod")->isVariadic(), ":", (new ReflectionFunction("reflectionFunctionAbstractReference"))->returnsReference(), ":", (new ReflectionFunction("reflectionFunctionAbstractVariadic"))->isVariadic(), ":", $abstractClosureReflection->isClosure(), ":", $abstractClosureReflection->isStatic(), ":", $abstractClosureReflection->isVariadic(), "\n";
+function reflectedCallableExample(string $name, string $suffix = "!"): string { return $name . $suffix; }
+$reflectedCallable = new ReflectionFunction("reflectedCallableExample");
+echo "reflection-function-invoke:", $reflectedCallable->invoke("direct"), ":", $reflectedCallable->invokeArgs(["suffix" => "?", "name" => "named"]), ":", $reflectedCallable->getClosure()("closure"), "\n";
+class ReflectionInvokeExample {
+    private function secret(string $value): string { return "secret:" . $value; }
+    protected static function sum(int $left, int $right): int { return $left + $right; }
+}
+$invokeExample = new ReflectionInvokeExample();
+$privateMethod = new ReflectionMethod($invokeExample, "secret");
+$staticMethod = ReflectionMethod::createFromMethodName("ReflectionInvokeExample::sum");
+$privateClosure = $privateMethod->getClosure($invokeExample);
+$staticClosure = $staticMethod->getClosure();
+echo "reflection-invoke:", $privateMethod->invoke($invokeExample, "ok"), ":", $staticMethod->invokeArgs(null, ["left" => 2, "right" => 3]), ":", $privateClosure("closure"), ":", $staticClosure(3, 4), "\n";
+
+$methodNames = [];
+foreach ($methodReflection->getMethods() as $reflectedMethod) { $methodNames[] = $reflectedMethod->getName(); }
+$finalOrStatic = [];
+foreach ($methodReflection->getMethods(ReflectionMethod::IS_FINAL | ReflectionMethod::IS_STATIC) as $reflectedMethod) { $finalOrStatic[] = $reflectedMethod->getName(); }
+echo "reflection-method-list:", implode(",", $methodNames), ":", implode(",", $finalOrStatic), ":", $methodReflection->getMethod("fixedStatic")->getModifiers(), "\n";
+
+class ReflectedConstantBase { protected const string TOKEN = "base-token"; }
+#[Attribute(Attribute::TARGET_CLASS_CONSTANT | Attribute::IS_REPEATABLE)] class ConstantLabel { public function __construct(public string $label) {} }
+class ReflectedConstantChild extends ReflectedConstantBase {
+    #[ConstantLabel("first"), ConstantLabel(label: "second")]
+    final public const int CODE = 42;
+}
+$constantReflection = new ReflectionClass("ReflectedConstantChild");
+$tokenReflection = $constantReflection->getReflectionConstant("TOKEN");
+$codeReflection = new ReflectionClassConstant("ReflectedConstantChild", "CODE");
+$constantAttribute = $codeReflection->getAttributes(ConstantLabel::class)[1];
+echo "reflection-constants:", $tokenReflection->getDeclaringClass()->getName(), ":", $tokenReflection->getValue(), ":", $codeReflection->getName(), ":", $codeReflection->getValue(), ":", $codeReflection->isFinal(), ":", $codeReflection->getType()->getName(), ":", $codeReflection->hasType(), ":", $constantAttribute->newInstance()->label, "\n";
+
+interface ReflectedTypeB {} interface ReflectedTypeC {}
+class ReflectedDnfConstant { public const int|(ReflectedTypeB&ReflectedTypeC) VALUE = 1; }
+$dnf = (new ReflectionClassConstant("ReflectedDnfConstant", "VALUE"))->getType();
+echo "reflection-dnf:", get_class($dnf), ":", get_class($dnf->getTypes()[1]), ":", count($dnf->getTypes()[1]->getTypes()), "\n";
+
+class ScopedForeachExample {
+    private $secret = 'private';
+    protected $state = 'pending';
+    public $label = 'visible';
+    public function complete() {
+        $keys = [];
+        foreach ($this as $key => &$value) {
+            $keys[] = $key;
+            if ($value === 'pending') { $value = 'complete'; }
+        }
+        unset($value);
+        echo "scoped-foreach:", implode(',', $keys), ":", $this->secret, ":", $this->state, "\n";
+    }
+}
+(new ScopedForeachExample())->complete();
+
+trait PreferredMessageTrait { public function message() { return 'preferred'; } }
+trait AlternateMessageTrait { public function message() { return 'alternate'; } }
+trait MessageCompositionTrait {
+    use PreferredMessageTrait, AlternateMessageTrait {
+        PreferredMessageTrait::message insteadof AlternateMessageTrait;
+        AlternateMessageTrait::message as alternateMessage;
+    }
+}
+class MessageCompositionExample { use MessageCompositionTrait; }
+$messages = new MessageCompositionExample();
+echo "trait-adaptation:", $messages->message(), ':', $messages->alternateMessage(), "\n";
+
+trait SharedTraitState { public int $items = 2; }
+trait NestedSharedTraitState { use SharedTraitState; }
+trait MatchingTraitState { public int $items = 2; }
+class TraitStateExample { use NestedSharedTraitState, MatchingTraitState; }
+echo "trait-property:", (new TraitStateExample())->items, "\n";
+
+trait BaseTraitConstantsExample { public const int BASE = 4; }
+trait DerivedTraitConstantsExample { use BaseTraitConstantsExample; public const int DERIVED = self::BASE + 3; }
+trait MatchingTraitConstantsExample { public const int BASE = 4; }
+class TraitConstantExample {
+    use DerivedTraitConstantsExample, MatchingTraitConstantsExample;
+    public const int BASE = 4;
+}
+echo "trait-constant:", TraitConstantExample::DERIVED, ':', TraitConstantExample::BASE, "\n";
+
+class VarDumpLayoutExample {
+    private $secret = 'kept';
+    protected $state = 'ready';
+    public $nested = ['answer' => 42];
+}
+var_dump([new VarDumpLayoutExample()]);
+
+interface InstantiableExampleContract { public function run(); }
+abstract class InstantiableExampleBase { abstract public function run(); }
+class InstantiableExampleChild extends InstantiableExampleBase implements InstantiableExampleContract { public function run() {} }
+class InstantiableExamplePrivateConstructor { private function __construct() {} }
+echo "reflection-instantiable:",
+    ((new ReflectionClass('InstantiableExampleChild'))->isInstantiable() ? 'yes' : 'no'), ':',
+    ((new ReflectionClass('InstantiableExamplePrivateConstructor'))->isInstantiable() ? 'yes' : 'no'), "\n";
+
+class TypedMagicMethodsExample {
+    private array $values = [];
+    public function __get(string $name): mixed { return $this->values[$name] ?? null; }
+    public function __set(string $name, mixed $value): void { $this->values[$name] = $value; }
+    public function __isset(string $name): bool { return isset($this->values[$name]); }
+    public function __unset(string $name): void { unset($this->values[$name]); }
+    public function __call(string $name, array $arguments): mixed { return $name . count($arguments); }
+    public static function __callStatic(string $name, array $arguments): mixed { return $name . count($arguments); }
+    public function __toString(): string { return 'typed-magic'; }
+    public function __clone(): void {}
+    public function __invoke(...$values): mixed { return count($values); }
+}
+$typedMagic = new TypedMagicMethodsExample();
+$typedMagic->note = 'ok';
+$typedMagicClone = clone $typedMagic;
+echo "typed-magic:", $typedMagic->note, ':', isset($typedMagic->note) ? 'set' : 'unset', ':',
+    $typedMagic->missing(1, 2), ':', TypedMagicMethodsExample::missing(3), ':',
+    (string)$typedMagicClone, ':', $typedMagicClone(1, 2), "\n";
+
+class AsymmetricPropertyReflectionExample {
+    public protected(set) string $protected = 'p';
+    public private(set) string $private = 'q';
+}
+$asymmetricReflection = new ReflectionClass(AsymmetricPropertyReflectionExample::class);
+echo "asymmetric-set:",
+    $asymmetricReflection->getProperty('protected')->isProtectedSet() ? 'protected' : 'other', ':',
+    $asymmetricReflection->getProperty('private')->isPrivateSet() ? 'private' : 'other', "\n";
+
+readonly class ReadonlyClassReflectionExample { public int $id; }
+echo "readonly-class:", (new ReflectionClass(ReadonlyClassReflectionExample::class))->isReadOnly() ? 'yes' : 'no', "\n";
+$readonlyAnonymous = new readonly class { public int $id; };
+echo "readonly-anonymous:", (new ReflectionClass($readonlyAnonymous))->isReadOnly() ? 'yes' : 'no', "\n";
+
+class ParentSetVisibilityExample { public protected(set) int $value = 1; }
+class ChildSetVisibilityExample extends ParentSetVisibilityExample { public int $value = 2; }
+echo "inherited-set-visibility:", (new ChildSetVisibilityExample())->value, "\n";
+
+class UnionPropertyParentExample { public int|string $value; }
+class UnionPropertyChildExample extends UnionPropertyParentExample { public string|int $value = 'ok'; }
+echo "equivalent-inherited-union:", (new UnionPropertyChildExample())->value ?? 'unset', "\n";
+
+class UninitializedCoalescePropertyExample { public int $value; }
+$uninitializedCoalesce = new UninitializedCoalescePropertyExample();
+echo "typed-property-coalesce:", ($uninitializedCoalesce->value ?? 'fallback'), "\n";
+echo "computed-property-coalesce:", ($uninitializedCoalesce->{'value'} ?? 'computed-fallback'), "\n";
+$uninitializedCoalesce->value ??= 3;
+echo "typed-property-coalesce-assign:", $uninitializedCoalesce->value, "\n";
+class MagicCoalesceVisibilityExample {
+    private int $hidden;
+    public function __isset($name) { echo "isset:$name "; return false; }
+    public function __get($name) { echo "get:$name "; return 9; }
+}
+$magicCoalesce = new MagicCoalesceVisibilityExample();
+echo "magic-property-coalesce:", ($magicCoalesce->hidden ?? 'fallback'), "\n";
+$anonymousReflectionExample = new class {};
+echo "anonymous-reflection:", (new ReflectionClass($anonymousReflectionExample))->isAnonymous() ? 'yes' : 'no', "\n";
+
+class DeprecatedParameterTypeExample {}
+function deprecatedParameterTypeExample(DeprecatedParameterTypeExample $object, array|int $items, callable|string $callback, $untyped) {}
+$deprecatedTypeParameters = (new ReflectionFunction('deprecatedParameterTypeExample'))->getParameters();
+echo "deprecated-parameter-types:", strtolower($deprecatedTypeParameters[0]->getClass()->getName()), ':',
+    $deprecatedTypeParameters[1]->isArray() ? 'array' : 'other', ':',
+    $deprecatedTypeParameters[2]->isCallable() ? 'callable' : 'other', ':',
+    $deprecatedTypeParameters[3]->getClass() === null ? 'untyped' : 'class', "\n";
+
+interface ReflectedIterableContract extends Traversable {}
+class ReflectedIterableBase implements ReflectedIterableContract {}
+class ReflectedIterableChild extends ReflectedIterableBase {}
+echo "reflection-iterable:", (new ReflectionClass(ReflectedIterableChild::class))->isIterable() ? 'yes' : 'no', ':',
+    (new ReflectionClass(ReflectedIterableChild::class))->isIterateable() ? 'yes' : 'no', "\n";
+
+class ExplicitCycleCollectionExample {
+    public $link;
+    public function __destruct() { echo 'cycle-destroyed '; }
+}
+$cycleLeft = new ExplicitCycleCollectionExample();
+$cycleRight = new ExplicitCycleCollectionExample();
+$cycleLeft->link = ['next' => $cycleRight];
+$cycleRight->link = ['next' => $cycleLeft];
+unset($cycleLeft, $cycleRight);
+echo "cycles-collected:", gc_collect_cycles(), "\n";
+
+class ClosureCycleCollectionExample {
+    public $link;
+    public function __destruct() { echo 'closure-cycle-destroyed '; }
+}
+$closureCycleNode = new ClosureCycleCollectionExample();
+$closureCycleNode->link = function () use ($closureCycleNode) { return $closureCycleNode; };
+unset($closureCycleNode);
+echo "closure-cycle-collected:", gc_collect_cycles(), "\n";
+
+function generatorCycleCollectionExample($value) { yield $value; }
+class GeneratorCycleCollectionExample {
+    public $generator;
+    public function __destruct() { echo 'generator-cycle-destroyed '; }
+}
+$generatorCycleNode = new GeneratorCycleCollectionExample();
+$generatorCycleNode->generator = generatorCycleCollectionExample($generatorCycleNode);
+unset($generatorCycleNode);
+echo "generator-cycle-collected:", gc_collect_cycles(), "\n";
+
+class ReflectionFilterExample { public function present() {} }
+try { (new ReflectionClass(ReflectionFilterExample::class))->getMethod('missing'); }
+catch (ReflectionException $error) { echo 'missing reflected method: ', get_class($error), "\n"; }
+try { (new ReflectionClass(ReflectionFilterExample::class))->getMethods([]); }
+catch (TypeError $error) { echo 'invalid reflection filter: ', get_class($error), "\n"; }
+
+class ReadonlyUnsetExample {
+    public readonly int $id;
+    public readonly int $uninitialized;
+    public function __construct() { $this->id = 42; }
+    public function clearUninitialized() { unset($this->uninitialized); }
+}
+$readonlyUnsetExample = new ReadonlyUnsetExample();
+$readonlyUnsetExample->clearUninitialized();
+try { unset($readonlyUnsetExample->id); }
+catch (Error $error) { echo 'readonly unset: ', $error->getMessage(), "\n"; }
+
+class ReflectionPrototypeBase { public function work(): string { return 'base'; } }
+class ReflectionPrototypeChild extends ReflectionPrototypeBase { public function work(): string { return 'child'; } }
+$prototype = (new ReflectionClass(ReflectionPrototypeChild::class))->getMethod('work');
+echo "reflection-prototype:", $prototype->hasPrototype(), ':', $prototype->getPrototype()->getDeclaringClass()->getName(), "\n";
+
+interface ReflectionPrototypeContract { public function render(): string; }
+class ReflectionPrototypeImplementation implements ReflectionPrototypeContract { public function render(): string { return 'ok'; } }
+$contractMethod = (new ReflectionClass(ReflectionPrototypeImplementation::class))->getMethod('render')->getPrototype();
+echo "reflection-interface-prototype:", $contractMethod->getDeclaringClass()->getName(), "\n";
+
+class OptionalOverrideBase { public function fetch(int $id): string { return (string) $id; } }
+class OptionalOverrideChild extends OptionalOverrideBase {
+    public function fetch(int $id = 1, string $format = 'plain'): string { return (string) $id . ':' . $format; }
+}
+echo "optional override:", (new OptionalOverrideChild())->fetch(), "\n";
+
+class FixedSignatureBase { public function route(int $id, string $label): string { return $label; } }
+class VariadicSignatureChild extends FixedSignatureBase {
+    public function route(int $id, string ...$labels): string { return $labels[0]; }
+}
+echo "variadic override:", (new VariadicSignatureChild())->route(2, 'child'), "\n";
+
+class InvariantPropertyBase { public int $value = 1; }
+class InvariantPropertyChild extends InvariantPropertyBase { public int $value = 2; }
+echo "inherited property type:", (new InvariantPropertyChild())->value, "\n";
+
+trait PreferredAdaptationExample {
+    public function selectAdaptation() { return 'preferred'; }
+}
+trait ExcludedAdaptationExample {
+    public function selectAdaptation() { return 'excluded'; }
+}
+class TraitAdaptationPrecedenceExample {
+    use PreferredAdaptationExample, ExcludedAdaptationExample {
+        PreferredAdaptationExample::selectAdaptation insteadof ExcludedAdaptationExample;
+        ExcludedAdaptationExample::selectAdaptation as protected;
+    }
+}
+echo 'trait-adaptation:', (new TraitAdaptationPrecedenceExample())->selectAdaptation(), "\n";
+
+$anonymousNameExample = new class {};
+$anonymousNameReflection = new ReflectionClass($anonymousNameExample);
+echo 'anonymous reflection name: ', $anonymousNameReflection->getShortName(), ':', $anonymousNameReflection->isAnonymous(), "\n";
+
+class ClosureCycleCollectionExample {
+    public $link;
+    public function __destruct() { echo 'closure-cycle-destroyed '; }
+}
+$closureCycleNode = new ClosureCycleCollectionExample();
+$closureCycleNode->link = function () use ($closureCycleNode) { return $closureCycleNode; };
+unset($closureCycleNode);
+echo "closure-cycle-collected:", gc_collect_cycles(), "\n";
+
+function generatorCycleCollectionExample($value) { yield $value; }
+class GeneratorCycleCollectionExample {
+    public $generator;
+    public function __destruct() { echo 'generator-cycle-destroyed '; }
+}
+$generatorCycleNode = new GeneratorCycleCollectionExample();
+$generatorCycleNode->generator = generatorCycleCollectionExample($generatorCycleNode);
+unset($generatorCycleNode);
+echo "generator-cycle-collected:", gc_collect_cycles(), "\n";

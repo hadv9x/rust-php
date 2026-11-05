@@ -184,14 +184,16 @@ impl Parser<'_> {
         if self.eat(&closing) { return Ok(targets); }
         loop {
             if self.eat(&TokenKind::Comma) {
-                targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: None });
+                targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: None, by_reference: false });
                 if self.eat(&closing) { break; }
                 continue;
             }
+            let mut by_reference = self.eat(&TokenKind::Ampersand);
             let parsed = match self.take() {
                 TokenKind::Ls => {
                     let nested = self.destructure_targets(TokenKind::Rs)?;
-                    targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: Some(nested) });
+                    if by_reference { return Err(self.error("Only variables can be assigned by reference in destructuring")); }
+                    targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: Some(nested), by_reference: false });
                     if self.eat(&closing) { break; }
                     self.expect(TokenKind::Comma, "Expected , or closing token in destructuring targets")?;
                     if self.eat(&closing) { break; }
@@ -199,7 +201,8 @@ impl Parser<'_> {
                 }
                 TokenKind::Word(word) if word == "list" && self.eat(&TokenKind::Lp) => {
                     let nested = self.destructure_targets(TokenKind::Rp)?;
-                    targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: Some(nested) });
+                    if by_reference { return Err(self.error("Only variables can be assigned by reference in destructuring")); }
+                    targets.push(DestructureTarget { key: None, variable: None, array_variable: None, array_keys: Vec::new(), array_append: false, property_receiver: None, property: None, nested: Some(nested), by_reference: false });
                     if self.eat(&closing) { break; }
                     self.expect(TokenKind::Comma, "Expected , or closing token in destructuring targets")?;
                     if self.eat(&closing) { break; }
@@ -208,14 +211,17 @@ impl Parser<'_> {
                 _ => { self.cursor -= 1; self.expression(1)? }
             };
             let target = if self.eat(&TokenKind::Arrow) {
-                let (variable, array_variable, array_keys, array_append, property_receiver, property, nested) = self.destructure_value(closing.clone())?;
+                let (variable, array_variable, array_keys, array_append, property_receiver, property, nested, value_by_reference) = self.destructure_value(closing.clone())?;
+                by_reference |= value_by_reference;
                 DestructureTarget {
                     key: Some(DestructureKey::Computed(Box::new(parsed))),
                     variable, array_variable, array_keys, array_append, property_receiver, property, nested,
+                    by_reference,
                 }
             } else {
                 let (variable, array_variable, array_keys, array_append, property_receiver, property) = Self::destructure_target_expression(parsed)?;
-                DestructureTarget { key: None, variable, array_variable, array_keys, array_append, property_receiver, property, nested: None }
+                if by_reference && variable.is_none() && array_variable.is_none() && property_receiver.is_none() { return Err(self.error("Only variables, array offsets, and object properties can be assigned by reference in destructuring")); }
+                DestructureTarget { key: None, variable, array_variable, array_keys, array_append, property_receiver, property, nested: None, by_reference }
             };
             targets.push(target);
             if self.eat(&closing) { break; }
@@ -225,18 +231,20 @@ impl Parser<'_> {
         Ok(targets)
     }
 
-    fn destructure_value(&mut self, closing: TokenKind) -> Result<(Option<String>, Option<String>, Vec<crate::ast::Expr>, bool, Option<crate::ast::Expr>, Option<String>, Option<Vec<DestructureTarget>>), String> {
+    fn destructure_value(&mut self, closing: TokenKind) -> Result<(Option<String>, Option<String>, Vec<crate::ast::Expr>, bool, Option<crate::ast::Expr>, Option<String>, Option<Vec<DestructureTarget>>, bool), String> {
         if self.peek() == &TokenKind::Comma || self.peek() == &closing {
-            return Ok((None, None, Vec::new(), false, None, None, None));
+            return Ok((None, None, Vec::new(), false, None, None, None, false));
         }
+        let by_reference = self.eat(&TokenKind::Ampersand);
         match self.take() {
-            TokenKind::Ls => Ok((None, None, Vec::new(), false, None, None, Some(self.destructure_targets(TokenKind::Rs)?))),
-            TokenKind::Word(word) if word == "list" && self.eat(&TokenKind::Lp) => Ok((None, None, Vec::new(), false, None, None, Some(self.destructure_targets(TokenKind::Rp)?))),
+            TokenKind::Ls if !by_reference => Ok((None, None, Vec::new(), false, None, None, Some(self.destructure_targets(TokenKind::Rs)?), false)),
+            TokenKind::Word(word) if word == "list" && !by_reference && self.eat(&TokenKind::Lp) => Ok((None, None, Vec::new(), false, None, None, Some(self.destructure_targets(TokenKind::Rp)?), false)),
             _ => {
                 self.cursor -= 1;
                 let expression = self.expression(1)?;
                 let (variable, array_variable, array_keys, array_append, property_receiver, property) = Self::destructure_target_expression(expression)?;
-                Ok((variable, array_variable, array_keys, array_append, property_receiver, property, None))
+                if by_reference && variable.is_none() { return Err(self.error("Only variables can be assigned by reference in destructuring")); }
+                Ok((variable, array_variable, array_keys, array_append, property_receiver, property, None, by_reference))
             }
         }
     }

@@ -284,6 +284,38 @@ fn json_decode_and_validate_accept_only_json_whitespace() {
 }
 
 #[test]
+fn json_mismatched_closing_delimiters_use_state_mismatch_error() {
+    let source = r#"<?php
+        $inputs = [']', '[}', '{"value":]', '{"value":1]'];
+        foreach ($inputs as $input) {
+            $value = json_decode($input);
+            echo ($value === null ? 'null' : 'value'), ':', json_last_error(), ':', json_last_error_msg(), ':';
+            echo json_validate($input) ? 'valid' : 'invalid', ':', json_last_error(), "\n";
+        }
+        try { json_decode(']', flags: JSON_THROW_ON_ERROR); }
+        catch (JsonException $error) { echo get_class($error), ':', $error->getCode(), ':', $error->getMessage(), "\n"; }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "null:2:State mismatch (invalid or malformed JSON):invalid:2\nnull:2:State mismatch (invalid or malformed JSON):invalid:2\nnull:2:State mismatch (invalid or malformed JSON):invalid:2\nnull:2:State mismatch (invalid or malformed JSON):invalid:2\nJsonException:2:State mismatch (invalid or malformed JSON)\n",
+    );
+}
+
+#[test]
+fn json_trailing_commas_remain_syntax_errors_not_state_mismatch() {
+    let source = r#"<?php
+        json_decode('[1,]');
+        echo json_last_error(), ':', json_last_error_msg(), ':';
+        json_decode('{"value":1,}');
+        echo json_last_error(), ':', json_last_error_msg(), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:Syntax error:4:Syntax error\n",
+    );
+}
+
+#[test]
 fn json_last_error_distinguishes_depth_control_and_unicode_failures() {
     let source = r#"<?php
         json_decode('[[1]]', true, 1);
@@ -477,6 +509,21 @@ fn json_encode_preserves_declared_and_dynamic_object_property_order() {
         echo json_encode((object)['z' => 1, 'a' => 2]), "\n";
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"zeta\":1,\"alpha\":5,\"middle\":3,\"later\":4}\n{\"z\":1,\"a\":2}:{\"z\":1,\"a\":2}\n");
+}
+
+#[test]
+fn json_encode_preserves_order_of_properties_created_by_reference_arguments() {
+    let source = r#"<?php
+        function initialize(&$property, $value) { $property = $value; }
+        class EmptyReferenceJsonObject {}
+        $object = new EmptyReferenceJsonObject();
+        initialize($object->zeta, 1);
+        initialize($object->alpha, 2);
+        initialize($object->z_nested['key'], 3);
+        initialize($object->a_nested['key'], 4);
+        echo json_encode($object), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"zeta\":1,\"alpha\":2,\"z_nested\":{\"key\":3},\"a_nested\":{\"key\":4}}\n");
 }
 
 #[test]

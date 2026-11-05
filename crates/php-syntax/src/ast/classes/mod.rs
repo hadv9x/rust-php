@@ -33,6 +33,7 @@ pub struct PropertySetHook {
 /// A class constant expression and its visibility/final metadata.
 pub struct ClassConstantDecl {
     pub name: String,
+    pub attributes: Vec<AttributeDecl>,
     pub value: Expr,
     pub type_name: Option<String>,
     pub visibility: Visibility,
@@ -52,6 +53,7 @@ pub struct TraitAdaptation {
     pub excluded_traits: Vec<String>,
     pub alias: Option<String>,
     pub visibility: Option<Visibility>,
+    pub is_final: bool,
 }
 
 /// A PHP attribute attached to a class-like declaration.
@@ -66,11 +68,14 @@ pub struct AttributeDecl {
 /// A class declaration including inheritance and composed members.
 pub struct ClassDecl {
     pub name: String,
+    /// Source location used to expose PHP's generated anonymous-class name.
+    pub anonymous_source: Option<(Option<String>, usize)>,
     pub attributes: Vec<AttributeDecl>,
     pub is_enum: bool,
     pub enum_backing_type: Option<String>,
     pub is_abstract: bool,
     pub is_final: bool,
+    pub is_readonly: bool,
     pub parent: Option<String>,
     pub interfaces: Vec<String>,
     pub traits: Vec<String>,

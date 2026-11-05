@@ -22,6 +22,23 @@ class EntityRecord extends EntityRoot {
 
 class SpecialEntityRecord extends EntityRecord {}
 
+interface DnfReadable {}
+interface DnfCountable {}
+interface DnfLoggable {}
+interface DnfExtra {}
+
+class DnfBoth implements DnfReadable, DnfCountable {}
+
+interface DnfContract {
+    public function handle((DnfReadable&DnfCountable)|DnfLoggable $value): (DnfReadable&DnfCountable)|DnfLoggable;
+}
+
+class DnfHandler implements DnfContract {
+    public function handle((DnfReadable&DnfCountable)|DnfLoggable|DnfExtra $value): (DnfReadable&DnfCountable)|DnfLoggable {
+        return $value;
+    }
+}
+
 $record = new SpecialEntityRecord();
 $record->reference = $record;
 $record->ancestor = new EntityRoot();
@@ -43,3 +60,5 @@ try {
 } catch (TypeError $error) {
     echo get_class($error), "\n";
 }
+
+echo 'dnf:', get_class((new DnfHandler())->handle(new DnfBoth())), "\n";

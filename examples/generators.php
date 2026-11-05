@@ -52,6 +52,13 @@ foreach ($outer as $key => $value) {
     echo $key, ':', $value, "\n";
 }
 echo $outer->getReturn(), "\n";
+$reference = 5;
+function &innerReferenceValues(&$value) { yield $value; echo 'resumed reference: ', $value, "\n"; }
+function &outerReferenceValues(&$value) { yield from innerReferenceValues($value); }
+$referenceGenerator = outerReferenceValues($reference);
+foreach ($referenceGenerator as &$value) { $value = 12; }
+unset($value);
+echo 'delegated reference source: ', $reference, "\n";
 $materialized = iterator_to_array(outerValues(), false);
 echo $materialized[0], ':', $materialized[1], ':', $materialized[2], "\n";
 $counted = delegatedValues();
@@ -103,3 +110,14 @@ foreach (new ArbitraryKeyIterator() as $key => $value) {
 $keyedArray = iterator_to_array(new ArbitraryKeyIterator());
 $valuesOnly = iterator_to_array(new ArbitraryKeyIterator(), false);
 echo 'materialized keys: ', count($keyedArray), ':', $valuesOnly[0], ':', $valuesOnly[1], "\n";
+
+class GeneratorLocal {
+    public $name;
+    public function __construct($name) { $this->name = $name; }
+    public function __destruct() { echo $this->name, ";"; }
+}
+function completesWithLocal() { $local = new GeneratorLocal("complete"); yield "ready"; echo "resumed;"; }
+$completion = completesWithLocal();
+echo $completion->current(), ";";
+$completion->next();
+echo "done;\n";

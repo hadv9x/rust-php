@@ -5,17 +5,17 @@ use std::collections::HashMap;
 use super::common::*;
 
 /// Extract a selected column from each row, optionally indexing by another column.
-pub(super) fn array_column(args: &[Value], classes: &HashMap<String, BytecodeClass>) -> Result<Value, String> {
+pub(super) fn array_column(args: &[Value], classes: &HashMap<String, BytecodeClass>, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<Value, String> {
     // Extract a field from each row, optionally using a second field as the result key.
     require_count("array_column", args, 2, 3)?;
     let rows = entries(&args[0], "array_column")?;
     let column_key = match &args[1] {
         Value::Null => None,
-        key => Some(key.array_key()?),
+        key => Some(array_key(key, diagnostics)?),
     };
     let index_key = match args.get(2) {
         None | Some(Value::Null) => None,
-        Some(key) => Some(key.array_key()?),
+        Some(key) => Some(array_key(key, diagnostics)?),
     };
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     for (_, row) in rows {
@@ -41,7 +41,7 @@ pub(super) fn array_column(args: &[Value], classes: &HashMap<String, BytecodeCla
         };
         let output_key = if let Some(key) = &index_key {
             match row_field(&fields, key, is_object) {
-                Some((_, value)) => Some(value.array_key()?),
+                Some((_, value)) => Some(array_key(value, diagnostics)?),
                 None => None,
             }
         } else {
@@ -73,23 +73,30 @@ fn row_field<'a>(fields: &'a [(ArrayKey, Value)], key: &ArrayKey, is_object: boo
 }
 
 /// Pair entries from key and value arrays to build a new array.
-pub(super) fn array_combine(args: &[Value]) -> Result<Value, String> {
+pub(super) fn array_combine(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<Value, String> {
     require_count("array_combine", args, 2, 2)?;
     let keys = entries(&args[0], "array_combine")?;
     let values = entries(&args[1], "array_combine")?;
-    if keys.len() != values.len() { return Err("array_combine(): arrays must have the same number of elements".into()); }
+    if keys.len() != values.len() { return Err("ValueError:array_combine(): Argument #1 ($keys) and argument #2 ($values) must have the same number of elements".into()); }
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
-    for ((_, key), (_, value)) in keys.iter().zip(values) { insert(&mut result, key.array_key()?, value.clone()); }
+    for ((_, key), (_, value)) in keys.iter().zip(values) { insert(&mut result, array_key(key, diagnostics)?, value.clone()); }
     Ok(array_value(result))
 }
 
 /// Swap values and keys where each value is a valid array key.
-pub(super) fn array_flip(args: &[Value]) -> Result<Value, String> {
+pub(super) fn array_flip(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<Value, String> {
     require_count("array_flip", args, 1, 1)?;
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     for (key, value) in entries(&args[0], "array_flip")? {
-        if matches!(value, Value::String(_) | Value::Integer(_) | Value::Number(_)) {
+        let value = value.dereference();
+        if matches!(value, Value::String(_) | Value::Integer(_)) {
             insert(&mut result, value.array_key()?, key_value(key));
+        } else {
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Warning,
+                message: "array_flip(): Can only flip STRING and INTEGER values!".into(),
+                source_file: None, source_line: None, output_offset: 0,
+            });
         }
     }
     Ok(array_value(result))
@@ -103,8 +110,8 @@ pub(super) fn array_change_key_case(args: &[Value]) -> Result<Value, String> {
     for (key, value) in entries(&args[0], "array_change_key_case")? {
         let key = match key {
             ArrayKey::Integer(_) => key.clone(),
-            ArrayKey::String(text) if upper => ArrayKey::String(text.to_uppercase()),
-            ArrayKey::String(text) => ArrayKey::String(text.to_lowercase()),
+            ArrayKey::String(text) if upper => ArrayKey::String(text.to_ascii_uppercase()),
+            ArrayKey::String(text) => ArrayKey::String(text.to_ascii_lowercase()),
         };
         insert(&mut result, key, value.clone());
     }
@@ -112,14 +119,21 @@ pub(super) fn array_change_key_case(args: &[Value]) -> Result<Value, String> {
 }
 
 /// Count occurrences of each supported scalar value.
-pub(super) fn array_count_values(args: &[Value]) -> Result<Value, String> {
+pub(super) fn array_count_values(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<Value, String> {
     require_count("array_count_values", args, 1, 1)?;
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     for (_, value) in entries(&args[0], "array_count_values")? {
-        if matches!(value, Value::String(_) | Value::Integer(_) | Value::Number(_)) {
+        let value = value.dereference();
+        if matches!(value, Value::String(_) | Value::Integer(_)) {
             let key = value.array_key()?;
             let count = result.iter().find(|(candidate, _)| *candidate == key).map(|(_, count): &(_, Value)| count.number()).unwrap_or(0.0);
             insert(&mut result, key, Value::Integer(count as i64 + 1));
+        } else {
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Warning,
+                message: "array_count_values(): Can only count string and integer values, entry skipped".into(),
+                source_file: None, source_line: None, output_offset: 0,
+            });
         }
     }
     Ok(array_value(result))
@@ -130,7 +144,11 @@ pub(super) fn array_fill(args: &[Value]) -> Result<Value, String> {
     require_count("array_fill", args, 3, 3)?;
     let start = integer(&args[0]);
     let count = integer(&args[1]);
-    if count < 0 { return Err("array_fill(): num must be greater than or equal to 0".into()); }
+    if count < 0 { return Err("ValueError:array_fill(): Argument #2 ($count) must be greater than or equal to 0".into()); }
+    if count > i32::MAX as i64 { return Err("ValueError:array_fill(): Argument #2 ($count) is too large".into()); }
+    if count > 0 && start > i64::MAX - count + 1 {
+        return Err("Error:Cannot add element to the array as the next element is already occupied".into());
+    }
     if count > 1_000_000 { return Err("array_fill(): requested size is too large".into()); }
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     for i in 0..count { insert(&mut result, ArrayKey::Integer(start + i), args[2].clone()); }
@@ -138,11 +156,11 @@ pub(super) fn array_fill(args: &[Value]) -> Result<Value, String> {
 }
 
 /// Create an array using each supplied key and one repeated value.
-pub(super) fn array_fill_keys(args: &[Value]) -> Result<Value, String> {
+pub(super) fn array_fill_keys(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<Value, String> {
     require_count("array_fill_keys", args, 2, 2)?;
     let keys = entries(&args[0], "array_fill_keys")?;
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
-    for (_, key) in keys { insert(&mut result, key.array_key()?, args[1].clone()); }
+    for (_, key) in keys { insert(&mut result, array_key(key, diagnostics)?, args[1].clone()); }
     Ok(array_value(result))
 }
 
@@ -166,7 +184,7 @@ pub(super) fn range(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) ->
         let Value::String(text) = value.dereference() else { continue; };
         let parameter = if index == 0 { "start" } else { "end" };
         if text.is_empty() {
-            diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message: format!("range(): Argument #{} (${parameter}) must not be empty, casted to 0", index + 1), source_file: None, source_line: None });
+            diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message: format!("range(): Argument #{} (${parameter}) must not be empty, casted to 0", index + 1), source_file: None, source_line: None, output_offset: 0 });
             continue;
         }
         if range_numeric_string(&text).is_none() {
@@ -178,12 +196,12 @@ pub(super) fn range(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) ->
             } else {
                 continue;
             };
-            diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message, source_file: None, source_line: None });
+            diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message, source_file: None, source_line: None, output_offset: 0 });
         }
     }
     if matches!(step.dereference(), Value::Number(_))
         && args.iter().take(2).any(|value| matches!(value.dereference(), Value::String(text) if range_numeric_string(&text).is_none())) {
-        diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message: "range(): Argument #3 ($step) must be of type int when generating an array of characters".into(), source_file: None, source_line: None });
+        diagnostics.push(RuntimeDiagnostic { level: DiagnosticLevel::Warning, message: "range(): Argument #3 ($step) must be of type int when generating an array of characters".into(), source_file: None, source_line: None, output_offset: 0 });
     }
     let step_integer = match step.dereference() {
         Value::Integer(value) => Some(value),
@@ -193,14 +211,18 @@ pub(super) fn range(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) ->
             .map(|number| number as i64)),
         _ => None,
     };
-    let (start_string, end_string) = match (&args[0], &args[1]) {
+    // References are transparent to PHP's scalar argument handling. Keep the
+    // dereferenced boundary values for the numeric-string and byte-range paths.
+    let start_value = args[0].dereference();
+    let end_value = args[1].dereference();
+    let (start_string, end_string) = match (&start_value, &end_value) {
         (Value::String(start), Value::String(end)) => (Some(start.as_str()), Some(end.as_str())),
         _ => (None, None),
     };
     let start_numeric = start_string.and_then(range_numeric_string);
     let end_numeric = end_string.and_then(range_numeric_string);
     let float_numeric_string = |value: Option<(i64, bool)>| value.is_some_and(|(_, is_float)| is_float);
-    let use_float = matches!((&args[0], &args[1]), (Value::Number(_), _) | (_, Value::Number(_)))
+    let use_float = matches!((&start_value, &end_value), (Value::Number(_), _) | (_, Value::Number(_)))
         || float_numeric_string(start_numeric) || float_numeric_string(end_numeric)
         || step_integer.is_none();
 
@@ -219,7 +241,7 @@ pub(super) fn range(args: &[Value], diagnostics: &mut Vec<RuntimeDiagnostic>) ->
             let direction = if descending { -1i64 } else { 1i64 };
             let values = (0..count).map(|index| {
                 let byte = i128::from(start_byte) + i128::from(direction) * i128::from(step) * index as i128;
-                (ArrayKey::Integer(index as i64), Value::String((byte as u8 as char).to_string()))
+                (ArrayKey::Integer(index as i64), Value::String(String::from_utf8_lossy(&[byte as u8]).into_owned()))
             }).collect();
             return Ok(array_value(values));
         }
@@ -266,22 +288,24 @@ fn range_type_name(value: &Value) -> &'static str {
 }
 
 fn range_numeric_string(value: &str) -> Option<(i64, bool)> {
-    let value = value.trim();
+    let value = range_trim_php_whitespace(value);
     if value.is_empty() { return None; }
     value.parse::<i64>().ok().map(|number| (number, false))
         .or_else(|| value.parse::<f64>().ok().filter(|number| number.is_finite()).map(|number| (number as i64, true)))
 }
 
 fn range_byte(value: &str) -> Result<u8, String> {
-    let byte = value.as_bytes().first().copied().ok_or("range(): empty string endpoint is not supported without PHP diagnostics")?;
-    if !byte.is_ascii() { return Err("range(): non-ASCII byte strings are not represented by this runtime".into()); }
-    Ok(byte)
+    value.as_bytes().first().copied().ok_or("range(): empty string endpoint is not supported without PHP diagnostics".into())
+}
+
+fn range_trim_php_whitespace(value: &str) -> &str {
+    value.trim_matches(|character| matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{000c}' | '\u{000b}'))
 }
 
 fn range_float(value: &Value) -> f64 {
     match value.dereference() {
-        Value::String(text) => text.trim().parse::<f64>().unwrap_or_else(|_| {
-            let text = text.trim();
+        Value::String(text) => range_trim_php_whitespace(&text).parse::<f64>().unwrap_or_else(|_| {
+            let text = range_trim_php_whitespace(&text);
             (1..=text.len()).rev().find_map(|length| text.get(..length)?.parse::<f64>().ok()).unwrap_or(0.0)
         }),
         value => value.number(),

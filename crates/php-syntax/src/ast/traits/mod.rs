@@ -7,6 +7,7 @@ use super::super::{ClassConstantDecl, FunctionDecl, PropertyDecl, TraitAdaptatio
 /// A trait declaration containing reusable properties and methods.
 pub struct TraitDecl {
     pub name: String,
+    pub attributes: Vec<super::AttributeDecl>,
     pub traits: Vec<String>,
     pub trait_adaptations: Vec<TraitAdaptation>,
     pub properties: Vec<PropertyDecl>,

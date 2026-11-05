@@ -142,7 +142,7 @@ pub(super) fn array_chunk(args: &[Value]) -> Result<Value, String> {
     require_count("array_chunk", args, 2, 3)?;
     let items = entries(&args[0], "array_chunk")?;
     let size = integer(&args[1]);
-    if size < 1 { return Err("array_chunk(): size must be greater than 0".into()); }
+    if size < 1 { return Err("ValueError:array_chunk(): Argument #2 ($length) must be greater than 0".into()); }
     let preserve = args.get(2).is_some_and(boolean);
     let mut chunks = Vec::new();
     for slice in items.chunks(size as usize) {

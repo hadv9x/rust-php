@@ -22,12 +22,14 @@ pub struct PhpArray {
     next_free_index: Option<i64>,
     /// Array-internal iteration pointer used by `current`, `next`, `prev`, and related builtins.
     pub(crate) internal_pointer: isize,
+    /// True only on the temporary array produced while expanding a Traversable call argument.
+    pub(crate) was_traversable_unpack: bool,
 }
 
 impl PhpArray {
     /// Create an empty ordered array with its append index set to zero.
     pub(crate) fn new() -> Self {
-        Self { entries: Vec::new(), next_free_index: Some(0), internal_pointer: 0 }
+        Self { entries: Vec::new(), next_free_index: Some(0), internal_pointer: 0, was_traversable_unpack: false }
     }
 
     /// Rebuild ordered storage and derive the next append index from integer keys.
@@ -41,7 +43,7 @@ impl PhpArray {
             Some(index) => index.checked_add(1),
             None => Some(0),
         };
-        Self { entries, next_free_index, internal_pointer: 0 }
+        Self { entries, next_free_index, internal_pointer: 0, was_traversable_unpack: false }
     }
 
     /// Insert or replace a key while preserving its original position.

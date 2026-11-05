@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use php_compiler::execute_file_with_globals_and_limits;
-use php_runtime::{ArrayKey, ExecutionLimits, SessionValue, Value};
+use php_compiler::execute_file_with_globals_limits_diagnostics_and_include_path;
+use php_runtime::{ArrayKey, ExecutionLimits, RuntimeDiagnostic, SessionValue, Value};
 use php_db::{ConnectionConfig, DatabaseKind, DatabaseRegistry, PoolOptions, PostgresDriver};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -28,6 +28,11 @@ const DEFAULT_MAX_IN_FLIGHT: usize = 128;
 const ACCEPT_BACKLOG: u32 = 1024;
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 15;
 const DEFAULT_MAX_INPUT_VARS: usize = 1000;
+const DEFAULT_MAX_INPUT_NESTING_LEVEL: usize = 64;
+#[cfg(windows)]
+const PATH_SEPARATOR: char = ';';
+#[cfg(not(windows))]
+const PATH_SEPARATOR: char = ':';
 const MAX_KEEPALIVE_REQUESTS: usize = 100;
 static LOG_LEVEL: OnceLock<u8> = OnceLock::new();
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -69,12 +74,29 @@ struct ServerConfig {
     max_body_bytes: usize,
     max_upload_bytes: usize,
     max_input_vars: usize,
+    max_input_nesting_level: usize,
+    include_path: Vec<PathBuf>,
     execution_limits: ExecutionLimits,
     secure_session_cookies: bool,
+    display_errors: DisplayErrors,
     default_mimetype: String,
     default_charset: String,
     log_level: String,
     database_connections: Vec<ConnectionConfig>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DisplayErrors { On, Off, Stderr }
+
+impl DisplayErrors {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "on" | "yes" | "true" => Ok(Self::On),
+            "0" | "off" | "no" | "false" | "" => Ok(Self::Off),
+            "stderr" => Ok(Self::Stderr),
+            _ => Err("display_errors must be On, Off, or stderr".into()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -118,7 +140,7 @@ enum RequestError {
 }
 
 fn usage() {
-    println!("Usage: php-rust-server [--config FILE] [--root DIR] [--bind ADDRESS] [--max-in-flight N] [--request-timeout-secs N] [--max-body-bytes N] [--max-upload-bytes N] [--max-input-vars N] [--max-execution-steps N] [--max-execution-time-secs N] [--max-output-bytes N]");
+    println!("Usage: php-rust-server [--config FILE] [--root DIR] [--bind ADDRESS] [--max-in-flight N] [--request-timeout-secs N] [--max-body-bytes N] [--max-upload-bytes N] [--max-input-vars N] [--max-input-nesting-level N] [--max-execution-steps N] [--max-execution-time-secs N] [--max-output-bytes N]");
     println!("Defaults: --root public --bind 127.0.0.1:3000 --max-in-flight 128");
     println!("Config file: php-rust.ini (or --config FILE / PHP_RUST_CONFIG)");
     println!("Config precedence: command line > PHP_RUST_* environment > php-rust.ini > defaults");
@@ -177,10 +199,12 @@ fn parse_ini_into(path: &Path, settings: &mut std::collections::HashMap<String, 
             "post_max_size" => ("PHP_RUST_MAX_BODY_BYTES", parse_php_size(&value).ok_or_else(|| format!("{}:{}: invalid post_max_size", path.display(), line_index + 1))?.to_string()),
             "upload_max_filesize" => ("PHP_RUST_MAX_UPLOAD_FILE_BYTES", if value.trim() == "0" { 0 } else { parse_php_size(&value).ok_or_else(|| format!("{}:{}: invalid upload_max_filesize", path.display(), line_index + 1))? }.to_string()),
             "session.cookie_secure" => ("PHP_RUST_COOKIE_SECURE", value.clone()),
+            "display_errors" => ("PHP_RUST_DISPLAY_ERRORS", value.clone()),
             "default_mimetype" => ("PHP_RUST_DEFAULT_MIMETYPE", value.clone()),
             "default_charset" => ("PHP_RUST_DEFAULT_CHARSET", value.clone()),
             "max_input_time" => ("PHP_RUST_REQUEST_TIMEOUT_SECS", parse_php_timeout(&value).ok_or_else(|| format!("{}:{}: invalid max_input_time", path.display(), line_index + 1))?.to_string()),
             "max_input_vars" => ("PHP_RUST_MAX_INPUT_VARS", value.clone()),
+            "max_input_nesting_level" => ("PHP_RUST_MAX_INPUT_NESTING_LEVEL", value.clone()),
             "root" => ("PHP_RUST_ROOT", value.clone()),
             "bind" => ("PHP_RUST_BIND", value.clone()),
             "max_in_flight" => ("PHP_RUST_MAX_IN_FLIGHT", value.clone()),
@@ -356,12 +380,15 @@ fn parse_args() -> Result<ServerConfig, String> {
         max_body_bytes: config_value(&settings, "PHP_RUST_MAX_BODY_BYTES", "PHP_RUST_MAX_BODY_BYTES", MAX_BODY_BYTES)?,
         max_upload_bytes: config_value(&settings, "PHP_RUST_MAX_UPLOAD_FILE_BYTES", "PHP_RUST_MAX_UPLOAD_FILE_BYTES", MAX_BODY_BYTES)?,
         max_input_vars: config_value(&settings, "PHP_RUST_MAX_INPUT_VARS", "PHP_RUST_MAX_INPUT_VARS", DEFAULT_MAX_INPUT_VARS)?,
+        max_input_nesting_level: config_value(&settings, "PHP_RUST_MAX_INPUT_NESTING_LEVEL", "PHP_RUST_MAX_INPUT_NESTING_LEVEL", DEFAULT_MAX_INPUT_NESTING_LEVEL)?,
+        include_path: settings.get("PHP_INI_VALUE:include_path").map(|value| value.split(PATH_SEPARATOR).map(|part| PathBuf::from(if part.is_empty() { "." } else { part })).collect()).unwrap_or_else(|| if cfg!(windows) { vec![PathBuf::from(".")] } else { vec![PathBuf::from("."), PathBuf::from("/usr/share/php")] }),
         execution_limits: ExecutionLimits {
             max_instructions: config_value(&settings, "PHP_RUST_MAX_EXECUTION_STEPS", "PHP_RUST_MAX_EXECUTION_STEPS", ExecutionLimits::default().max_instructions)?,
             max_output_bytes: config_value(&settings, "PHP_RUST_MAX_OUTPUT_BYTES", "PHP_RUST_MAX_OUTPUT_BYTES", ExecutionLimits::default().max_output_bytes)?,
             max_execution_time: (max_execution_time_secs != 0).then(|| Duration::from_secs(max_execution_time_secs)),
         },
         secure_session_cookies: config_bool(&settings, "PHP_RUST_COOKIE_SECURE", false)?,
+        display_errors: DisplayErrors::parse(&env::var("PHP_RUST_DISPLAY_ERRORS").ok().or_else(|| settings.get("PHP_RUST_DISPLAY_ERRORS").cloned()).unwrap_or_else(|| "On".into()))?,
         default_mimetype: config_value(&settings, "PHP_RUST_DEFAULT_MIMETYPE", "PHP_RUST_DEFAULT_MIMETYPE", "text/html".to_string())?,
         default_charset: config_value(&settings, "PHP_RUST_DEFAULT_CHARSET", "PHP_RUST_DEFAULT_CHARSET", "UTF-8".to_string())?,
         log_level: config_value(&settings, "PHP_RUST_LOG", "PHP_RUST_LOG", "info".to_string())?,
@@ -385,6 +412,7 @@ fn parse_args() -> Result<ServerConfig, String> {
             "--max-body-bytes" => config.max_body_bytes = parse_option(&mut args, "--max-body-bytes")?,
             "--max-upload-bytes" => config.max_upload_bytes = parse_option(&mut args, "--max-upload-bytes")?,
             "--max-input-vars" => config.max_input_vars = parse_option(&mut args, "--max-input-vars")?,
+            "--max-input-nesting-level" => config.max_input_nesting_level = parse_option(&mut args, "--max-input-nesting-level")?,
             "--max-execution-steps" => config.execution_limits.max_instructions = parse_option(&mut args, "--max-execution-steps")?,
             "--max-execution-time-secs" => config.execution_limits.max_execution_time = match parse_option::<u64>(&mut args, "--max-execution-time-secs")? { 0 => None, seconds => Some(Duration::from_secs(seconds)) },
             "--max-output-bytes" => config.execution_limits.max_output_bytes = parse_option(&mut args, "--max-output-bytes")?,
@@ -396,6 +424,7 @@ fn parse_args() -> Result<ServerConfig, String> {
     if config.max_body_bytes == 0 || config.max_body_bytes > 64 * 1024 * 1024 { return Err("max body size must be between 1 byte and 64 MiB".into()); }
     if config.max_upload_bytes > 64 * 1024 * 1024 { return Err("max upload file size must be at most 64 MiB".into()); }
     if config.max_input_vars == 0 || config.max_input_vars > 10_000 { return Err("max input variables must be between 1 and 10000".into()); }
+    if config.max_input_nesting_level > 256 { return Err("max input nesting level must be between 0 and 256".into()); }
     if config.default_mimetype.is_empty() || config.default_mimetype.chars().any(|ch| matches!(ch, '\r' | '\n' | ';')) || config.default_charset.chars().any(|ch| matches!(ch, '\r' | '\n' | ';')) {
         return Err("default_mimetype/default_charset contain invalid characters".into());
     }
@@ -427,6 +456,41 @@ fn log_event(level: u8, name: &str, fields: &str) {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let label = match level { 1 => "ERROR", 2 => "WARN", 3 => "INFO", _ => "DEBUG" };
     eprintln!("timestamp={timestamp} level={label} event={name} {fields}");
+}
+
+fn php_diagnostic_log_fields(diagnostic: &RuntimeDiagnostic) -> String {
+    format!("file={:?} line={:?} message={:?}", diagnostic.source_file, diagnostic.source_line, diagnostic.message)
+}
+
+fn render_diagnostic(diagnostic: &RuntimeDiagnostic) -> String {
+    let severity = match diagnostic.level {
+        php_runtime::DiagnosticLevel::Warning => "Warning",
+        php_runtime::DiagnosticLevel::Deprecated => "Deprecated",
+    };
+    match (&diagnostic.source_file, diagnostic.source_line) {
+        (Some(file), Some(line)) => format!("{severity}: {} in {file} on line {line}\n", diagnostic.message),
+        (Some(file), None) => format!("{severity}: {} in {file}\n", diagnostic.message),
+        _ => format!("{severity}: {}\n", diagnostic.message),
+    }
+}
+
+fn render_diagnostics_inline(output: &str, diagnostics: &[RuntimeDiagnostic]) -> String {
+    let mut ordered = diagnostics.iter().enumerate().map(|(order, diagnostic)| {
+        let mut offset = diagnostic.output_offset.min(output.len());
+        while !output.is_char_boundary(offset) { offset -= 1; }
+        (offset, order, render_diagnostic(diagnostic))
+    }).collect::<Vec<_>>();
+    ordered.sort_by_key(|(offset, order, _)| (*offset, *order));
+    let mut rendered = String::with_capacity(output.len() + ordered.iter().map(|(_, _, text)| text.len()).sum::<usize>());
+    let mut cursor = 0;
+    for (offset, _, diagnostic) in ordered {
+        let offset = offset.max(cursor);
+        rendered.push_str(&output[cursor..offset]);
+        rendered.push_str(&diagnostic);
+        cursor = offset;
+    }
+    rendered.push_str(&output[cursor..]);
+    rendered
 }
 
 async fn handle_connection(stream: TcpStream, config: Arc<ServerConfig>, sessions: SessionStore, permit: OwnedSemaphorePermit) {
@@ -468,8 +532,11 @@ async fn handle_connection(stream: TcpStream, config: Arc<ServerConfig>, session
         let root = config.root.clone();
         let limits = config.execution_limits;
         let secure_session_cookies = config.secure_session_cookies;
+        let display_errors = config.display_errors;
         let max_upload_bytes = config.max_upload_bytes;
         let max_input_vars = config.max_input_vars;
+        let max_input_nesting_level = config.max_input_nesting_level;
+        let include_path = config.include_path.clone();
         let default_content_type = format!("{}; charset={}", config.default_mimetype, config.default_charset);
         let path = request.path;
         let query = request.query;
@@ -481,7 +548,7 @@ async fn handle_connection(stream: TcpStream, config: Arc<ServerConfig>, session
         let body = request.body;
         let sessions = Arc::clone(&sessions);
         let response = tokio::task::spawn_blocking(move || {
-            execute_request_with_session_and_limits(&root, &path, &query, &method, &protocol, &content_type, &host, &request_headers, &body, limits, sessions, secure_session_cookies, max_upload_bytes, max_input_vars)
+            execute_request_with_session_and_limits_and_include_path(&root, &path, &query, &method, &protocol, &content_type, &host, &request_headers, &body, limits, sessions, secure_session_cookies, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &include_path)
         }).await;
         match response {
             Ok(Ok(mut response)) => {
@@ -788,6 +855,7 @@ fn is_http_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
 }
 
+#[cfg(test)]
 fn execute_request_with_session_and_limits(
     root: &Path,
     url_path: &str,
@@ -801,12 +869,38 @@ fn execute_request_with_session_and_limits(
     limits: ExecutionLimits,
     store: SessionStore,
     secure_session_cookie: bool,
+    display_errors: DisplayErrors,
     max_upload_bytes: usize,
     max_input_vars: usize,
+    max_input_nesting_level: usize,
 ) -> Result<WebResponse, RequestError> {
-    execute_request_with_context(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, Some(store), secure_session_cookie, max_upload_bytes, max_input_vars)
+    execute_request_with_session_and_limits_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &[])
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_request_with_session_and_limits_and_include_path(
+    root: &Path,
+    url_path: &str,
+    query: &str,
+    method: &str,
+    protocol: &str,
+    content_type: &str,
+    host: &str,
+    request_headers: &[(String, String)],
+    body: &[u8],
+    limits: ExecutionLimits,
+    store: SessionStore,
+    secure_session_cookie: bool,
+    display_errors: DisplayErrors,
+    max_upload_bytes: usize,
+    max_input_vars: usize,
+    max_input_nesting_level: usize,
+    include_path: &[PathBuf],
+) -> Result<WebResponse, RequestError> {
+    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, Some(store), secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, include_path)
+}
+
+#[cfg(test)]
 fn execute_request_with_context(
     root: &Path,
     url_path: &str,
@@ -820,8 +914,33 @@ fn execute_request_with_context(
     limits: ExecutionLimits,
     session_store: Option<SessionStore>,
     secure_session_cookie: bool,
+    display_errors: DisplayErrors,
     max_upload_bytes: usize,
     max_input_vars: usize,
+    max_input_nesting_level: usize,
+) -> Result<WebResponse, RequestError> {
+    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, session_store, secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &[])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_request_with_context_and_include_path(
+    root: &Path,
+    url_path: &str,
+    query: &str,
+    method: &str,
+    protocol: &str,
+    content_type: &str,
+    host: &str,
+    request_headers: &[(String, String)],
+    body: &[u8],
+    limits: ExecutionLimits,
+    session_store: Option<SessionStore>,
+    secure_session_cookie: bool,
+    display_errors: DisplayErrors,
+    max_upload_bytes: usize,
+    max_input_vars: usize,
+    max_input_nesting_level: usize,
+    include_path: &[PathBuf],
 ) -> Result<WebResponse, RequestError> {
     let decoded_path = decode_url_path(url_path).ok_or(RequestError::BadPath)?;
     let trimmed = decoded_path.strip_prefix('/').ok_or(RequestError::BadPath)?;
@@ -853,8 +972,9 @@ fn execute_request_with_context(
         return Err(RequestError::PayloadTooLarge);
     }
     let session = session_store.map(|store| load_session_context(request_headers, &store).map(|session| (store, session))).transpose()?;
-    let get = parse_urlencoded(query, max_input_vars);
-    let (post, files, upload_paths) = parse_post_data(content_type, body, max_upload_bytes, max_input_vars)?;
+    let mut input_diagnostics = Vec::new();
+    let get = parse_urlencoded(query, max_input_vars, max_input_nesting_level, &mut input_diagnostics);
+    let (post, files, upload_paths) = parse_post_data(content_type, body, max_upload_bytes, max_input_vars, max_input_nesting_level, &mut input_diagnostics)?;
     let cookies = request_headers.iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("cookie"))
         .map(|(_, value)| parse_cookies(value))
@@ -906,9 +1026,20 @@ fn execute_request_with_context(
     let include_root = root.parent().unwrap_or(root);
     globals.insert("\0filesystem_root".into(), Value::String(root.display().to_string()));
     globals.insert("\0sapi_name".into(), Value::String("cli-server".into()));
-    let execution = execute_file_with_globals_and_limits(&file, include_root, globals, limits);
+    for diagnostic in &mut input_diagnostics {
+        diagnostic.source_file = Some(file.display().to_string());
+    }
+    for diagnostic in &input_diagnostics {
+        log_event(2, "php_input_warning", &php_diagnostic_log_fields(diagnostic));
+    }
+    let execution = execute_file_with_globals_limits_diagnostics_and_include_path(&file, include_root, globals, limits, input_diagnostics, include_path);
     for path in upload_paths { let _ = std::fs::remove_file(path); }
     let mut execution = execution.map_err(RequestError::Execution)?;
+    if display_errors != DisplayErrors::Off {
+        let rendered = execution.diagnostics.iter().map(render_diagnostic).collect::<String>();
+        if display_errors == DisplayErrors::On { execution.output = render_diagnostics_inline(&execution.output, &execution.diagnostics); }
+        else if !rendered.is_empty() { eprint!("{rendered}"); }
+    }
     if execution.session_started {
         if let Some((store, session)) = session {
             let session_id = execution.session_id.clone();
@@ -933,9 +1064,10 @@ fn set_entry(entries: &mut Vec<(String, Value)>, key: String, value: Value) {
     else { entries.push((key, value)); }
 }
 
-fn insert_file_param(files: &mut Vec<(String, Value)>, name: &str, file: Value) {
+fn insert_file_param(files: &mut Vec<(String, Value)>, name: &str, file: Value, max_nesting_level: usize) -> bool {
     let (base, rest) = name.split_once('[').unwrap_or((name, ""));
-    if rest.is_empty() { set_entry(files, base.into(), file); return; }
+    if base.is_empty() { return false; }
+    if rest.is_empty() { set_entry(files, base.into(), file); return false; }
     let mut keys = Vec::new();
     let mut remaining = rest;
     while let Some(end) = remaining.find(']') {
@@ -944,11 +1076,12 @@ fn insert_file_param(files: &mut Vec<(String, Value)>, name: &str, file: Value) 
         remaining = &remaining[end + 1..];
         if let Some(next) = remaining.strip_prefix('[') { remaining = next; } else { break; }
     }
-    if !remaining.is_empty() || keys.is_empty() || keys.len() > 32 { return; }
+    if !remaining.is_empty() || keys.is_empty() { return false; }
+    if keys.len() > max_nesting_level { return true; }
     let current = files.iter().find(|(key, _)| key == base).map(|(_, value)| value.clone())
         .unwrap_or_else(|| Value::from_array_entries(Vec::new()));
     let mut group = match current { Value::Array(array) => array.to_vec(), _ => Vec::new() };
-    let Value::Array(file_fields) = file else { return; };
+    let Value::Array(file_fields) = file else { return false; };
     for (attribute, value) in file_fields.iter().cloned() {
         let ArrayKey::String(attribute) = attribute else { continue; };
         let key = ArrayKey::String(attribute);
@@ -958,6 +1091,7 @@ fn insert_file_param(files: &mut Vec<(String, Value)>, name: &str, file: Value) 
         else { group.push((key, updated)); }
     }
     set_entry(files, base.into(), Value::from_array_entries(group));
+    false
 }
 
 struct SessionContext {
@@ -1075,9 +1209,9 @@ fn commit_session(
     Ok(())
 }
 
-fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max_input_vars: usize) -> Result<(Vec<(String, Value)>, Vec<(String, Value)>, Vec<PathBuf>), RequestError> {
+fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max_input_vars: usize, max_nesting_level: usize, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<(Vec<(String, Value)>, Vec<(String, Value)>, Vec<PathBuf>), RequestError> {
     if content_type.to_ascii_lowercase().starts_with("application/x-www-form-urlencoded") {
-        return Ok((parse_urlencoded(&String::from_utf8_lossy(body), max_input_vars), Vec::new(), Vec::new()));
+        return Ok((parse_urlencoded(&String::from_utf8_lossy(body), max_input_vars, max_nesting_level, diagnostics), Vec::new(), Vec::new()));
     }
     if !content_type.to_ascii_lowercase().starts_with("multipart/form-data") {
         return Ok((Vec::new(), Vec::new(), Vec::new()));
@@ -1096,6 +1230,7 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
     let mut post = Vec::new();
     let mut files = Vec::new();
     let mut upload_guard = UploadTempGuard(Vec::new());
+    let mut max_form_upload_size = 0i64;
     if body.get(cursor..cursor + 2) == Some(b"--") { return Ok((post, files, Vec::new())); }
     if body.get(cursor..cursor + 2) != Some(b"\r\n") { return Err(RequestError::InvalidRequest("invalid multipart boundary terminator".into())); }
     cursor += 2;
@@ -1127,6 +1262,8 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
                 (String::new(), String::new(), 4.0, 0.0) // UPLOAD_ERR_NO_FILE
             } else if part_data.len() > max_upload_bytes {
                 (String::new(), String::new(), 1.0, 0.0) // UPLOAD_ERR_INI_SIZE
+            } else if max_form_upload_size != 0 && part_data.len() as i128 > max_form_upload_size as i128 {
+                (String::new(), String::new(), 2.0, 0.0) // UPLOAD_ERR_FORM_SIZE
             } else {
                 let path = write_upload_temp(part_data)?;
                 upload_guard.0.push(path.clone());
@@ -1139,9 +1276,17 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
                 (ArrayKey::String("error".into()), Value::Number(error)),
                 (ArrayKey::String("size".into()), Value::Number(size)),
             ]);
-            insert_file_param(&mut files, &normalize_param_name(&field_name), entry);
+            if insert_file_param(&mut files, &normalize_param_name(&field_name), entry, max_nesting_level) {
+                diagnostics.push(input_nesting_diagnostic(max_nesting_level));
+            }
         } else {
-            insert_param(&mut post, &normalize_param_name(&field_name), Value::String(String::from_utf8_lossy(part_data).into_owned()));
+            let value = String::from_utf8_lossy(part_data).into_owned();
+            if field_name.eq_ignore_ascii_case("MAX_FILE_SIZE") {
+                max_form_upload_size = parse_form_upload_size(&value);
+            }
+            if insert_param(&mut post, &normalize_param_name(&field_name), Value::String(value), max_nesting_level) {
+                diagnostics.push(input_nesting_diagnostic(max_nesting_level));
+            }
         }
         cursor = next_boundary + delimiter.len();
         if body.get(cursor..cursor + 2) == Some(b"--") { break; }
@@ -1149,6 +1294,31 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
         cursor += 2;
     }
     Ok((post, files, std::mem::take(&mut upload_guard.0)))
+}
+
+fn parse_form_upload_size(value: &str) -> i64 {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) { index += 1; }
+    let negative = match bytes.get(index) {
+        Some(b'-') => { index += 1; true }
+        Some(b'+') => { index += 1; false }
+        _ => false,
+    };
+    let limit = if negative { i64::MAX as u128 + 1 } else { i64::MAX as u128 };
+    let mut magnitude = 0u128;
+    let mut has_digits = false;
+    while let Some(byte @ b'0'..=b'9') = bytes.get(index).copied() {
+        has_digits = true;
+        magnitude = magnitude.saturating_mul(10).saturating_add((byte - b'0') as u128).min(limit);
+        index += 1;
+    }
+    if !has_digits { return 0; }
+    if negative {
+        if magnitude == i64::MAX as u128 + 1 { i64::MIN } else { -(magnitude as i64) }
+    } else {
+        magnitude as i64
+    }
 }
 
 fn parse_disposition(value: &str) -> Result<(String, Option<String>), RequestError> {
@@ -1197,43 +1367,66 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
 
-fn parse_urlencoded(input: &str, max_variables: usize) -> Vec<(String, Value)> {
+fn parse_urlencoded(input: &str, max_variables: usize, max_nesting_level: usize, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Vec<(String, Value)> {
     input.split('&').take(max_variables).filter(|part| !part.is_empty()).filter_map(|part| {
         let (key, value) = part.split_once('=').unwrap_or((part, ""));
         Some((url_decode(key)?, Value::String(url_decode(value)?)))
     }).fold(Vec::new(), |mut entries, (key, value)| {
-        insert_param(&mut entries, &normalize_param_name(&key), value);
+        if insert_param(&mut entries, &normalize_param_name(&key), value, max_nesting_level) {
+            diagnostics.push(input_nesting_diagnostic(max_nesting_level));
+        }
         entries
     })
 }
 
+fn input_nesting_diagnostic(max_nesting_level: usize) -> RuntimeDiagnostic {
+    RuntimeDiagnostic {
+        level: php_runtime::DiagnosticLevel::Warning,
+        message: format!("Input variable nesting level exceeded {max_nesting_level}. To increase the limit change max_input_nesting_level in php.ini."),
+        source_file: None,
+        source_line: None,
+        output_offset: 0,
+    }
+}
+
 fn normalize_param_name(name: &str) -> String {
+    let name = name.trim_start_matches(' ');
+    if let Some(open) = name.find('[') {
+        if !name[open + 1..].contains(']') {
+            return name.chars().map(|character| match character {
+                '.' | ' ' | '[' => '_',
+                _ => character,
+            }).collect();
+        }
+    }
     let base_end = name.find('[').unwrap_or(name.len());
     let base = name[..base_end].replace('.', "_").replace(' ', "_");
     format!("{base}{}", &name[base_end..])
 }
 
-fn insert_param(entries: &mut Vec<(String, Value)>, name: &str, value: Value) {
-    if name.len() > 1024 { return; }
+fn insert_param(entries: &mut Vec<(String, Value)>, name: &str, value: Value, max_nesting_level: usize) -> bool {
+    if name.len() > 1024 || name.is_empty() { return false; }
     let (base, rest) = name.split_once('[').unwrap_or((name, ""));
+    if base.is_empty() { return false; }
     if rest.is_empty() {
         set_entry(entries, base.into(), value);
-        return;
+        return false;
     }
     let mut keys = vec![Some(base.to_string())];
     let mut remaining = rest;
     while let Some(end) = remaining.find(']') {
         let key = &remaining[..end];
         keys.push(if key.is_empty() { None } else { Some(key.to_string()) });
+        if keys.len() > max_nesting_level + 1 { return true; }
         remaining = &remaining[end + 1..];
         if let Some(next) = remaining.strip_prefix('[') { remaining = next; } else { break; }
-        if keys.len() > 33 { return; }
     }
-    if !remaining.is_empty() || keys.len() < 2 { return; }
+    if !remaining.is_empty() || keys.len() < 2 { return false; }
     let top = keys.remove(0).unwrap();
     let current = entries.iter().find(|(key, _)| key == &top).map(|(_, value)| value.clone()).unwrap_or(Value::Null);
     let updated = assign_nested(current, &keys, value);
     set_entry(entries, top, updated);
+    false
 }
 
 fn assign_nested(current: Value, keys: &[Option<String>], value: Value) -> Value {
@@ -1364,8 +1557,8 @@ async fn run_server() {
     let sessions: SessionStore = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let config = Arc::new(config);
     log_event(3, "server_started", &format!(
-        "bind={} root={:?} max_in_flight={} request_timeout_secs={} max_body_bytes={} max_upload_bytes={} max_input_vars={} max_execution_steps={} max_execution_time_secs={:?} max_output_bytes={} secure_session_cookies={} databases={:?}",
-        bind, config.root, config.max_in_flight, config.request_timeout.as_secs(), config.max_body_bytes, config.max_upload_bytes, config.max_input_vars,
+        "bind={} root={:?} max_in_flight={} request_timeout_secs={} max_body_bytes={} max_upload_bytes={} max_input_vars={} max_input_nesting_level={} max_execution_steps={} max_execution_time_secs={:?} max_output_bytes={} secure_session_cookies={} databases={:?}",
+        bind, config.root, config.max_in_flight, config.request_timeout.as_secs(), config.max_body_bytes, config.max_upload_bytes, config.max_input_vars, config.max_input_nesting_level,
         config.execution_limits.max_instructions, config.execution_limits.max_execution_time.map(|duration| duration.as_secs()), config.execution_limits.max_output_bytes, config.secure_session_cookies, database_registry.names(),
     ));
     let mut tasks = JoinSet::new();

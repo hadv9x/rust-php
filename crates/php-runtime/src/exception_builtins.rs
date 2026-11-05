@@ -9,7 +9,7 @@ const EXCEPTION_CLASSES: &[&str] = &[
     "arithmeticerror", "divisionbyzeroerror", "assertionerror", "unhandledmatcherror", "valueerror", "jsonexception",
     "logicexception", "badfunctioncallexception", "badmethodcallexception", "domainexception",
     "invalidargumentexception", "lengthexception", "outofrangeexception", "runtimeexception",
-    "outofboundsexception", "overflowexception", "rangeexception", "underflowexception", "unexpectedvalueexception",
+    "outofboundsexception", "overflowexception", "rangeexception", "underflowexception", "unexpectedvalueexception", "reflectionexception",
 ];
 
 pub(crate) fn is_class(name: &str) -> bool {
@@ -42,6 +42,7 @@ pub(crate) fn canonical_name(name: &str) -> Option<&'static str> {
             "outofboundsexception" => "OutOfBoundsException", "overflowexception" => "OverflowException",
             "rangeexception" => "RangeException", "underflowexception" => "UnderflowException",
             "unexpectedvalueexception" => "UnexpectedValueException",
+            "reflectionexception" => "ReflectionException",
             _ => unreachable!(),
         })
 }
@@ -58,6 +59,7 @@ pub(crate) fn parent_class(name: &str) -> Option<&'static str> {
         "badfunctioncallexception" | "domainexception" | "invalidargumentexception" | "lengthexception" | "outofrangeexception" => Some("LogicException"),
         "badmethodcallexception" => Some("BadFunctionCallException"),
         "runtimeexception" => Some("Exception"),
+        "reflectionexception" => Some("Exception"),
         "outofboundsexception" | "overflowexception" | "rangeexception" | "underflowexception" | "unexpectedvalueexception" => Some("RuntimeException"),
         _ => None,
     }
@@ -185,9 +187,47 @@ pub(crate) fn call_method(receiver: &Value, method: &str, arguments: &[Value]) -
             lines.push_str(&format!("#{} {{main}}", data.trace.len()));
             Ok(Value::String(lines))
         }
-        "__tostring" => Ok(Value::String(format!("{}: {}", class_name, data.message))),
+        "__tostring" => Ok(Value::String(stringify_exception(receiver, &mut HashSet::new())?)),
         _ => Err(format!("Call to undefined method {}::{method}()", class_name)),
     }
+}
+
+fn stringify_exception(receiver: &Value, seen: &mut HashSet<usize>) -> Result<String, String> {
+    let Value::Object(object) = receiver else { return Err("Exception::__toString() must return a string".into()); };
+    let identity = Rc::as_ptr(object) as usize;
+    if !seen.insert(identity) { return Ok(String::new()); }
+    let borrowed = object.borrow();
+    let class_name = borrowed.class_name.clone();
+    let Some(data) = borrowed.exception.clone() else {
+        return Err(format!("Call to undefined method {class_name}::__toString()"));
+    };
+    drop(borrowed);
+
+    let mut trace = data.trace.iter().enumerate().map(|(index, frame)| {
+        let location = if frame.file.is_empty() { format!("Command line code({}):", frame.line) }
+            else { format!("{}({}):", frame.file, frame.line) };
+        let callable = match (&frame.class, &frame.call_type) {
+            (Some(class), Some(call_type)) => format!("{class}{call_type}{}()", frame.function),
+            _ => format!("{}()", frame.function),
+        };
+        format!("#{index} {location} {callable}\n")
+    }).collect::<String>();
+    trace.push_str(&format!("#{} {{main}}\n", data.trace.len()));
+    let head = if data.message.is_empty() {
+        format!("{class_name} in {}:{}\nStack trace:\n{trace}", data.file, data.line.unwrap_or(0))
+    } else {
+        format!("{class_name}: {} in {}:{}\nStack trace:\n{trace}", data.message, data.file, data.line.unwrap_or(0))
+    };
+    let previous = match data.previous {
+        Value::Object(previous) if previous.borrow().exception.is_some() => {
+            let previous_value = Value::Object(previous);
+            let previous_text = stringify_exception(&previous_value, seen)?;
+            if previous_text.is_empty() { String::new() } else { format!("{previous_text}\n\nNext {head}") }
+        }
+        _ => head,
+    };
+    seen.remove(&identity);
+    Ok(previous)
 }
 
 pub(crate) fn stringify(receiver: &Value) -> Result<String, String> {

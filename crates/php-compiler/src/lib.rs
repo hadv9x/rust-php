@@ -2,27 +2,59 @@
 
 use php_runtime::BytecodeProgram;
 use php_syntax::{BinaryOp, Expr, IncludeKind, Program, Stmt};
-use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}, time::SystemTime};
+use std::{cell::RefCell, collections::{hash_map::DefaultHasher, HashMap, HashSet}, fs, hash::{Hash, Hasher}, io::Read, path::{Path, PathBuf}, time::SystemTime};
 
 mod codegen;
 mod composer;
 
 thread_local! {
-    static FILE_CACHE: RefCell<HashMap<(PathBuf, Option<PathBuf>), CachedProgram>> = RefCell::new(HashMap::new());
+    static FILE_CACHE: RefCell<HashMap<(PathBuf, Option<PathBuf>, Vec<PathBuf>), CachedProgram>> = RefCell::new(HashMap::new());
+}
+
+struct SourceSignature {
+    path: PathBuf,
+    length: u64,
+    modified: Option<SystemTime>,
+    fingerprint: u64,
 }
 
 struct CachedProgram {
-    sources: Vec<(PathBuf, u64, Option<SystemTime>)>,
+    sources: Vec<SourceSignature>,
     program: BytecodeProgram,
 }
 
 impl CachedProgram {
     fn is_current(&self) -> bool {
-        self.sources.iter().all(|(path, length, modified)| {
-            modified.is_some()
-                && fs::metadata(path).is_ok_and(|metadata| metadata.len() == *length && metadata.modified().ok() == *modified)
-        })
+        self.sources.iter().all(|source| source_signature(&source.path).is_ok_and(|current| {
+            current.length == source.length && current.modified == source.modified && current.fingerprint == source.fingerprint
+        }))
     }
+}
+
+fn source_signature(path: &Path) -> Result<SourceSignature, String> {
+    let metadata = fs::metadata(path).map_err(|error| format!("cannot inspect PHP dependency {}: {error}", path.display()))?;
+    let mut hasher = DefaultHasher::new();
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(path).map_err(|error| format!("cannot scan PHP dependency directory {}: {error}", path.display()))?
+            .map(|entry| {
+                let entry = entry.map_err(|error| format!("cannot read PHP dependency entry in {}: {error}", path.display()))?;
+                let file_type = entry.file_type().map_err(|error| format!("cannot inspect PHP dependency {}: {error}", entry.path().display()))?;
+                Ok((entry.file_name(), file_type.is_file(), file_type.is_dir(), file_type.is_symlink()))
+            }).collect::<Result<Vec<_>, String>>()?;
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries.hash(&mut hasher);
+    } else if metadata.is_file() {
+        let mut file = fs::File::open(path).map_err(|error| format!("cannot read PHP dependency {}: {error}", path.display()))?;
+        let mut buffer = [0u8; 16 * 1024];
+        loop {
+            let count = file.read(&mut buffer).map_err(|error| format!("cannot fingerprint PHP dependency {}: {error}", path.display()))?;
+            if count == 0 { break; }
+            hasher.write(&buffer[..count]);
+        }
+    } else {
+        return Err(format!("PHP dependency is neither a file nor a directory: {}", path.display()));
+    }
+    Ok(SourceSignature { path: path.to_path_buf(), length: metadata.len(), modified: metadata.modified().ok(), fingerprint: hasher.finish() })
 }
 
 /// Compile PHP source into the internal bytecode executed by php-runtime.
@@ -49,45 +81,102 @@ pub fn execute_file_with_globals_and_limits(
     globals: std::collections::HashMap<String, php_runtime::Value>,
     limits: php_runtime::ExecutionLimits,
 ) -> Result<php_runtime::ExecutionResult, String> {
+    execute_file_with_globals_limits_and_diagnostics(path, allowed_root, globals, limits, Vec::new())
+}
+
+/// Execute a cached file with diagnostics raised while preparing request globals.
+pub fn execute_file_with_globals_limits_and_diagnostics(
+    path: impl AsRef<Path>,
+    allowed_root: impl AsRef<Path>,
+    globals: std::collections::HashMap<String, php_runtime::Value>,
+    limits: php_runtime::ExecutionLimits,
+    initial_diagnostics: Vec<php_runtime::RuntimeDiagnostic>,
+) -> Result<php_runtime::ExecutionResult, String> {
+    execute_file_with_globals_limits_diagnostics_and_include_path(path, allowed_root, globals, limits, initial_diagnostics, &[])
+}
+
+/// Execute a cached file while resolving statically known includes through PHP's configured include path.
+pub fn execute_file_with_globals_limits_diagnostics_and_include_path(
+    path: impl AsRef<Path>,
+    allowed_root: impl AsRef<Path>,
+    globals: std::collections::HashMap<String, php_runtime::Value>,
+    limits: php_runtime::ExecutionLimits,
+    initial_diagnostics: Vec<php_runtime::RuntimeDiagnostic>,
+    include_path: &[PathBuf],
+) -> Result<php_runtime::ExecutionResult, String> {
     let entry = path.as_ref().canonicalize().map_err(|error| format!("cannot resolve PHP file {}: {error}", path.as_ref().display()))?;
     let root = allowed_root.as_ref().canonicalize().map_err(|error| format!("cannot resolve PHP source root {}: {error}", allowed_root.as_ref().display()))?;
     if !entry.starts_with(&root) { return Err("PHP entry file escapes the configured source root".into()); }
     FILE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        let key = (entry.clone(), Some(root.clone()));
+        let key = (entry.clone(), Some(root.clone()), include_path.to_vec());
         if cache.get(&key).is_none_or(|cached| !cached.is_current()) {
-            let (program, dependencies) = compile_file_with_root_and_dependencies(&entry, Some(root))?;
-            let sources = dependencies.into_iter().map(|path| {
-                let metadata = fs::metadata(&path).map_err(|error| format!("cannot inspect PHP source {}: {error}", path.display()))?;
-                Ok((path, metadata.len(), metadata.modified().ok()))
-            }).collect::<Result<Vec<_>, String>>()?;
+            let (program, dependencies) = compile_file_with_root_and_dependencies(&entry, Some(root), include_path)?;
+            let sources = dependencies.into_iter().map(|path| source_signature(&path)).collect::<Result<Vec<_>, String>>()?;
             cache.insert(key.clone(), CachedProgram { sources, program });
         }
         if cache.len() > 64 {
             if let Some(oldest) = cache.keys().next().cloned() { cache.remove(&oldest); }
         }
-        cache.get(&key).expect("compiled file is cached").program.execute_with_globals_and_limits(globals, limits)
+        let mut globals = globals;
+        if !include_path.is_empty() {
+            globals.insert("\0php_include_path".into(), php_runtime::Value::String(include_path.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>().join(if cfg!(windows) { ";" } else { ":" })));
+        }
+        cache.get(&key).expect("compiled file is cached").program.execute_with_globals_limits_and_diagnostics(globals, limits, initial_diagnostics)
     })
 }
 
 fn compile_file_with_root(path: &Path, allowed_root: Option<PathBuf>) -> Result<BytecodeProgram, String> {
-    compile_file_with_root_and_dependencies(path, allowed_root).map(|(program, _)| program)
+    compile_file_with_root_and_dependencies(path, allowed_root, &[]).map(|(program, _)| program)
 }
 
-fn compile_file_with_root_and_dependencies(path: &Path, allowed_root: Option<PathBuf>) -> Result<(BytecodeProgram, Vec<PathBuf>), String> {
+fn compile_file_with_root_and_dependencies(path: &Path, allowed_root: Option<PathBuf>, include_path: &[PathBuf]) -> Result<(BytecodeProgram, Vec<PathBuf>), String> {
     let entry = path.canonicalize().map_err(|error| format!("cannot resolve PHP file {}: {error}", path.display()))?;
     if allowed_root.as_ref().is_some_and(|root| !entry.starts_with(root)) { return Err("PHP entry file escapes the configured source root".into()); }
-    let mut state = IncludeState { entry: entry.clone(), allowed_root, once: HashSet::from([entry.clone()]), dependencies: HashSet::from([entry.clone()]), active: vec![entry.clone()], composer_loaded: HashSet::new(), composer_files_loaded: HashSet::new(), static_paths: HashMap::new(), strict_types_by_file: HashMap::new() };
+    let mut state = IncludeState { entry: entry.clone(), allowed_root: allowed_root.clone(), include_path: include_path.to_vec(), once: HashSet::from([entry.clone()]), dependencies: HashSet::from([entry.clone()]), active: vec![entry.clone()], composer_loaded: HashSet::new(), composer_files_loaded: HashSet::new(), static_paths: HashMap::new(), strict_types_by_file: HashMap::new(), next_anonymous_class_id: 0 };
+    for directory in include_path {
+        let mut tracked = directory.as_path();
+        while !tracked.is_dir() {
+            let Some(parent) = tracked.parent() else { break; };
+            tracked = parent;
+        }
+        if tracked.is_dir() {
+            if let Ok(canonical) = tracked.canonicalize() { state.dependencies.insert(canonical); }
+        }
+    }
     let mut combined = Program { strict_types: false, statements: Vec::new(), functions: Vec::new(), classes: Vec::new(), interfaces: Vec::new(), traits: Vec::new(), constants: Vec::new() };
     combined.statements = append_file(&entry, &mut combined, &mut state)?;
     let mut bytecode = codegen::compile(&combined)?;
     bytecode.set_source_file(entry.to_string_lossy().into_owned());
+    let loader_root = allowed_root.clone();
+    bytecode.set_include_loader(std::rc::Rc::new(move |requested, including_file, include_path| {
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        let configured = include_path.split(separator).map(|part| PathBuf::from(if part.is_empty() { "." } else { part })).collect::<Vec<_>>();
+        let requested = PathBuf::from(requested);
+        let mut candidates = Vec::new();
+        if requested.is_absolute() {
+            candidates.push(requested.clone());
+        } else {
+            candidates.extend(configured.iter().map(|directory| directory.join(&requested)));
+            if let Some(parent) = Path::new(including_file).parent() { candidates.push(parent.join(&requested)); }
+            candidates.push(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("." )).join(&requested));
+        }
+        let resolved = candidates.into_iter().find(|candidate| candidate.is_file())
+            .ok_or_else(|| format!("No such file or directory"))?.canonicalize()
+            .map_err(|error| error.to_string())?;
+        if loader_root.as_ref().is_some_and(|root| !resolved.starts_with(root)) {
+            return Err("included file escapes the configured source root".into());
+        }
+        let (program, _) = compile_file_with_root_and_dependencies(&resolved, loader_root.clone(), &configured)?;
+        Ok(program)
+    }));
     Ok((bytecode, state.dependencies.into_iter().collect()))
 }
 
 struct IncludeState {
     entry: PathBuf,
     allowed_root: Option<PathBuf>,
+    include_path: Vec<PathBuf>,
     once: HashSet<PathBuf>,
     dependencies: HashSet<PathBuf>,
     active: Vec<PathBuf>,
@@ -95,6 +184,7 @@ struct IncludeState {
     composer_files_loaded: HashSet<PathBuf>,
     static_paths: HashMap<String, PathBuf>,
     strict_types_by_file: HashMap<PathBuf, bool>,
+    next_anonymous_class_id: usize,
 }
 
 fn file_strict_mode(path: &Path, state: &IncludeState, combined: &Program) -> bool {
@@ -116,36 +206,65 @@ fn mark_property_hook_modes(properties: &mut [php_syntax::PropertyDecl], path: &
 fn append_file(path: &Path, combined: &mut Program, state: &mut IncludeState) -> Result<Vec<Stmt>, String> {
     state.dependencies.insert(path.to_path_buf());
     let source = fs::read_to_string(path).map_err(|error| format!("cannot read included PHP file {}: {error}", path.display()))?;
-    let mut program = php_syntax::parse(&source).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut program = php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id).map_err(|error| format!("{}: {error}", path.display()))?;
+    state.next_anonymous_class_id += program.classes.iter().filter(|class| class.anonymous_source.is_some()).count();
     if path == state.entry { combined.strict_types = program.strict_types; }
     let file_strict_types = program.strict_types;
     state.strict_types_by_file.insert(path.to_path_buf(), file_strict_types);
     for constant in &mut program.constants { resolve_magic_constants(&mut constant.value, path); }
     for function in &mut program.functions { resolve_function_magic_constants(function, path); }
     for class in &mut program.classes {
-        for constant in &mut class.constants { resolve_magic_constants(&mut constant.value, path); }
+        if let Some((source_file, _)) = &mut class.anonymous_source {
+            *source_file = Some(path.to_string_lossy().into_owned());
+        }
+        for constant in &mut class.constants {
+            resolve_magic_constants(&mut constant.value, path);
+            for attribute in &mut constant.attributes {
+                for argument in &mut attribute.arguments {
+                    match argument { Expr::NamedArgument(_, value) => resolve_magic_constants(value, path), value => resolve_magic_constants(value, path) }
+                }
+            }
+        }
         for property in &mut class.properties { if let Some(value) = &mut property.default { resolve_magic_constants(value, path); } }
         for method in &mut class.methods { resolve_function_magic_constants(method, path); }
     }
     for interface in &mut program.interfaces {
-        for constant in &mut interface.constants { resolve_magic_constants(&mut constant.value, path); }
+        for constant in &mut interface.constants {
+            resolve_magic_constants(&mut constant.value, path);
+            for attribute in &mut constant.attributes {
+                for argument in &mut attribute.arguments {
+                    match argument { Expr::NamedArgument(_, value) => resolve_magic_constants(value, path), value => resolve_magic_constants(value, path) }
+                }
+            }
+        }
         for method in &mut interface.methods { resolve_function_magic_constants(method, path); }
     }
     for trait_decl in &mut program.traits {
-        for constant in &mut trait_decl.constants { resolve_magic_constants(&mut constant.value, path); }
+        for constant in &mut trait_decl.constants {
+            resolve_magic_constants(&mut constant.value, path);
+            for attribute in &mut constant.attributes {
+                for argument in &mut attribute.arguments {
+                    match argument { Expr::NamedArgument(_, value) => resolve_magic_constants(value, path), value => resolve_magic_constants(value, path) }
+                }
+            }
+        }
         for property in &mut trait_decl.properties { if let Some(value) = &mut property.default { resolve_magic_constants(value, path); } }
         for method in &mut trait_decl.methods { resolve_function_magic_constants(method, path); }
     }
     let has_return = path != state.entry && has_top_level_return(&program.statements);
     for mut function in program.functions.drain(..) {
+        let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
         expand_statements(&mut function.body, path, combined, state)?;
+        state.static_paths = enclosing_paths;
         function.body = vec![Stmt::SourceFile(path.to_string_lossy().into_owned(), file_strict_types, std::mem::take(&mut function.body))];
         combined.functions.push(function);
     }
     for mut class in program.classes.drain(..) {
         if skip_polyfill_builtin_class(path, &class.name) { continue; }
         for method in &mut class.methods {
+            let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
             expand_statements(&mut method.body, path, combined, state)?;
+            state.static_paths = enclosing_paths;
             method.body = vec![Stmt::SourceFile(path.to_string_lossy().into_owned(), file_strict_types, std::mem::take(&mut method.body))];
         }
         mark_property_hook_modes(&mut class.properties, path, file_strict_types);
@@ -163,7 +282,9 @@ fn append_file(path: &Path, combined: &mut Program, state: &mut IncludeState) ->
     combined.interfaces.append(&mut program.interfaces);
     for mut trait_decl in program.traits.drain(..) {
         for method in &mut trait_decl.methods {
+            let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
             expand_statements(&mut method.body, path, combined, state)?;
+            state.static_paths = enclosing_paths;
             method.body = vec![Stmt::SourceFile(path.to_string_lossy().into_owned(), file_strict_types, std::mem::take(&mut method.body))];
         }
         mark_property_hook_modes(&mut trait_decl.properties, path, file_strict_types);
@@ -236,6 +357,12 @@ fn expand_statements(statements: &mut Vec<Stmt>, current_file: &Path, combined: 
     Ok(())
 }
 
+fn merge_static_paths(paths: &[HashMap<String, PathBuf>]) -> HashMap<String, PathBuf> {
+    let Some(first) = paths.first() else { return HashMap::new(); };
+    first.iter().filter(|(name, path)| paths.iter().skip(1).all(|candidate| candidate.get(*name) == Some(*path)))
+        .map(|(name, path)| (name.clone(), path.clone())).collect()
+}
+
 fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<Stmt>, combined: &mut Program, state: &mut IncludeState) -> Result<(), String> {
     match statement {
         Stmt::SourceLine(line, inner) => {
@@ -250,7 +377,9 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
         }
         Stmt::FunctionDeclaration(function) => {
             resolve_function_magic_constants(function, current_file);
+            let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
             expand_statements(&mut function.body, current_file, combined, state)?;
+            state.static_paths = enclosing_paths;
             let mut function = function.clone();
             function.body = vec![Stmt::SourceFile(current_file.to_string_lossy().into_owned(), file_strict_mode(current_file, state, combined), std::mem::take(&mut function.body))];
             combined.functions.push(function);
@@ -262,7 +391,9 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
             for property in &mut class.properties { if let Some(value) = &mut property.default { resolve_magic_constants(value, current_file); } }
             let strict_types = file_strict_mode(current_file, state, combined);
             for method in &mut class.methods {
+                let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
                 expand_statements(&mut method.body, current_file, combined, state)?;
+                state.static_paths = enclosing_paths;
                 method.body = vec![Stmt::SourceFile(current_file.to_string_lossy().into_owned(), strict_types, std::mem::take(&mut method.body))];
             }
             mark_property_hook_modes(&mut class.properties, current_file, strict_types);
@@ -281,14 +412,41 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
             let strict_types = file_strict_mode(current_file, state, combined);
             for method in &mut trait_decl.methods {
                 resolve_function_magic_constants(method, current_file);
+                let enclosing_paths = std::mem::replace(&mut state.static_paths, HashMap::new());
                 expand_statements(&mut method.body, current_file, combined, state)?;
+                state.static_paths = enclosing_paths;
                 method.body = vec![Stmt::SourceFile(current_file.to_string_lossy().into_owned(), strict_types, std::mem::take(&mut method.body))];
             }
             mark_property_hook_modes(&mut trait_decl.properties, current_file, strict_types);
             combined.traits.push(trait_decl);
         }
         Stmt::Expression(expression) => {
+            if let Expr::Assignment { variable, operation, value } = expression {
+                if operation.is_none() {
+                    if let Ok(path) = static_include_path(value, current_file, &state.static_paths) {
+                        let path = if path.is_absolute() { path } else { current_file.parent().unwrap_or(Path::new(".")).join(path) };
+                        state.static_paths.insert(variable.clone(), path);
+                        resolve_magic_constants(value, current_file);
+                    } else {
+                        state.static_paths.remove(variable);
+                    }
+                } else {
+                    state.static_paths.remove(variable);
+                }
+            }
             *expression = expand_include_expression(std::mem::replace(expression, Expr::Null), current_file, combined, state)?;
+            output.push(statement.clone());
+        }
+        Stmt::Unset { variable, keys } if keys.is_empty() => {
+            state.static_paths.remove(variable);
+            output.push(statement.clone());
+        }
+        Stmt::UnsetMany(statements) => {
+            for statement in statements {
+                if let Stmt::Unset { variable, keys } = statement {
+                    if keys.is_empty() { state.static_paths.remove(variable); }
+                }
+            }
             output.push(statement.clone());
         }
         Stmt::Return(Some(Expr::Call(name, arguments))) if name.starts_with("\0php_include:") => {
@@ -301,10 +459,13 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
                 _ => return Err("unknown include expression kind".into()),
             };
             let requested = match static_include_path(&arguments[0], current_file, &state.static_paths) {
-                Ok(path) if !path.to_string_lossy().contains('$') => path,
-                _ => { output.push(Stmt::IncludeReturn); return Ok(()); }
+                Ok(path) => path,
+                _ => {
+                    output.push(Stmt::Return(Some(Expr::Call(name.clone(), arguments.clone()))));
+                    return Ok(());
+                }
             };
-            let requested = if requested.is_absolute() { requested } else { current_file.parent().unwrap_or(Path::new(".")).join(requested) };
+            let requested = resolve_include_path(requested, current_file, &state.include_path);
             let canonical = requested.canonicalize().map_err(|error| format!("{}: cannot resolve included file {}: {error}", current_file.display(), requested.display()))?;
             if state.allowed_root.as_ref().is_some_and(|root| !canonical.starts_with(root)) {
                 return Err(format!("{}: included file escapes the configured source root", current_file.display()));
@@ -327,18 +488,12 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
             let requested = match static_include_path(path, current_file, &state.static_paths) {
                 Ok(path) => path,
                 Err(error) if error.contains("include path must be a string literal") => {
-                    // Runtime-dependent includes are left inert during eager Composer indexing;
-                    // the interpreter has no runtime source loader yet.
-                    output.push(Stmt::Expression(Expr::Null));
+                    output.push(statement.clone());
                     return Ok(());
                 }
                 Err(error) => return Err(error),
             };
-            if requested.to_string_lossy().contains('$') {
-                output.push(Stmt::Expression(Expr::Null));
-                return Ok(());
-            }
-            let requested = if requested.is_absolute() { requested } else { current_file.parent().unwrap_or(Path::new(".")).join(requested) };
+            let requested = resolve_include_path(requested, current_file, &state.include_path);
             let canonical = requested.canonicalize().map_err(|error| format!("{}: cannot resolve included file {}: {error}", current_file.display(), requested.display()))?;
             if state.allowed_root.as_ref().is_some_and(|root| !canonical.starts_with(root)) {
                 return Err(format!("{}: included file escapes the configured source root", current_file.display()));
@@ -376,18 +531,28 @@ fn expand_statement(statement: &mut Stmt, current_file: &Path, output: &mut Vec<
                     return Ok(());
                 }
             }
+            let before = state.static_paths.clone();
             expand_statements(then_body, current_file, combined, state)?;
+            let then_paths = state.static_paths.clone();
+            state.static_paths = before.clone();
             expand_statements(else_body, current_file, combined, state)?;
+            let else_paths = state.static_paths.clone();
+            state.static_paths = merge_static_paths(&[then_paths, else_paths]);
             output.push(statement.clone());
         }
         Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Foreach { body, .. } => {
+            let before = state.static_paths.clone();
             expand_statements(body, current_file, combined, state)?;
+            state.static_paths = before;
             output.push(statement.clone());
         }
         Stmt::For { initializers, updates, body, .. } => {
             expand_statements(initializers, current_file, combined, state)?;
-            expand_statements(updates, current_file, combined, state)?;
+            let after_initializers = state.static_paths.clone();
             expand_statements(body, current_file, combined, state)?;
+            state.static_paths = after_initializers.clone();
+            expand_statements(updates, current_file, combined, state)?;
+            state.static_paths = after_initializers;
             output.push(statement.clone());
         }
         Stmt::Switch { cases, .. } => {
@@ -421,11 +586,12 @@ fn expand_include_expression(expression: Expr, current_file: &Path, combined: &m
                 "require_once" => IncludeKind::RequireOnce,
                 _ => return Err("unknown include expression kind".into()),
             };
-            let requested = match static_include_path(&arguments.remove(0), current_file, &state.static_paths) {
-                Ok(path) if !path.to_string_lossy().contains('$') => path,
-                _ => return Ok(Expr::Null),
+            let path_expression = arguments.remove(0);
+            let requested = match static_include_path(&path_expression, current_file, &state.static_paths) {
+                Ok(path) => path,
+                _ => return Ok(Expr::Call(name, vec![path_expression])),
             };
-            let requested = if requested.is_absolute() { requested } else { current_file.parent().unwrap_or(Path::new(".")).join(requested) };
+            let requested = resolve_include_path(requested, current_file, &state.include_path);
             let canonical = requested.canonicalize().map_err(|error| format!("{}: cannot resolve included file {}: {error}", current_file.display(), requested.display()))?;
             if state.allowed_root.as_ref().is_some_and(|root| !canonical.starts_with(root)) {
                 return Err(format!("{}: included file escapes the configured source root", current_file.display()));
@@ -493,18 +659,66 @@ fn expand_include_expression(expression: Expr, current_file: &Path, combined: &m
     }
 }
 
+fn order_composer_manifests(manifests: Vec<PathBuf>, root_manifest: &Path) -> Vec<PathBuf> {
+    let mut package_data = HashMap::<PathBuf, (Option<String>, Vec<String>)>::new();
+    let mut package_paths = HashMap::<String, PathBuf>::new();
+    for path in manifests.iter().filter(|path| path.as_path() != root_manifest) {
+        let Ok(manifest) = composer::read_manifest(path) else { continue; };
+        if let Some(name) = &manifest.name {
+            package_paths.entry(name.to_ascii_lowercase()).or_insert_with(|| path.clone());
+        }
+        package_data.insert(path.clone(), (manifest.name, manifest.requires));
+    }
+
+    fn visit_manifest(
+        path: &Path,
+        package_data: &HashMap<PathBuf, (Option<String>, Vec<String>)>,
+        package_paths: &HashMap<String, PathBuf>,
+        visiting: &mut HashSet<PathBuf>,
+        visited: &mut HashSet<PathBuf>,
+        ordered: &mut Vec<PathBuf>,
+    ) {
+        if visited.contains(path) || !visiting.insert(path.to_path_buf()) { return; }
+        if let Some((_, dependencies)) = package_data.get(path) {
+            for dependency in dependencies {
+                if let Some(dependency_path) = package_paths.get(&dependency.to_ascii_lowercase()) {
+                    visit_manifest(dependency_path, package_data, package_paths, visiting, visited, ordered);
+                }
+            }
+        }
+        visiting.remove(path);
+        if visited.insert(path.to_path_buf()) { ordered.push(path.to_path_buf()); }
+    }
+
+    let mut ordered = Vec::with_capacity(manifests.len());
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for path in manifests.iter().filter(|path| path.as_path() != root_manifest) {
+        visit_manifest(path, &package_data, &package_paths, &mut visiting, &mut visited, &mut ordered);
+    }
+    for path in manifests.iter().filter(|path| path.as_path() != root_manifest) {
+        if !package_data.contains_key(path) && visited.insert(path.clone()) { ordered.push(path.clone()); }
+    }
+    if manifests.iter().any(|path| path.as_path() == root_manifest) { ordered.push(root_manifest.to_path_buf()); }
+    ordered
+}
+
 fn load_composer_autoload(project_root: &Path, combined: &mut Program, state: &mut IncludeState) -> Result<Vec<Stmt>, String> {
     let manifest_path = project_root.join("composer.json");
     let mut manifests = vec![manifest_path.clone()];
     let vendor = project_root.join("vendor");
-    if vendor.is_dir() { collect_composer_manifests(&vendor, &mut manifests, 0)?; }
+    let mut manifest_directories = HashSet::from([project_root.to_path_buf()]);
+    if vendor.is_dir() { collect_composer_manifests(&vendor, &mut manifests, &mut manifest_directories, 0)?; }
     manifests.sort();
     manifests.dedup();
     manifests.retain(|path| path != &manifest_path);
     manifests.push(manifest_path.clone()); // Root autoload.files run after dependency files.
+    let manifests = order_composer_manifests(manifests, &manifest_path);
     let mut class_files = Vec::new();
+    let mut class_directories = HashSet::new();
     let mut autoload_files = Vec::new();
     for current_manifest in &manifests {
+        state.dependencies.insert(current_manifest.clone());
         let is_root_manifest = current_manifest == &manifest_path;
         let manifest = match composer::read_manifest(current_manifest) {
             Ok(manifest) => manifest,
@@ -513,12 +727,14 @@ fn load_composer_autoload(project_root: &Path, combined: &mut Program, state: &m
         };
         for (_, directories) in manifest.psr4.into_iter().chain(manifest.psr0.into_iter()) {
             for directory in directories {
-                collect_composer_path(&directory, &mut class_files)?;
+                collect_composer_path(&directory, &mut class_files, &mut class_directories)?;
             }
         }
-        for path in manifest.classmap { collect_composer_path(&path, &mut class_files)?; }
+        for path in manifest.classmap { collect_composer_path(&path, &mut class_files, &mut class_directories)?; }
         autoload_files.extend(manifest.files);
     }
+    state.dependencies.extend(manifest_directories);
+    state.dependencies.extend(class_directories);
     class_files.sort();
     class_files.dedup();
     if class_files.len() > 10_000 { return Err("Composer class scan exceeds 10000 PHP files".into()); }
@@ -546,12 +762,13 @@ fn load_composer_autoload(project_root: &Path, combined: &mut Program, state: &m
     Ok(statements)
 }
 
-fn collect_composer_manifests(directory: &Path, manifests: &mut Vec<PathBuf>, depth: usize) -> Result<(), String> {
+fn collect_composer_manifests(directory: &Path, manifests: &mut Vec<PathBuf>, tracked_directories: &mut HashSet<PathBuf>, depth: usize) -> Result<(), String> {
     if depth > 24 { return Err(format!("Composer vendor directory nesting too deep under {}", directory.display())); }
+    tracked_directories.insert(directory.to_path_buf());
     for entry in fs::read_dir(directory).map_err(|error| format!("cannot scan Composer vendor directory {}: {error}", directory.display()))? {
         let entry = entry.map_err(|error| format!("cannot read Composer vendor entry: {error}"))?;
         let kind = entry.file_type().map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
-        if kind.is_dir() { collect_composer_manifests(&entry.path(), manifests, depth + 1)?; }
+        if kind.is_dir() { collect_composer_manifests(&entry.path(), manifests, tracked_directories, depth + 1)?; }
         else if kind.is_file() && entry.file_name() == "composer.json" { manifests.push(entry.path()); }
         if manifests.len() > 10_000 { return Err("Composer vendor scan exceeds 10000 manifests".into()); }
     }
@@ -559,11 +776,16 @@ fn collect_composer_manifests(directory: &Path, manifests: &mut Vec<PathBuf>, de
 }
 
 fn append_composer_declarations(path: &Path, combined: &mut Program, state: &mut IncludeState) -> Result<(), String> {
+    state.dependencies.insert(path.to_path_buf());
     let source = fs::read_to_string(path).map_err(|error| format!("cannot read Composer class file {}: {error}", path.display()))?;
-    let mut program = php_syntax::parse(&source).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut program = php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id).map_err(|error| format!("{}: {error}", path.display()))?;
+    state.next_anonymous_class_id += program.classes.iter().filter(|class| class.anonymous_source.is_some()).count();
     for constant in &mut program.constants { resolve_magic_constants(&mut constant.value, path); }
     for function in &mut program.functions { resolve_function_magic_constants(function, path); }
     for class in &mut program.classes {
+        if let Some((source_file, _)) = &mut class.anonymous_source {
+            *source_file = Some(path.to_string_lossy().into_owned());
+        }
         for constant in &mut class.constants { resolve_magic_constants(&mut constant.value, path); }
         for property in &mut class.properties { if let Some(value) = &mut property.default { resolve_magic_constants(value, path); } }
         for method in &mut class.methods { resolve_function_magic_constants(method, path); }
@@ -604,20 +826,21 @@ fn skip_polyfill_builtin_class(path: &Path, name: &str) -> bool {
     native_builtin && path.contains("/polyfill-")
 }
 
-fn collect_php_files(directory: &Path, files: &mut Vec<PathBuf>, depth: usize) -> Result<(), String> {
+fn collect_php_files(directory: &Path, files: &mut Vec<PathBuf>, directories: &mut HashSet<PathBuf>, depth: usize) -> Result<(), String> {
     if depth > 64 { return Err(format!("Composer PSR-4 directory nesting too deep under {}", directory.display())); }
+    directories.insert(directory.to_path_buf());
     for entry in fs::read_dir(directory).map_err(|error| format!("cannot scan Composer directory {}: {error}", directory.display()))? {
         let entry = entry.map_err(|error| format!("cannot read Composer directory entry: {error}"))?;
         let kind = entry.file_type().map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
-        if kind.is_dir() { collect_php_files(&entry.path(), files, depth + 1)?; }
+        if kind.is_dir() { collect_php_files(&entry.path(), files, directories, depth + 1)?; }
         else if kind.is_file() && entry.path().extension().is_some_and(|extension| extension.eq_ignore_ascii_case("php")) { files.push(entry.path()); }
         if files.len() > 10_000 { return Err("Composer PSR-4 scan exceeds 10000 PHP files".into()); }
     }
     Ok(())
 }
 
-fn collect_composer_path(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    if path.is_dir() { return collect_php_files(path, files, 0); }
+fn collect_composer_path(path: &Path, files: &mut Vec<PathBuf>, directories: &mut HashSet<PathBuf>) -> Result<(), String> {
+    if path.is_dir() { return collect_php_files(path, files, directories, 0); }
     if path.is_file() && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("php")) {
         files.push(path.to_path_buf());
         if files.len() > 10_000 { return Err("Composer class scan exceeds 10000 PHP files".into()); }
@@ -659,4 +882,14 @@ fn static_include_path(expression: &Expr, current_file: &Path, variables: &HashM
         }
     }
     evaluate(expression, current_file, variables).map(PathBuf::from).ok_or_else(|| format!("{}: include path must be a string literal, a __DIR__/__FILE__ concatenation, or a statically assigned file_exists path", current_file.display()))
+}
+
+fn resolve_include_path(requested: PathBuf, current_file: &Path, include_path: &[PathBuf]) -> PathBuf {
+    if requested.is_absolute() { return requested; }
+    for directory in include_path {
+        let candidate = directory.join(&requested);
+        if candidate.is_file() { return candidate; }
+    }
+    let relative_to_including_file = current_file.parent().unwrap_or(Path::new(".")).join(&requested);
+    relative_to_including_file
 }

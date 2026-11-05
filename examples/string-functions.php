@@ -60,6 +60,8 @@ echo addslashes("path\\name 'quoted' \"text\""), ":", stripslashes("it\\'s escap
 echo strspn("42 items", "0123456789"), ":", strcspn("42 items", " "), ":", strcspn("abcdef", "x", -3, -1), "\n";
 
 echo strpbrk("hello world", "ow"), "\n";
+echo urlencode(string: "a b+c/é~"), ":", rawurlencode("a b+c/é~"), ":";
+echo urldecode("a+b%2Bc%2F%C3%A9%7E"), ":", rawurldecode("a+b%2Bc%2F%C3%A9%7E"), "\n";
 echo str_word_count("Hello, l’esprit PHP!"), ":", json_encode(str_word_count("Hello, l’esprit PHP!", 1)), "\n";
 echo str_replace("\n", "/", wordwrap("A very long woooooooooooord.", 8, "\n", true)), "\n";
 echo str_replace("\n", "|", wordwrap(string: "The quick brown fox jumped over the lazy dog.", width: 20, break: "|")), "\n";

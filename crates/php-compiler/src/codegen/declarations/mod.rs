@@ -28,11 +28,33 @@ pub(super) fn constant_declarations(program: &Program) -> Result<Vec<(String, Va
     Ok(values)
 }
 
+pub(super) fn constant_attribute_declarations(program: &Program) -> Result<std::collections::HashMap<String, Vec<php_runtime::BytecodeAttribute>>, String> {
+    program.constants.iter().filter(|constant| !constant.attributes.is_empty()).map(|constant| {
+        let attributes = constant.attributes.iter().map(|attribute| {
+            let arguments = attribute.arguments.iter().map(|argument| match argument {
+                Expr::NamedArgument(name, value) => Ok((Some(name.clone()), constant_parameter_value(value, Some(program), None, None)?)),
+                value => Ok((None, constant_parameter_value(value, Some(program), None, None)?)),
+            }).collect::<Result<Vec<_>, String>>()?;
+            Ok(php_runtime::BytecodeAttribute { name: attribute.name.clone(), arguments })
+        }).collect::<Result<Vec<_>, String>>()?;
+        Ok((constant.name.clone(), attributes))
+    }).collect()
+}
+
 /// Lower a parameter's supported constant expression into its runtime value.
 pub(super) fn parameter_defaults(
     defaults: &[Option<Expr>], program: Option<&Program>, class_context: Option<&str>, parent_context: Option<&str>,
 ) -> Result<Vec<Option<Value>>, String> {
     defaults.iter().map(|default| default.as_ref().map(|expression| constant_parameter_value(expression, program, class_context, parent_context)).transpose()).collect()
+}
+
+/// Preserve the source name for a named constant used as a parameter default.
+pub(super) fn parameter_default_constant_names(defaults: &[Option<Expr>]) -> Vec<Option<String>> {
+    defaults.iter().map(|default| match default {
+        Some(Expr::Constant(name)) => Some(name.clone()),
+        Some(Expr::ClassConstant(class, name)) => Some(format!("{class}::{name}")),
+        _ => None,
+    }).collect()
 }
 
 /// Evaluate the constant subset allowed in parameter defaults at compile time.
@@ -202,6 +224,8 @@ fn resolve_class_constant(
     if constant_name.eq_ignore_ascii_case("class") { return Ok(Value::String(resolved_name.trim_start_matches('\\').to_string())); }
     if let Some(value) = php_runtime::pdo_class_constant(resolved_name, constant_name) { return Ok(value); }
     if let Some(value) = php_runtime::intl_class_constant(resolved_name, constant_name) { return Ok(value); }
+    if let Some(value) = php_runtime::reflection_method_class_constant(resolved_name, constant_name) { return Ok(Value::Integer(value)); }
+    if let Some(value) = php_runtime::reflection_property_class_constant(resolved_name, constant_name) { return Ok(Value::Integer(value)); }
     if resolved_name.eq_ignore_ascii_case("RoundingMode") {
         const CASES: &[&str] = &["HalfAwayFromZero", "HalfTowardsZero", "HalfEven", "HalfOdd", "TowardsZero", "AwayFromZero", "NegativeInfinity", "PositiveInfinity"];
         if let Some(case) = CASES.iter().find(|case| case.eq_ignore_ascii_case(constant_name)) {
@@ -244,45 +268,45 @@ fn resolve_class_constant(
             return result;
         }
         for interface_name in &declaration.interfaces {
-            if let Some(interface) = program.interfaces.iter().find(|interface| interface.name.eq_ignore_ascii_case(interface_name)) {
-                if let Some(constant) = interface.constants.iter().find(|constant| constant.name == constant_name) {
-                    let key = format!("{}::{constant_name}", interface.name);
-                    if resolving.iter().any(|active| active == &key) { return Err(format!("Circular class constant reference involving {key}")); }
-                    resolving.push(key);
-                    let result = constant_parameter_value_inner(&constant.value, Some(program), Some(&interface.name), None, resolving);
-                    resolving.pop();
-                    return result;
-                }
+            if let Some((interface, constant)) = find_interface_constant(program, interface_name, constant_name, &mut Vec::new()) {
+                let key = format!("{}::{constant_name}", interface.name);
+                if resolving.iter().any(|active| active == &key) { return Err(format!("Circular class constant reference involving {key}")); }
+                resolving.push(key);
+                let result = constant_parameter_value_inner(&constant.value, Some(program), Some(&interface.name), None, resolving);
+                resolving.pop();
+                return result;
             }
         }
         class = declaration.parent.as_deref().and_then(|parent| program.classes.iter().find(|candidate| candidate.name.eq_ignore_ascii_case(parent)));
     }
-    if let Some(declaration) = program.classes.iter().find(|candidate| candidate.name.eq_ignore_ascii_case(resolved_name)) {
-        for interface_name in &declaration.interfaces {
-            if let Some(interface) = program.interfaces.iter().find(|candidate| candidate.name.eq_ignore_ascii_case(interface_name)) {
-                if let Some(constant) = interface.constants.iter().find(|constant| constant.name == constant_name) {
-                    let key = format!("{}::{constant_name}", interface.name);
-                    if resolving.iter().any(|active| active == &key) { return Err(format!("Circular class constant reference involving {key}")); }
-                    resolving.push(key);
-                    let result = constant_parameter_value_inner(&constant.value, Some(program), Some(&interface.name), None, resolving);
-                    resolving.pop();
-                    return result;
-                }
-            }
-        }
-    }
     for interface in &program.interfaces {
         if !interface.name.eq_ignore_ascii_case(resolved_name) { continue; }
-        let constant = interface.constants.iter().find(|constant| constant.name == constant_name)
+        let (interface, constant) = find_interface_constant(program, &interface.name, constant_name, &mut Vec::new())
             .ok_or_else(|| format!("Undefined class constant {}::{constant_name}", interface.name))?;
         let key = format!("{}::{constant_name}", interface.name);
         if resolving.iter().any(|active| active == &key) { return Err(format!("Circular class constant reference involving {key}")); }
         resolving.push(key);
-        let result = constant_parameter_value_inner(&constant.value, Some(program), class_context, parent_context, resolving);
+        let result = constant_parameter_value_inner(&constant.value, Some(program), Some(&interface.name), None, resolving);
         resolving.pop();
         return result;
     }
     Err(format!("Unknown class or interface '{resolved_name}' in parameter default"))
+}
+
+fn find_interface_constant<'a>(
+    program: &'a Program,
+    interface_name: &str,
+    constant_name: &str,
+    visited: &mut Vec<String>,
+) -> Option<(&'a php_syntax::InterfaceDecl, &'a php_syntax::ClassConstantDecl)> {
+    let key = interface_name.trim_start_matches('\\').to_ascii_lowercase();
+    if visited.iter().any(|name| name == &key) { return None; }
+    visited.push(key);
+    let interface = program.interfaces.iter().find(|interface| interface.name.eq_ignore_ascii_case(interface_name))?;
+    if let Some(constant) = interface.constants.iter().find(|constant| constant.name.eq_ignore_ascii_case(constant_name)) {
+        return Some((interface, constant));
+    }
+    interface.parents.iter().find_map(|parent| find_interface_constant(program, parent, constant_name, visited))
 }
 
 fn builtin_class_constant(class_name: &str, constant_name: &str) -> Option<i64> {
@@ -375,7 +399,9 @@ impl CodeGenerator<'_> {
         if let Some(error) = self.errors.first() { return Err(error.clone()); }
         let functions = functions::compile(&program.functions, program)?;
         let classes = classes::compile(program)?;
-        Ok(BytecodeProgram::new(self.instructions, functions, classes))
+        let mut bytecode = BytecodeProgram::new(self.instructions, functions, classes);
+        bytecode.set_constant_attributes(constant_attribute_declarations(program)?);
+        Ok(bytecode)
     }
 }
 

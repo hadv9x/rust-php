@@ -304,6 +304,7 @@ impl JsonParser<'_> {
             Some(b'"') => self.string().map(Value::String),
             Some(b'[') => self.array(depth + 1),
             Some(b'{') => self.object(depth + 1),
+            Some(b']' | b'}') => Err("State mismatch".into()),
             Some(b'-' | b'0'..=b'9') => self.number(),
             _ => Err("Syntax error".into()),
         }
@@ -370,10 +371,15 @@ impl JsonParser<'_> {
         let mut values = Vec::new();
         if self.consume(b']') { return Ok(Value::from_array_entries(values)); }
         loop {
+            self.whitespace();
+            if self.source.as_bytes().get(self.cursor) == Some(&b']') { return Err("Syntax error".into()); }
             values.push((ArrayKey::Integer(values.len() as i64), self.value(depth)?));
             self.whitespace();
             if self.consume(b']') { break; }
-            if !self.consume(b',') { return Err("Syntax error".into()); }
+            if !self.consume(b',') {
+                if self.source.as_bytes().get(self.cursor) == Some(&b'}') { return Err("State mismatch".into()); }
+                return Err("Syntax error".into());
+            }
         }
         Ok(Value::from_array_entries(values))
     }
@@ -386,17 +392,25 @@ impl JsonParser<'_> {
         if !self.consume(b'}') {
             loop {
                 self.whitespace();
+                if self.source.as_bytes().get(self.cursor) == Some(&b'}') { return Err("Syntax error".into()); }
+                if self.source.as_bytes().get(self.cursor) == Some(&b']') { return Err("State mismatch".into()); }
                 if self.source.as_bytes().get(self.cursor) != Some(&b'"') { return Err("Object keys must be strings".into()); }
                 let key = self.string()?;
                 if !self.associative && key.starts_with('\0') { return Err("Invalid property name".into()); }
                 self.whitespace();
-                if !self.consume(b':') { return Err("Expected colon".into()); }
+                if !self.consume(b':') {
+                    if self.source.as_bytes().get(self.cursor) == Some(&b']') { return Err("State mismatch".into()); }
+                    return Err("Expected colon".into());
+                }
                 let value = self.value(depth)?;
                 properties.insert(key.clone(), value.clone());
                 entries.push((ArrayKey::String(key), value));
                 self.whitespace();
                 if self.consume(b'}') { break; }
-                if !self.consume(b',') { return Err("Syntax error".into()); }
+                if !self.consume(b',') {
+                    if self.source.as_bytes().get(self.cursor) == Some(&b']') { return Err("State mismatch".into()); }
+                    return Err("Syntax error".into());
+                }
             }
         }
         if self.associative {

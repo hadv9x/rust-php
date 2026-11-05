@@ -18,6 +18,10 @@ fn collect_compact_names(value: &Value, names: &mut Vec<String>) -> Result<(), S
     Ok(())
 }
 
+fn is_php_visible_local(name: &str) -> bool {
+    !name.starts_with('\0')
+}
+
 /// Build an array from variable names visible in the active local/global scope.
 pub(super) fn compact(
     args: &[Value],
@@ -47,13 +51,13 @@ pub(super) fn get_defined_vars(
 ) -> Value {
     let mut names = Vec::new();
     if global_scope {
-        names.extend(globals.order.iter().filter(|name| !name.starts_with('\0')).cloned());
+        names.extend(globals.order.iter().filter(|name| is_php_visible_local(name)).cloned());
         let missing_globals = globals.values.keys().chain(globals.aliases.keys())
-            .filter(|name| !name.starts_with('\0') && !names.contains(name))
+            .filter(|name| is_php_visible_local(name) && !names.contains(name))
             .cloned().collect::<std::collections::BTreeSet<_>>();
         names.extend(missing_globals);
         let remaining = variables.keys().chain(bindings.keys())
-            .filter(|name| !name.starts_with('\0') && !names.contains(name))
+            .filter(|name| is_php_visible_local(name) && !names.contains(name))
             .cloned().collect::<std::collections::BTreeSet<_>>();
         names.extend(remaining);
     } else {
@@ -67,7 +71,7 @@ pub(super) fn get_defined_vars(
             }
         }
         let remaining = variables.keys().chain(bindings.keys())
-            .filter(|name| !name.starts_with('\0') && !names.contains(name))
+            .filter(|name| is_php_visible_local(name) && !names.contains(name))
             .cloned().collect::<std::collections::BTreeSet<_>>();
         names.extend(remaining);
     }

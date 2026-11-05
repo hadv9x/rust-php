@@ -7,6 +7,8 @@ enum JsonValue { Object(HashMap<String, JsonValue>), Array(Vec<JsonValue>), Stri
 
 #[derive(Debug, Default)]
 pub(super) struct ComposerAutoload {
+    pub(super) name: Option<String>,
+    pub(super) requires: Vec<String>,
     pub(super) psr4: Vec<(String, Vec<PathBuf>)>,
     pub(super) psr0: Vec<(String, Vec<PathBuf>)>,
     pub(super) classmap: Vec<PathBuf>,
@@ -23,6 +25,11 @@ pub(super) fn read_manifest(path: &Path) -> Result<ComposerAutoload, String> {
     let root = object(&json).ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
     let autoload = root.get("autoload").and_then(object);
     let mut result = ComposerAutoload::default();
+    result.name = root.get("name").and_then(string).map(str::to_string);
+    if let Some(requirements) = root.get("require").and_then(object) {
+        result.requires.extend(requirements.keys().cloned());
+        result.requires.sort();
+    }
     let base = path.parent().unwrap_or(Path::new("."));
     if let Some(psr4) = autoload.and_then(|value| value.get("psr-4")).and_then(object) {
         for (prefix, locations) in psr4 {

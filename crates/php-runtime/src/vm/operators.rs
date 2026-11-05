@@ -3,8 +3,13 @@
 use crate::{bytecode::Op, ArrayKey, PhpObject, Value};
 use std::cmp::Ordering;
 
-fn compare_relational(left: &Value, right: &Value) -> Ordering {
-    match (left, right) {
+fn compare_relational(left: &Value, right: &Value) -> Result<Ordering, String> {
+    let left_value = left.dereference();
+    let right_value = right.dereference();
+    if matches!(left_value, Value::Array(_) | Value::Object(_)) || matches!(right_value, Value::Array(_) | Value::Object(_)) {
+        return crate::array_builtins::regular_value_order(&left_value, &right_value);
+    }
+    Ok(match (&left_value, &right_value) {
         (Value::Integer(a), Value::Integer(b)) => a.cmp(b),
         (Value::Integer(a), Value::Number(b)) => (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal),
         (Value::Number(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal),
@@ -20,8 +25,8 @@ fn compare_relational(left: &Value, right: &Value) -> Ordering {
             Ok(b) => a.partial_cmp(&b).unwrap_or(Ordering::Equal),
             Err(_) => left.show().cmp(b),
         },
-        _ => left.number().partial_cmp(&right.number()).unwrap_or(Ordering::Equal),
-    }
+        _ => left_value.number().partial_cmp(&right_value.number()).unwrap_or(Ordering::Equal),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -156,11 +161,11 @@ pub(super) fn apply_binary(operation: &Op, left: Value, right: Value) -> Result<
         Op::NotEq => Value::Bool(!loose_equal(&left, &right)),
         Op::StrictEq => Value::Bool(strict_identical(&left, &right)),
         Op::StrictNotEq => Value::Bool(!strict_identical(&left, &right)),
-        Op::Lt => Value::Bool(compare_relational(&left, &right).is_lt()),
-        Op::Le => Value::Bool(!compare_relational(&left, &right).is_gt()),
-        Op::Gt => Value::Bool(compare_relational(&left, &right).is_gt()),
-        Op::Ge => Value::Bool(!compare_relational(&left, &right).is_lt()),
-        Op::Spaceship => Value::Integer(match compare_relational(&left, &right) { Ordering::Less => -1, Ordering::Equal => 0, Ordering::Greater => 1 }),
+        Op::Lt => Value::Bool(compare_relational(&left, &right)?.is_lt()),
+        Op::Le => Value::Bool(!compare_relational(&left, &right)?.is_gt()),
+        Op::Gt => Value::Bool(compare_relational(&left, &right)?.is_gt()),
+        Op::Ge => Value::Bool(!compare_relational(&left, &right)?.is_lt()),
+        Op::Spaceship => Value::Integer(match compare_relational(&left, &right)? { Ordering::Less => -1, Ordering::Equal => 0, Ordering::Greater => 1 }),
         Op::LogicalXor => Value::Bool(left.truthy() ^ right.truthy()),
         _ => return Err("Invalid bytecode operation".into()),
     };

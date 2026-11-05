@@ -1,6 +1,7 @@
 //! Array builtins that invoke user-provided callbacks.
 
-use crate::{ArrayKey, Value};
+use crate::{ArrayKey, BytecodeClass, RuntimeDiagnostic, Value};
+use std::collections::HashMap;
 use super::common::*;
 
 /// Visit array values and write callback modifications back through the first argument.
@@ -22,12 +23,15 @@ pub(super) fn array_walk(
 pub(super) fn array_walk_recursive(
     args: &[Value],
     invoke: &mut dyn FnMut(&Value, Value, Value, Option<Value>) -> Result<Value, String>,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) -> Result<(Value, Option<(usize, Value)>), String> {
     require_count("array_walk_recursive", args, 2, 3)?;
     let callback = callback_name(&args[1], "array_walk_recursive")?;
     let user_data = args.get(2).cloned();
     let mut result = entries(&args[0], "array_walk_recursive")?.to_vec();
-    walk_recursive_entries(&mut result, callback, user_data, invoke)?;
+    let mut active_references = std::collections::HashSet::new();
+    let mut recursion_warned = false;
+    walk_recursive_entries(&mut result, callback, user_data, invoke, &mut active_references, &mut recursion_warned, diagnostics)?;
     Ok((Value::Bool(true), Some((0, array_value(result)))))
 }
 
@@ -36,21 +40,39 @@ fn walk_recursive_entries(
     callback: &Value,
     user_data: Option<Value>,
     invoke: &mut dyn FnMut(&Value, Value, Value, Option<Value>) -> Result<Value, String>,
+    active_references: &mut std::collections::HashSet<usize>,
+    recursion_warned: &mut bool,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) -> Result<(), String> {
     for (key, value) in entries {
         match value {
             Value::Array(nested) => {
-                walk_recursive_entries(nested, callback, user_data.clone(), invoke)?;
+                walk_recursive_entries(nested, callback, user_data.clone(), invoke, active_references, recursion_warned, diagnostics)?;
             }
             Value::Reference(reference) => {
+                let identity = std::rc::Rc::as_ptr(reference) as usize;
+                if !active_references.insert(identity) {
+                    if !*recursion_warned {
+                        diagnostics.push(RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Warning,
+                            message: "array_walk_recursive(): Recursion detected".into(),
+                            source_file: None,
+                            source_line: None,
+                            output_offset: 0,
+                        });
+                        *recursion_warned = true;
+                    }
+                    continue;
+                }
                 let current = reference.borrow().clone();
                 if let Value::Array(mut nested) = current {
-                    walk_recursive_entries(&mut nested, callback, user_data.clone(), invoke)?;
+                    walk_recursive_entries(&mut nested, callback, user_data.clone(), invoke, active_references, recursion_warned, diagnostics)?;
                     *reference.borrow_mut() = Value::Array(nested);
                 } else {
                     let updated = invoke(callback, current, key_value(key), user_data.clone())?;
                     *reference.borrow_mut() = updated;
                 }
+                active_references.remove(&identity);
             }
             _ => {
                 *value = invoke(callback, value.clone(), key_value(key), user_data.clone())?;
@@ -61,8 +83,51 @@ fn walk_recursive_entries(
 }
 
 /// Dispatch a supported builtin by its string callback name.
-pub(super) fn call_callback_builtin(name: &str, arguments: Vec<Value>) -> Result<Value, String> {
+pub(super) fn call_callback_builtin(
+    name: &str,
+    arguments: Vec<Value>,
+    classes: &HashMap<String, BytecodeClass>,
+    diagnostics: &mut Vec<RuntimeDiagnostic>,
+    stringify: &mut dyn FnMut(&Value) -> Result<String, String>,
+) -> Result<Value, String> {
     let normalized_name = name.to_ascii_lowercase();
+    match normalized_name.as_str() {
+        "array_is_list" => return super::query::array_is_list(&arguments),
+        "array_column" => return super::construct::array_column(&arguments, classes, diagnostics),
+        "array_count_values" => return super::construct::array_count_values(&arguments, diagnostics),
+        "array_combine" => return super::construct::array_combine(&arguments, diagnostics),
+        "array_flip" => return super::construct::array_flip(&arguments, diagnostics),
+        "array_fill" => return super::construct::array_fill(&arguments),
+        "array_fill_keys" => return super::construct::array_fill_keys(&arguments, diagnostics),
+        "array_change_key_case" => return super::construct::array_change_key_case(&arguments),
+        "array_chunk" => return super::transform::array_chunk(&arguments),
+        "array_keys" => return super::query::array_keys(&arguments),
+        "array_key_exists" | "key_exists" => return super::query::key_exists(&arguments, diagnostics),
+        "array_key_first" => return super::query::array_edge_key(&arguments, false),
+        "array_key_last" => return super::query::array_edge_key(&arguments, true),
+        "array_first" => return super::query::array_edge_value(&arguments, false),
+        "array_last" => return super::query::array_edge_value(&arguments, true),
+        "array_search" => return super::query::array_search(&arguments),
+        "in_array" => return super::query::in_array(&arguments),
+        "array_product" => return super::query::array_product(&arguments),
+        "array_sum" => return super::query::array_sum(&arguments),
+        "array_values" => return super::query::array_values(&arguments),
+        "array_merge" => return super::transform::array_merge(&arguments),
+        "array_merge_recursive" => return super::transform::array_merge_recursive(&arguments),
+        "array_replace" => return super::transform::array_replace(&arguments),
+        "array_replace_recursive" => return super::transform::array_replace_recursive(&arguments),
+        "array_diff" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Values, false),
+        "array_intersect" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Values, true),
+        "array_diff_assoc" => return super::transform::array_diff(&arguments, super::transform::DiffMode::ValuesAndKeys, false),
+        "array_intersect_assoc" => return super::transform::array_diff(&arguments, super::transform::DiffMode::ValuesAndKeys, true),
+        "array_diff_key" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Keys, false),
+        "array_intersect_key" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Keys, true),
+        "array_unique" => return super::transform::array_unique(&arguments, stringify),
+        "array_reverse" => return super::transform::array_reverse(&arguments),
+        "array_pad" => return super::transform::array_pad(&arguments),
+        "array_slice" => return super::transform::array_slice(&arguments),
+        _ => {}
+    }
     if matches!(normalized_name.as_str(), "str_replace" | "str_ireplace") {
         return crate::string_builtins::replace(name, &arguments).map(|(value, _)| value);
     }
@@ -71,6 +136,9 @@ pub(super) fn call_callback_builtin(name: &str, arguments: Vec<Value>) -> Result
     }
     if crate::math_builtins::is_supported(&normalized_name) {
         return crate::math_builtins::call(name, &arguments);
+    }
+    if matches!(normalized_name.as_str(), "current" | "pos") {
+        return super::cursor::call("current", &arguments).map(|(value, _)| value);
     }
     let value = arguments.first().cloned().unwrap_or(Value::Null);
     let result = match name.to_ascii_lowercase().as_str() {

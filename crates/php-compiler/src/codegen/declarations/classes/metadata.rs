@@ -3,6 +3,25 @@
 use php_runtime::{ArrayKey, MemberVisibility, PhpArray, Value};
 use php_syntax::{BinaryOp, Expr, Visibility};
 
+fn find_trait_constant<'a>(program: &'a php_syntax::Program, trait_names: &[String], constant_name: &str, seen: &mut Vec<String>) -> Option<&'a php_syntax::ClassConstantDecl> {
+    for trait_name in trait_names {
+        let key = trait_name.to_ascii_lowercase();
+        if seen.contains(&key) { continue; }
+        let Some(declaration) = program.traits.iter().find(|declaration| declaration.name.eq_ignore_ascii_case(trait_name)) else { continue; };
+        seen.push(key);
+        if let Some(constant) = declaration.constants.iter().find(|constant| !constant.is_enum_case && constant.name == constant_name) {
+            seen.pop();
+            return Some(constant);
+        }
+        if let Some(constant) = find_trait_constant(program, &declaration.traits, constant_name, seen) {
+            seen.pop();
+            return Some(constant);
+        }
+        seen.pop();
+    }
+    None
+}
+
 /// Compile a supported constant expression into an immutable runtime value.
 pub(super) fn constant_value(expression: &Expr) -> Result<Value, String> {
     constant_value_in_class(expression, None, None)
@@ -116,12 +135,15 @@ pub(super) fn constant_value_in_class(expression: &Expr, class: Option<&php_synt
         Expr::ClassConstant(owner, name) => {
             if let Some(value) = php_runtime::pdo_class_constant(owner, name) { return Ok(value); }
             if let Some(value) = php_runtime::intl_class_constant(owner, name) { return Ok(value); }
+            if let Some(value) = php_runtime::reflection_method_class_constant(owner, name) { return Ok(Value::Integer(value)); }
+            if let Some(value) = php_runtime::reflection_property_class_constant(owner, name) { return Ok(Value::Integer(value)); }
             if let Some(value) = symfony_request_class_constant(owner, name) { return Ok(value); }
             if owner.trim_start_matches('\\').rsplit('\\').next().is_some_and(|owner| owner.eq_ignore_ascii_case("Attribute")) {
                 let value = match name.to_ascii_uppercase().as_str() {
                     "TARGET_CLASS" => 1, "TARGET_FUNCTION" => 2, "TARGET_METHOD" => 4,
                     "TARGET_PROPERTY" => 8, "TARGET_CLASS_CONSTANT" => 16,
-                    "TARGET_PARAMETER" => 32, "TARGET_ALL" => 63, "IS_REPEATABLE" => 64,
+                    "TARGET_PARAMETER" => 32, "TARGET_CONSTANT" => 64,
+                    "TARGET_ALL" => 127, "IS_REPEATABLE" => 128,
                     _ => return Err(format!("Undefined class constant Attribute::{name}")),
                 };
                 return Ok(Value::Integer(value));
@@ -137,6 +159,7 @@ pub(super) fn constant_value_in_class(expression: &Expr, class: Option<&php_synt
                 return Err(format!("Cannot resolve class constant {owner}::{name}"));
             };
             let constant = target.constants.iter().find(|constant| constant.name == *name)
+                .or_else(|| program.and_then(|program| find_trait_constant(program, &target.traits, name, &mut Vec::new())))
                 .or_else(|| program.and_then(|program| target.interfaces.iter().find_map(|interface_name| {
                     program.interfaces.iter().find(|interface| interface.name.eq_ignore_ascii_case(interface_name))?
                         .constants.iter().find(|constant| constant.name == *name)
@@ -207,6 +230,8 @@ pub(super) fn class_property_default(
             Expr::ClassConstant(owner, name) if name.eq_ignore_ascii_case("class") => Ok(Value::String(owner.trim_start_matches('\\').to_string())),
             Expr::ClassConstant(owner, name) if php_runtime::pdo_class_constant(owner, name).is_some() => Ok(php_runtime::pdo_class_constant(owner, name).expect("checked PDO constant")),
             Expr::ClassConstant(owner, name) if php_runtime::intl_class_constant(owner, name).is_some() => Ok(php_runtime::intl_class_constant(owner, name).expect("checked Intl constant")),
+            Expr::ClassConstant(owner, name) if php_runtime::reflection_method_class_constant(owner, name).is_some() => Ok(Value::Integer(php_runtime::reflection_method_class_constant(owner, name).expect("checked ReflectionMethod constant"))),
+            Expr::ClassConstant(owner, name) if php_runtime::reflection_property_class_constant(owner, name).is_some() => Ok(Value::Integer(php_runtime::reflection_property_class_constant(owner, name).expect("checked ReflectionProperty constant"))),
             Expr::ClassConstant(owner, name) if symfony_request_class_constant(owner, name).is_some() => Ok(symfony_request_class_constant(owner, name).expect("checked Symfony Request constant")),
             Expr::ClassConstant(owner, name) if owner.trim_start_matches('\\').eq_ignore_ascii_case("SortDirection") => {
                 if !["Ascending", "Descending"].iter().any(|case| case.eq_ignore_ascii_case(name)) { return Err(format!("Undefined class constant SortDirection::{name}")); }

@@ -210,7 +210,7 @@ impl Parser<'_> {
                     let name = self.qualify_declaration_name(self.source_word(name_offset));
                     self.expect(TokenKind::Eq, "Expected = in constant declaration")?;
                     let value = self.expression(1)?;
-                    constants.push(crate::ast::ConstantDecl { name, value });
+                    constants.push(crate::ast::ConstantDecl { name, attributes: class_attributes.clone(), value });
                     if !self.eat(&TokenKind::Comma) { break; }
                 }
                 self.expect(TokenKind::Semi, "Expected ; after constant declaration")?;
@@ -272,21 +272,21 @@ impl Parser<'_> {
                         let enum_case_has_value = self.eat(&TokenKind::Eq);
                         let value = if enum_case_has_value { self.expression(1)? } else { Expr::String(case_name.clone()) };
                         self.expect(TokenKind::Semi, "Expected ; after enum case")?;
-                        constants.push(ClassConstantDecl { name: case_name, value, type_name: None, visibility: Visibility::Public, is_final: true, is_enum_case: true, enum_case_has_value });
+                        constants.push(ClassConstantDecl { name: case_name, attributes: member_attributes, value, type_name: None, visibility: Visibility::Public, is_final: true, is_enum_case: true, enum_case_has_value });
                         continue;
                     }
                     if matches!(self.peek(), TokenKind::Word(word) if word == "use") {
                         self.take();
                         loop {
-                            match self.take() { TokenKind::Word(name) => used_traits.push(self.qualify_name(name)), token => return Err(self.error(&format!("Expected trait name, got {token:?}"))) }
+                            match self.take() { TokenKind::Word(name) => used_traits.push(self.qualify_name(self.previous_word_spelling(&name))), token => return Err(self.error(&format!("Expected trait name, got {token:?}"))) }
                             if !self.eat(&TokenKind::Comma) { break; }
                         }
                         if self.eat(&TokenKind::Semi) { continue; }
                         self.expect(TokenKind::Lb, "Expected ; or { after trait use")?;
                         while !self.eat(&TokenKind::Rb) {
-                            let first_name = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait or method name in adaptation, got {token:?}"))) };
+                            let first_name = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait or method name in adaptation, got {token:?}"))) };
                             let (trait_name, method_name) = if self.eat(&TokenKind::DoubleColon) {
-                                let method = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
+                                let method = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
                                 (self.qualify_name(first_name), method)
                             } else {
                                 let trait_name = used_traits.last().cloned().ok_or_else(|| self.error("Unqualified trait adaptation requires a trait use"))?;
@@ -295,27 +295,31 @@ impl Parser<'_> {
                             let mut excluded_traits = Vec::new();
                             let mut alias = None;
                             let mut adaptation_visibility = None;
+                            let mut is_final = false;
                             match self.take() {
                                 TokenKind::Word(word) if word == "insteadof" => {
                                     loop {
-                                        match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(name)), token => return Err(self.error(&format!("Expected excluded trait name, got {token:?}"))) }
+                                        match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(self.previous_word_spelling(&name))), token => return Err(self.error(&format!("Expected excluded trait name, got {token:?}"))) }
                                         if !self.eat(&TokenKind::Comma) { break; }
                                     }
                                 }
                                 TokenKind::Word(word) if word == "as" => {
-                                    if let TokenKind::Word(word) = self.peek() {
-                                        adaptation_visibility = match word.as_str() {
-                                            "public" => Some(Visibility::Public), "protected" => Some(Visibility::Protected), "private" => Some(Visibility::Private), _ => None,
-                                        };
-                                        if adaptation_visibility.is_some() { self.take(); }
+                                    while let TokenKind::Word(word) = self.peek() {
+                                        match word.as_str() {
+                                            "public" => { adaptation_visibility = Some(Visibility::Public); self.take(); }
+                                            "protected" => { adaptation_visibility = Some(Visibility::Protected); self.take(); }
+                                            "private" => { adaptation_visibility = Some(Visibility::Private); self.take(); }
+                                            "final" => { is_final = true; self.take(); }
+                                            _ => break,
+                                        }
                                     }
-                                    if let TokenKind::Word(name) = self.peek() { alias = Some(name.clone()); self.take(); }
-                                    if alias.is_none() && adaptation_visibility.is_none() { return Err(self.error("Trait alias must specify a new name or visibility")); }
+                                    if let TokenKind::Word(name) = self.peek() { let fallback = name.clone(); self.take(); alias = Some(self.previous_word_spelling(&fallback)); }
+                                    if alias.is_none() && adaptation_visibility.is_none() && !is_final { return Err(self.error("Trait alias must specify a new name, visibility, or final modifier")); }
                                 }
                                 token => return Err(self.error(&format!("Expected insteadof or as, got {token:?}"))),
                             }
                             self.expect(TokenKind::Semi, "Expected ; after trait adaptation")?;
-                            trait_adaptations.push(TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility: adaptation_visibility });
+                            trait_adaptations.push(TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility: adaptation_visibility, is_final });
                         }
                         continue;
                     }
@@ -354,15 +358,16 @@ impl Parser<'_> {
                     } else if matches!(self.peek(), TokenKind::Word(word) if word == "const") {
                         if is_static || is_abstract { return Err(self.error("Invalid modifier on class constant")); }
                         self.take();
-                        let type_name = if matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_))) {
-                            Some(self.parse_union_type(false)?)
+                        let nullable = self.eat(&TokenKind::Question);
+                        let type_name = if nullable || matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_) | TokenKind::Pipe | TokenKind::Ampersand)) {
+                            Some(self.parse_union_type(nullable)?)
                         } else { None };
                         loop {
                             let const_name_offset = self.peek_offset();
                             let const_name = match self.take() { TokenKind::Word(_) => self.source_word(const_name_offset), token => return Err(self.error(&format!("Expected class constant name, got {token:?}"))) };
                             self.expect(TokenKind::Eq, "Expected = in class constant declaration")?;
                             let value = self.expression(1)?;
-                            constants.push(ClassConstantDecl { name: const_name, value, type_name: type_name.clone(), visibility, is_final, is_enum_case: false, enum_case_has_value: false });
+                            constants.push(ClassConstantDecl { name: const_name, attributes: member_attributes.clone(), value, type_name: type_name.clone(), visibility, is_final, is_enum_case: false, enum_case_has_value: false });
                             if !self.eat(&TokenKind::Comma) { break; }
                         }
                         self.expect(TokenKind::Semi, "Expected ; after class constant")?;
@@ -388,7 +393,7 @@ impl Parser<'_> {
                         properties.push(PropertyDecl { name: property, attributes: member_attributes, default, is_static, is_readonly, visibility, set_visibility, type_name, get_hook, set_hook });
                     }
                 }
-                classes.push(ClassDecl { name, attributes: class_attributes, is_enum, enum_backing_type, is_abstract: class_is_abstract, is_final: class_is_final || is_enum, parent, interfaces: implemented_interfaces, traits: used_traits, trait_adaptations, properties, constants, methods });
+                classes.push(ClassDecl { name, anonymous_source: None, attributes: class_attributes, is_enum, enum_backing_type, is_abstract: class_is_abstract, is_final: class_is_final || is_enum, is_readonly: class_is_readonly, parent, interfaces: implemented_interfaces, traits: used_traits, trait_adaptations, properties, constants, methods });
             } else if matches!(self.peek(), TokenKind::Word(word) if word == "interface") {
                 self.take();
                 let name = match self.take() {
@@ -422,15 +427,16 @@ impl Parser<'_> {
                     }
                     if matches!(self.peek(), TokenKind::Word(word) if word == "const") {
                         self.take();
-                        let type_name = if matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_))) {
-                            Some(self.parse_union_type(false)?)
+                        let nullable = self.eat(&TokenKind::Question);
+                        let type_name = if nullable || matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_) | TokenKind::Pipe | TokenKind::Ampersand)) {
+                            Some(self.parse_union_type(nullable)?)
                         } else { None };
                         let const_name_offset = self.peek_offset();
                         let const_name = match self.take() { TokenKind::Word(_) => self.source_word(const_name_offset), token => return Err(self.error(&format!("Expected interface constant name, got {token:?}"))) };
                         self.expect(TokenKind::Eq, "Expected = in interface constant")?;
                         let value = self.expression(1)?;
                         self.expect(TokenKind::Semi, "Expected ; after interface constant")?;
-                        constants.push(ClassConstantDecl { name: const_name, value, type_name, visibility: constant_visibility, is_final: constant_final, is_enum_case: false, enum_case_has_value: false });
+                        constants.push(ClassConstantDecl { name: const_name, attributes: member_attributes, value, type_name, visibility: constant_visibility, is_final: constant_final, is_enum_case: false, enum_case_has_value: false });
                         continue;
                     }
                     let mut is_static = false;
@@ -445,7 +451,7 @@ impl Parser<'_> {
                 interfaces.push(InterfaceDecl { name, attributes: class_attributes, parents, constants, methods });
             } else if matches!(self.peek(), TokenKind::Word(word) if word == "trait") {
                 self.take();
-                let name = match self.take() { TokenKind::Word(name) => self.qualify_declaration_name(name), token => return Err(self.error(&format!("Expected trait name, got {token:?}"))) };
+                let name = match self.take() { TokenKind::Word(name) => self.qualify_declaration_name(self.previous_word_spelling(&name)), token => return Err(self.error(&format!("Expected trait name, got {token:?}"))) };
                 self.expect(TokenKind::Lb, "Expected { after trait name")?;
                 let mut properties = Vec::new();
                 let mut trait_constants = Vec::new();
@@ -457,34 +463,43 @@ impl Parser<'_> {
                     if matches!(self.peek(), TokenKind::Word(word) if word == "use") {
                         self.take();
                         loop {
-                            match self.take() { TokenKind::Word(name) => nested_traits.push(self.qualify_name(name)), token => return Err(self.error(&format!("Expected trait name in trait use, got {token:?}"))) }
+                            match self.take() { TokenKind::Word(name) => nested_traits.push(self.qualify_name(self.previous_word_spelling(&name))), token => return Err(self.error(&format!("Expected trait name in trait use, got {token:?}"))) }
                             if !self.eat(&TokenKind::Comma) { break; }
                         }
                         if self.eat(&TokenKind::Semi) { continue; }
                         self.expect(TokenKind::Lb, "Expected ; or { after nested trait use")?;
                         while !self.eat(&TokenKind::Rb) {
-                            let first = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait method adaptation, got {token:?}"))) };
+                            let first = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait method adaptation, got {token:?}"))) };
                             let (trait_name, method_name) = if self.eat(&TokenKind::DoubleColon) {
-                                let method = match self.take() { TokenKind::Word(name) => name, token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
+                                let method = match self.take() { TokenKind::Word(name) => self.previous_word_spelling(&name), token => return Err(self.error(&format!("Expected trait method name, got {token:?}"))) };
                                 (self.qualify_name(first), method)
                             } else { (nested_traits.last().cloned().ok_or_else(|| self.error("Unqualified trait adaptation requires a trait use"))?, first) };
                             let mut excluded_traits = Vec::new();
                             let mut alias = None;
                             let mut visibility = None;
+                            let mut is_final = false;
                             match self.take() {
                                 TokenKind::Word(word) if word == "insteadof" => loop {
-                                    match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(name)), token => return Err(self.error(&format!("Expected excluded trait, got {token:?}"))) }
+                                    match self.take() { TokenKind::Word(name) => excluded_traits.push(self.qualify_name(self.previous_word_spelling(&name))), token => return Err(self.error(&format!("Expected excluded trait, got {token:?}"))) }
                                     if !self.eat(&TokenKind::Comma) { break; }
                                 },
                                 TokenKind::Word(word) if word == "as" => {
-                                    if let TokenKind::Word(word) = self.peek() { visibility = match word.as_str() { "public" => Some(Visibility::Public), "protected" => Some(Visibility::Protected), "private" => Some(Visibility::Private), _ => None }; if visibility.is_some() { self.take(); } }
-                                    if let TokenKind::Word(name) = self.peek() { alias = Some(name.clone()); self.take(); }
-                                    if alias.is_none() && visibility.is_none() { return Err(self.error("Trait alias must specify a name or visibility")); }
+                                    while let TokenKind::Word(word) = self.peek() {
+                                        match word.as_str() {
+                                            "public" => { visibility = Some(Visibility::Public); self.take(); }
+                                            "protected" => { visibility = Some(Visibility::Protected); self.take(); }
+                                            "private" => { visibility = Some(Visibility::Private); self.take(); }
+                                            "final" => { is_final = true; self.take(); }
+                                            _ => break,
+                                        }
+                                    }
+                                    if let TokenKind::Word(name) = self.peek() { let fallback = name.clone(); self.take(); alias = Some(self.previous_word_spelling(&fallback)); }
+                                    if alias.is_none() && visibility.is_none() && !is_final { return Err(self.error("Trait alias must specify a name, visibility, or final modifier")); }
                                 },
                                 token => return Err(self.error(&format!("Expected insteadof or as, got {token:?}"))),
                             }
                             self.expect(TokenKind::Semi, "Expected ; after trait adaptation")?;
-                            nested_trait_adaptations.push(TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility });
+                            nested_trait_adaptations.push(TraitAdaptation { trait_name, method_name, excluded_traits, alias, visibility, is_final });
                         }
                         continue;
                     }
@@ -523,15 +538,16 @@ impl Parser<'_> {
                     else if matches!(self.peek(), TokenKind::Word(word) if word == "const") {
                         if is_static || is_abstract || is_readonly { return Err(self.error("Invalid modifier on trait constant")); }
                         self.take();
-                        let type_name = if matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_))) {
-                            Some(self.parse_union_type(false)?)
+                        let nullable = self.eat(&TokenKind::Question);
+                        let type_name = if nullable || matches!(self.peek(), TokenKind::Word(_)) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Word(_) | TokenKind::Pipe | TokenKind::Ampersand)) {
+                            Some(self.parse_union_type(nullable)?)
                         } else { None };
                         let const_name_offset = self.peek_offset();
                         let const_name = match self.take() { TokenKind::Word(_) => self.source_word(const_name_offset), token => return Err(self.error(&format!("Expected trait constant name, got {token:?}"))) };
                         self.expect(TokenKind::Eq, "Expected = in trait constant")?;
                         let value = self.expression(1)?;
                         self.expect(TokenKind::Semi, "Expected ; after trait constant")?;
-                        trait_constants.push(ClassConstantDecl { name: const_name, value, type_name, visibility, is_final, is_enum_case: false, enum_case_has_value: false });
+                        trait_constants.push(ClassConstantDecl { name: const_name, attributes: member_attributes, value, type_name, visibility, is_final, is_enum_case: false, enum_case_has_value: false });
                     }
                     else {
                         let nullable = self.eat(&TokenKind::Question);
@@ -552,7 +568,7 @@ impl Parser<'_> {
                         properties.push(PropertyDecl { name: property, attributes: member_attributes, default, is_static, is_readonly, visibility, set_visibility, type_name, get_hook, set_hook });
                     }
                 }
-                traits.push(TraitDecl { name, traits: nested_traits, trait_adaptations: nested_trait_adaptations, properties, constants: trait_constants, methods });
+                traits.push(TraitDecl { name, attributes: class_attributes, traits: nested_traits, trait_adaptations: nested_trait_adaptations, properties, constants: trait_constants, methods });
             } else {
                 statements.push(self.statement()?);
             }

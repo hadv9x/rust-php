@@ -1,6 +1,131 @@
 use php_compiler::compile_source;
 
 #[test]
+fn foreach_by_reference_uses_reference_returning_iterator_current() {
+    let source = r#"<?php
+        class ReferenceIterator implements Iterator {
+            public $position = 0;
+            public $values = [3, 5];
+            public function rewind() { $this->position = 0; }
+            public function valid() { return $this->position < count($this->values); }
+            public function &current() { return $this->values[$this->position]; }
+            public function key() { return $this->position; }
+            public function next() { $this->position++; }
+        }
+        class ReferenceCollection implements IteratorAggregate {
+            public $inner;
+            public function __construct($inner) { $this->inner = $inner; }
+            public function getIterator() { return $this->inner; }
+        }
+        $iterator = new ReferenceIterator();
+        foreach ($iterator as &$value) { $value *= 10; }
+        unset($value);
+        echo implode(',', $iterator->values), '|';
+        $wrappedIterator = new ReferenceIterator();
+        $collection = new ReferenceCollection(new ReferenceCollection($wrappedIterator));
+        foreach ($collection as &$value) { $value += 1; }
+        unset($value);
+        echo implode(',', $wrappedIterator->values);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "30,50|4,6");
+}
+
+#[test]
+fn foreach_by_reference_rejects_iterators_that_return_values_not_references() {
+    let source = r#"<?php
+        class ValueIterator implements Iterator {
+            public $position = 0;
+            public function rewind() {}
+            public function valid() { return $this->position < 1; }
+            public function current() { return 1; }
+            public function key() { return 0; }
+            public function next() { $this->position++; }
+        }
+        $iterator = new ValueIterator();
+        foreach ($iterator as &$value) {}
+    "#;
+    let error = compile_source(source).unwrap().execute().unwrap_err();
+    assert!(error.contains("An iterator cannot be used with foreach by reference"), "{error}");
+}
+
+#[test]
+fn foreach_by_reference_mutates_values_yielded_by_reference_generators() {
+    let source = r#"<?php
+        function &referenceGenerator() {
+            $values = [2, 4];
+            foreach ($values as &$value) { yield $value; }
+        }
+        $generator = referenceGenerator();
+        foreach ($generator as &$value) { $value *= 10; echo $value, ','; }
+        unset($value);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "20,40,");
+}
+
+#[test]
+fn foreach_by_reference_rejects_non_reference_generators() {
+    let source = r#"<?php
+        function valueGenerator() { $value = 1; yield $value; }
+        $generator = valueGenerator();
+        foreach ($generator as &$value) {}
+    "#;
+    let error = compile_source(source).unwrap().execute().unwrap_err();
+    assert!(error.contains("non-referenceable generator"), "{error}");
+}
+
+#[test]
+fn foreach_object_visibility_and_reference_writes_follow_declaring_class_scope() {
+    let source = r#"<?php
+        class ParentVisibility {
+            protected $parentProtected = 'parent';
+            private $parentSecret = 'parent-secret';
+            public function parentView() {
+                $keys = [];
+                foreach ($this as $key => $value) { $keys[$key] = true; }
+                return isset($keys['parentSecret']) ? 'parent-private' : 'missing-parent-private';
+            }
+        }
+        class ChildVisibility extends ParentVisibility {
+            private $childSecret = 'child';
+            public function childView() {
+                $keys = [];
+                foreach ($this as $key => $value) { $keys[$key] = true; }
+                return (isset($keys['parentProtected']) ? 'protected' : 'missing-protected') . ':'
+                    . (isset($keys['childSecret']) ? 'child-private' : 'missing-child-private') . ':'
+                    . (isset($keys['parentSecret']) ? 'leaked-parent-private' : 'hidden-parent-private');
+            }
+            public function updateVisibleProperties() {
+                foreach ($this as &$value) { if ($value === 'child') { $value = 'updated'; } }
+                unset($value);
+            }
+            public function childSecret() { return $this->childSecret; }
+        }
+        $object = new ChildVisibility();
+        echo $object->parentView(), '|', $object->childView(), '|';
+        $object->updateVisibleProperties();
+        echo $object->childSecret();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "parent-private|protected:child-private:hidden-parent-private|updated");
+}
+
+#[test]
+fn by_reference_yield_from_preserves_delegated_generator_references() {
+    let source = r#"<?php
+        function &innerReferenceGenerator() {
+            $value = 3;
+            yield $value;
+            echo $value;
+        }
+        function &delegatingReferenceGenerator() {
+            yield from innerReferenceGenerator();
+        }
+        $generator = delegatingReferenceGenerator();
+        foreach ($generator as &$value) { $value = 42; }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42");
+}
+
+#[test]
 fn generators_suspend_lazily_resume_loops_and_run_finally() {
     let source = r#"<?php
         function sequence() {
@@ -106,6 +231,27 @@ fn generator_throw_enters_suspended_yield_and_routes_through_catches() {
 }
 
 #[test]
+fn generator_locals_are_destroyed_on_completion_and_exceptional_exit() {
+    let source = r#"<?php
+        class GeneratorLocal {
+            public $name;
+            public function __construct($name) { $this->name = $name; }
+            public function __destruct() { echo $this->name, ';'; }
+        }
+        function completes() { $local = new GeneratorLocal('complete'); yield 'ready'; echo 'resumed;'; }
+        function fails() { $local = new GeneratorLocal('exception'); yield 'waiting'; throw new Exception('stop'); }
+        $complete = completes();
+        echo $complete->current(), ';';
+        $complete->next();
+        echo 'done;';
+        $failure = fails();
+        echo $failure->current(), ';';
+        try { $failure->next(); } catch (Exception $error) { echo 'caught;'; }
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ready;resumed;complete;done;waiting;exception;caught;");
+}
+
+#[test]
 fn yield_from_delegates_arrays_generators_send_return_and_exceptions() {
     let source = r#"<?php
         class DelegateFailure extends Exception {}
@@ -202,6 +348,28 @@ fn iterator_to_array_copies_arrays_and_consumes_generators_with_key_modes() {
 
     let invalid = compile_source("<?php iterator_to_array(42);").unwrap().execute().unwrap_err();
     assert!(invalid.contains("Traversable|array"));
+}
+
+#[test]
+fn iterator_to_array_preserves_references_from_arrays_and_reference_generators() {
+    let source = r#"<?php
+        function &yieldShared(&$value) { yield $value; }
+        function &duplicateShared(&$first, &$last) { yield 'duplicate' => $first; yield 'duplicate' => $last; }
+        $shared = 1;
+        $array = ['shared' => &$shared];
+        $copy = iterator_to_array($array);
+        $copy['shared'] = 2;
+        echo $shared, ':';
+        $shared = 3;
+        $fromGenerator = iterator_to_array(yieldShared($shared));
+        $fromGenerator[0] = 4;
+        echo $shared, ':', $fromGenerator[0], ':';
+        $first = 5; $last = 6;
+        $overwritten = iterator_to_array(duplicateShared($first, $last));
+        $overwritten['duplicate'] = 7;
+        echo $first, ':', $last;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:4:4:5:7");
 }
 
 #[test]

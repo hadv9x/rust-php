@@ -3,6 +3,7 @@ $cause = new Exception("root cause");
 $error = new TypeError("expected integer", 0, $cause);
 echo $error->getMessage(), ":", $error->getCode(), ":", $error->getPrevious()->getMessage(), "\n";
 echo get_class($error), ":", get_parent_class($error), ":", ($error instanceof Throwable), "\n";
+echo $error;
 
 class ApplicationFailure extends Exception {
     public function __construct($message) { parent::__construct($message, 23); }

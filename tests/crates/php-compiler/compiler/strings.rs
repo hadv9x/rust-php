@@ -1,6 +1,24 @@
 use php_compiler::compile_source;
 
 #[test]
+fn url_encoding_helpers_match_form_and_rfc3986_rules_and_dispatch_by_name() {
+    let source = r#"<?php
+        $text = 'a b+c/é~';
+        echo urlencode(string: $text), '|', rawurlencode($text), '|';
+        echo urldecode('a+b%2Bc%2F%C3%A9%7E'), '|', rawurldecode('a+b%2Bc%2F%C3%A9%7E'), '|';
+        echo array_map('rawurlencode', ['a b', 'x/y'])[1], '|';
+        echo function_exists('urlencode'), function_exists('urldecode'), function_exists('rawurlencode'), function_exists('rawurldecode');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "a+b%2Bc%2F%C3%A9%7E|a%20b%2Bc%2F%C3%A9~|a b+c/é~|a+b+c/é~|x%2Fy|1111");
+}
+
+#[test]
+fn url_decoding_leaves_malformed_percent_sequences_literal() {
+    let source = r#"<?php echo urldecode('%2G%');"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "%2G%");
+}
+
+#[test]
 fn nl2br_preserves_newlines_and_supports_xhtml_named_and_callback_calls() {
     let source = r#"<?php
         echo nl2br(string: "é\r\nA\n\rB\rC"), "|";

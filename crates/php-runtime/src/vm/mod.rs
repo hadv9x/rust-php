@@ -18,6 +18,7 @@ use operators::{apply_binary, apply_bitwise_not, apply_cast};
 use crate::{bytecode::{CompoundOperation, Op}, ArrayKey, BytecodeClass, BytecodeFunction, ExecutionLimits, SessionValue, Value};
 
 thread_local! {
+    static INCLUDE_LOADER: RefCell<Option<crate::IncludeLoader>> = const { RefCell::new(None) };
     static EXECUTION_DEPTH: Cell<usize> = Cell::new(0);
     static EXECUTION_LIMITS: Cell<ExecutionLimits> = Cell::new(ExecutionLimits {
         max_instructions: 10_000_000,
@@ -25,6 +26,16 @@ thread_local! {
         max_execution_time: Some(std::time::Duration::from_secs(30)),
     });
     static EXECUTION_DEADLINE: Cell<Option<Instant>> = Cell::new(None);
+}
+
+pub(crate) fn with_include_loader<T>(loader: Option<crate::IncludeLoader>, execute: impl FnOnce() -> T) -> T {
+    let previous = INCLUDE_LOADER.with(|current| current.replace(loader));
+    struct Restore(Option<crate::IncludeLoader>);
+    impl Drop for Restore {
+        fn drop(&mut self) { INCLUDE_LOADER.with(|current| { current.replace(self.0.take()); }); }
+    }
+    let _restore = Restore(previous);
+    execute()
 }
 
 const MAX_EXECUTION_DEPTH: usize = 32;
@@ -87,6 +98,7 @@ pub(super) struct GlobalVariables {
     /// Visible symbol order for PHP's `$GLOBALS` and global `get_defined_vars()`.
     order: Vec<String>,
     constants: HashMap<String, Value>,
+    constant_attributes: HashMap<String, Vec<crate::BytecodeAttribute>>,
     thrown_values: HashMap<u64, Value>,
     http_status: Option<u16>,
     http_headers: Vec<(String, String)>,
@@ -94,13 +106,29 @@ pub(super) struct GlobalVariables {
     session_destroyed: bool,
     next_reference_id: u64,
     json_last_error: i64,
+    /// Request-local values set by putenv(); None entries mask inherited values.
+    environment: HashMap<String, Option<String>>,
+    /// Request-local PHP include_path override; None selects the platform default.
+    include_path: Option<String>,
     diagnostics: Vec<crate::RuntimeDiagnostic>,
+    output_offset: usize,
     last_error: Option<crate::RuntimeDiagnostic>,
     error_reporting: Option<i64>,
     destructor_queue: Vec<Value>,
     destructed_objects: HashSet<usize>,
     /// Active PHP source frames, updated by compiled statement line markers.
     pub(super) active_trace_frames: Vec<crate::PhpTraceFrame>,
+    /// Canonical files already executed through include_once/require_once in this request.
+    included_files: HashSet<String>,
+    /// Declarations introduced by files loaded through runtime-selected include paths.
+    dynamic_functions: HashMap<String, BytecodeFunction>,
+    dynamic_classes: HashMap<String, BytecodeClass>,
+    dynamic_symbol_generation: u64,
+    autoload_callbacks: Vec<Value>,
+    autoload_in_progress: HashSet<String>,
+    autoload_extensions: Option<String>,
+    /// Object handles whose readonly properties may be reinitialized during their __clone hook.
+    readonly_clone_objects: Vec<usize>,
 }
 
 impl GlobalVariables {
@@ -141,10 +169,21 @@ impl GlobalVariables {
             if diagnostic.source_file.is_none() && !frame.file.is_empty() { diagnostic.source_file = Some(frame.file.clone()); }
             if diagnostic.source_line.is_none() { diagnostic.source_line = Some(frame.line); }
         }
+        diagnostic.output_offset = self.output_offset;
         self.last_error = Some(diagnostic.clone());
         if mask & bit != 0 {
             self.diagnostics.push(diagnostic);
         }
+    }
+
+    pub(super) fn include_path(&self) -> &str {
+        self.include_path.as_deref().unwrap_or(if cfg!(windows) { ".;" } else { ".:/usr/share/php" })
+    }
+
+    pub(super) fn set_include_path(&mut self, value: String) -> String {
+        let previous = self.include_path().to_string();
+        self.include_path = Some(value);
+        previous
     }
 
     pub(super) fn register_destructor_object(&mut self, object: &Value) {
@@ -155,6 +194,10 @@ impl GlobalVariables {
 
     fn mark_destructed(&mut self, object: &Rc<RefCell<crate::PhpObject>>) -> bool {
         self.destructed_objects.insert(Rc::as_ptr(object) as usize)
+    }
+
+    pub(super) fn forget_collected_objects(&mut self, objects: &HashSet<usize>) {
+        self.destructed_objects.retain(|identity| !objects.contains(identity));
     }
 }
 
@@ -170,7 +213,7 @@ pub(super) fn increment_value(value: &Value, delta: i8, globals: &mut GlobalVari
         _ => None,
     };
     if let Some((level, message)) = diagnostic {
-        globals.report_diagnostic(crate::RuntimeDiagnostic { level, message: message.into(), source_file: None, source_line: None });
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level, message: message.into(), source_file: None, source_line: None, output_offset: 0 });
     }
     match &original {
         Value::Array(_) | Value::Stream(_) => return Err(format!("TypeError:Cannot {} {}", if delta > 0 { "increment" } else { "decrement" }, original.type_name())),
@@ -258,6 +301,9 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "IDNA_NONTRANSITIONAL_TO_UNICODE" => return Some(Value::Integer(32)),
         "INTL_IDNA_VARIANT_2003" => return Some(Value::Integer(0)),
         "INTL_IDNA_VARIANT_UTS46" => return Some(Value::Integer(1)),
+        "SIG_DFL" => return Some(Value::Integer(0)),
+        "SIG_IGN" => return Some(Value::Integer(1)),
+        "SIG_ERR" => return Some(Value::Integer(-1)),
         "UUID_VARIANT_NCS" | "UUID_TYPE_DEFAULT" => return Some(Value::Integer(0)),
         "UUID_VARIANT_DCE" | "UUID_TYPE_TIME" => return Some(Value::Integer(1)),
         "UUID_VARIANT_MICROSOFT" | "UUID_TYPE_SECURITY" => return Some(Value::Integer(2)),
@@ -268,6 +314,7 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "UUID_TYPE_TIME_V7" => return Some(Value::Integer(7)),
         "UUID_TYPE_VENDOR" => return Some(Value::Integer(8)),
         "FILE_USE_INCLUDE_PATH" => return Some(Value::Integer(1)),
+        "PATH_SEPARATOR" => return Some(Value::String(if cfg!(windows) { ";" } else { ":" }.into())),
         "FILE_IGNORE_NEW_LINES" => return Some(Value::Integer(2)),
         "FILE_SKIP_EMPTY_LINES" => return Some(Value::Integer(4)),
         "FILE_APPEND" => return Some(Value::Integer(8)),
@@ -403,6 +450,7 @@ fn warn_undefined_variable(
             message: format!("Undefined variable ${name}"),
             source_file: None,
             source_line: None,
+            output_offset: 0,
         });
     }
 }
@@ -418,6 +466,7 @@ pub(super) fn warn_undefined_array_key(root: &Value, keys: &[crate::ArrayKey], g
             message: format!("Undefined array key {rendered}"),
             source_file: None,
             source_line: None,
+            output_offset: 0,
         });
     }
 }
@@ -673,6 +722,7 @@ enum YieldFromIterator {
 #[derive(Debug)]
 pub struct PhpGenerator {
     function: BytecodeFunction,
+    pub(super) by_reference: bool,
     variables: HashMap<String, Value>,
     continuation: FrameContinuation,
     current: Option<(Value, Value)>,
@@ -747,6 +797,12 @@ pub(super) fn write_variable(
 ) -> Result<(), String> {
     let value = value.dereference();
     if name == "GLOBALS" { return Err("Cannot re-assign $GLOBALS".into()); }
+    if !bindings.contains_key(&name) {
+        if let Some(Value::Reference(reference)) = variables.get(&name) {
+            *reference.borrow_mut() = value;
+            return Ok(());
+        }
+    }
     if let Some(binding) = bindings.get(&name) {
         if let VariableBinding::ArrayElement { storage_key, keys } = binding {
             let current = globals.get(storage_key).cloned().unwrap_or(Value::Null);
@@ -760,6 +816,7 @@ pub(super) fn write_variable(
             if let Some(Value::Reference(reference)) = object.properties.get(property) {
                 *reference.borrow_mut() = value.dereference();
             } else {
+                if !object.properties.contains_key(property) { object.property_order.push(property.clone()); }
                 object.properties.insert(property.clone(), value);
             }
             return Ok(());
@@ -1212,8 +1269,16 @@ pub(super) fn value_is_iterable(value: &Value, classes: &HashMap<String, Bytecod
 /// Walk class and interface metadata to test nominal runtime assignability.
 pub(super) fn is_a_type(actual: &str, expected: &str, classes: &HashMap<String, BytecodeClass>, visited: &mut std::collections::HashSet<String>) -> bool {
     if actual.eq_ignore_ascii_case(expected) { return true; }
+    if expected.eq_ignore_ascii_case("Traversable") && matches!(actual.to_ascii_lowercase().as_str(),
+        "iterator" | "iteratoraggregate" | "generator" | "pdostatement" | "arrayiterator" | "appenditerator"
+        | "directoryiterator" | "filesystemiterator" | "recursivearrayiterator" | "recursiveiteratoriterator" | "splfileobject") {
+        return true;
+    }
     if crate::exception_builtins::is_class(actual) {
         return crate::exception_builtins::is_a(actual, expected);
+    }
+    if let Some(parent) = builtin_parent_class(actual) {
+        return parent.eq_ignore_ascii_case(expected) || is_a_type(parent, expected, classes, visited);
     }
     if !visited.insert(actual.to_string()) { return false; }
     let Some(class) = classes.get(actual) else { return false; };
@@ -1222,6 +1287,15 @@ pub(super) fn is_a_type(actual: &str, expected: &str, classes: &HashMap<String, 
     }
     class.parent.as_deref().is_some_and(|parent| is_a_type(parent, expected, classes, visited))
         || class.interfaces.iter().any(|interface| is_a_type(interface, expected, classes, visited))
+}
+
+pub(super) fn builtin_parent_class(name: &str) -> Option<&'static str> {
+    match name.trim_start_matches('\\').to_ascii_lowercase().as_str() {
+        "reflectionobject" | "reflectionenum" => Some("ReflectionClass"),
+        "reflectionenumunitcase" => Some("ReflectionClassConstant"),
+        "reflectionenumbackedcase" => Some("ReflectionEnumUnitCase"),
+        _ => None,
+    }
 }
 
 fn class_implements_to_string(actual: &str, classes: &HashMap<String, BytecodeClass>, visited: &mut std::collections::HashSet<String>) -> bool {
@@ -1249,6 +1323,9 @@ fn exception_matches(value: &Value, catch_types: &[String], classes: &HashMap<St
 }
 
 fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
+    if let Some(message) = message.strip_prefix("ReflectionException:") {
+        return Some(("ReflectionException", message.trim()));
+    }
     if let Some(message) = message.strip_prefix("Error:") {
         return Some(("Error", message.trim()));
     }
@@ -1290,33 +1367,53 @@ fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
 }
 
 /// Execute a compiled program with fresh variables, static storage, and captured output.
-pub(crate) fn execute(code: &[Op], functions: &HashMap<String, BytecodeFunction>, classes: &HashMap<String, BytecodeClass>, source_file: &str) -> Result<String, String> {
-    execute_with_globals(code, functions, classes, HashMap::new(), source_file).map(|result| result.output)
+pub(crate) fn execute(code: &[Op], functions: &HashMap<String, BytecodeFunction>, classes: &HashMap<String, BytecodeClass>, constant_attributes: &HashMap<String, Vec<crate::BytecodeAttribute>>, source_file: &str) -> Result<String, String> {
+    execute_with_globals(code, functions, classes, constant_attributes, HashMap::new(), source_file).map(|result| result.output)
 }
 
 pub(crate) fn execute_with_globals(
     code: &[Op],
     functions: &HashMap<String, BytecodeFunction>,
     classes: &HashMap<String, BytecodeClass>,
+    constant_attributes: &HashMap<String, Vec<crate::BytecodeAttribute>>,
     predefined_globals: HashMap<String, Value>,
     source_file: &str,
 ) -> Result<crate::ExecutionResult, String> {
-    execute_with_globals_and_limits(code, functions, classes, predefined_globals, ExecutionLimits::default(), source_file)
+    execute_with_globals_and_limits(code, functions, classes, constant_attributes, predefined_globals, ExecutionLimits::default(), source_file)
 }
 
 pub(crate) fn execute_with_globals_and_limits(
     code: &[Op],
     functions: &HashMap<String, BytecodeFunction>,
     classes: &HashMap<String, BytecodeClass>,
+    constant_attributes: &HashMap<String, Vec<crate::BytecodeAttribute>>,
     predefined_globals: HashMap<String, Value>,
     limits: ExecutionLimits,
     source_file: &str,
+) -> Result<crate::ExecutionResult, String> {
+    execute_with_globals_and_limits_and_diagnostics(code, functions, classes, constant_attributes, predefined_globals, limits, source_file, Vec::new())
+}
+
+pub(crate) fn execute_with_globals_and_limits_and_diagnostics(
+    code: &[Op],
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    constant_attributes: &HashMap<String, Vec<crate::BytecodeAttribute>>,
+    predefined_globals: HashMap<String, Value>,
+    limits: ExecutionLimits,
+    source_file: &str,
+    initial_diagnostics: Vec<crate::RuntimeDiagnostic>,
 ) -> Result<crate::ExecutionResult, String> {
     let _database_session_guard = crate::pdo::ExecutionGuard::enter();
     let _limits_guard = ExecutionLimitGuard::enter(limits);
     let mut variables = HashMap::<String, Value>::new();
     let mut global_variables = GlobalVariables::new();
+    global_variables.constant_attributes = constant_attributes.clone();
     global_variables.source_file = source_file.to_string();
+    if let Some(Value::String(include_path)) = predefined_globals.get("\0php_include_path") {
+        global_variables.include_path = Some(include_path.clone());
+    }
+    for diagnostic in initial_diagnostics { global_variables.report_diagnostic(diagnostic); }
     for name in ["_GET", "_POST", "_COOKIE", "_REQUEST", "_FILES", "_SERVER", "_ENV", "_SESSION"] {
         global_variables.ensure(name.to_string(), Value::array(Vec::new()));
     }
@@ -1326,7 +1423,8 @@ pub(crate) fn execute_with_globals_and_limits(
     // Static properties persist across calls inside this execution, but not across program runs.
     let mut static_properties = classes.iter().flat_map(|(class_name, class)| {
         class.static_properties.iter().filter_map(move |(name, property)| {
-            property.default.clone().map(|value| ((class_name.clone(), name.clone()), value))
+            property.default.clone().or_else(|| property.type_name.is_none().then_some(Value::Null))
+                .map(|value| ((class_name.clone(), name.clone()), value))
         })
     }).collect::<StaticProperties>();
     let mut output = String::new();
@@ -1395,6 +1493,45 @@ fn execute_code(
     result
 }
 
+pub(super) fn execute_dynamic_module(
+    module: crate::BytecodeProgram,
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let mut declarations_added = false;
+    for (name, function) in module.functions {
+        if !functions.contains_key(&name) && !global_variables.dynamic_functions.contains_key(&name) {
+            global_variables.dynamic_functions.insert(name, function);
+            declarations_added = true;
+        }
+    }
+    for (name, class) in module.classes {
+        if !classes.contains_key(&name) && !global_variables.dynamic_classes.contains_key(&name) {
+            global_variables.dynamic_classes.insert(name, class);
+            declarations_added = true;
+        }
+    }
+    if declarations_added { global_variables.dynamic_symbol_generation += 1; }
+    let mut nested = FrameContinuation::new(std::mem::take(bindings), *steps);
+    global_variables.push_trace_frame("<include>", variables.contains_key("this"), classes);
+    global_variables.set_trace_file(&module.source_file);
+    let result = execute_frame(
+        &module.instructions, functions, classes, static_properties, variables,
+        global_variables, global_scope, &module.source_file, &mut nested, Value::Null, None,
+        false, output, steps,
+    );
+    global_variables.active_trace_frames.pop();
+    *bindings = nested.bindings;
+    result.map(|value| value.unwrap_or(Value::Integer(1)))
+}
+
 fn execute_frame(
     code: &[Op],
     functions: &HashMap<String, BytecodeFunction>,
@@ -1422,6 +1559,9 @@ fn execute_frame(
     let mut pc = continuation.pc;
     let mut injected_throw = false;
     let mut delegated_exception = None;
+    let mut active_functions: Option<HashMap<String, BytecodeFunction>> = None;
+    let mut active_classes: Option<HashMap<String, BytecodeClass>> = None;
+    let mut seen_symbol_generation = u64::MAX;
     if continuation.awaiting_resume {
         if let Some(exception) = resume_exception {
             if matches!(code.get(pc), Some(Op::YieldFrom)) && matches!(yield_from.get(&pc), Some(YieldFromIterator::Generator(_))) {
@@ -1439,6 +1579,20 @@ fn execute_frame(
     continuation.yielded = None;
 
     while pc < code.len() {
+        if seen_symbol_generation != global_variables.dynamic_symbol_generation {
+            if global_variables.dynamic_symbol_generation != 0 {
+                let mut combined_functions = functions.clone();
+                combined_functions.extend(global_variables.dynamic_functions.clone());
+                let mut combined_classes = classes.clone();
+                combined_classes.extend(global_variables.dynamic_classes.clone());
+                active_functions = Some(combined_functions);
+                active_classes = Some(combined_classes);
+            }
+            seen_symbol_generation = global_variables.dynamic_symbol_generation;
+        }
+        let functions = active_functions.as_ref().unwrap_or(functions);
+        let classes = active_classes.as_ref().unwrap_or(classes);
+        global_variables.output_offset = output.len();
         // A shared budget also bounds recursive calls and callback execution.
         *steps += 1;
         if *steps > limits.max_instructions { return Err("Execution instruction limit exceeded".into()); }
@@ -1463,7 +1617,7 @@ fn execute_frame(
                 return Ok(None);
             }
         }
-        if arrays::execute_instruction(instruction, &mut stack, variables, &bindings, global_variables, global_scope, functions, classes, static_properties, output, steps)? { return Ok(None); }
+        if arrays::execute_instruction(instruction, &mut stack, variables, &mut bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)? { return Ok(None); }
         if control::execute_instruction(
             instruction, &mut stack, &mut iterators, variables, &mut bindings, global_variables, global_scope,
             frame_id, &mut pc, functions, classes, static_properties, output, steps,
@@ -1471,8 +1625,66 @@ fn execute_frame(
         if objects::execute_instruction(instruction, &mut stack, variables, &mut bindings, global_variables, global_scope, frame_id, frame_scope, functions, classes, static_properties, output, steps, &mut pc)? { return Ok(None); }
         if functions::execute_instruction(instruction, &mut stack, variables, &mut bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)? { return Ok(None); }
         match instruction {
+            Op::Include(mode) => {
+                let requested = stack.pop().ok_or("Invalid bytecode stack")?.show();
+                let current_file = global_variables.active_trace_frames.last().map(|frame| frame.file.as_str()).unwrap_or(&global_variables.source_file).to_string();
+                let include_path = global_variables.include_path().to_string();
+                let loader = INCLUDE_LOADER.with(|loader| loader.borrow().clone());
+                let Some(loader) = loader else {
+                    return Err("dynamic include requires a source loader; use compile_file()".into());
+                };
+                let module = match loader(&requested, &current_file, &include_path) {
+                    Ok(module) => module,
+                    Err(error) => {
+                        let (source_file, source_line) = global_variables.active_trace_frames.last()
+                            .map(|frame| (Some(frame.file.clone()), Some(frame.line)))
+                            .unwrap_or((None, None));
+                        let operation = match mode {
+                            crate::bytecode::IncludeMode::Include => "include",
+                            crate::bytecode::IncludeMode::IncludeOnce => "include_once",
+                            crate::bytecode::IncludeMode::Require => "require",
+                            crate::bytecode::IncludeMode::RequireOnce => "require_once",
+                        };
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Warning,
+                            message: format!("{operation}({requested}): Failed to open stream: {error}"),
+                            source_file, source_line, output_offset: output.len(),
+                        });
+                        if matches!(mode, crate::bytecode::IncludeMode::Include | crate::bytecode::IncludeMode::IncludeOnce) {
+                            stack.push(Value::Bool(false));
+                            return Ok(None);
+                        }
+                        let message = format!("Failed opening required '{requested}' (include_path='{include_path}')");
+                        let mut throwable = crate::exception_builtins::construct(
+                            "Error", &[Value::String(message)], classes,
+                        )?;
+                        if let (Some(frame), Value::Object(object)) =
+                            (global_variables.active_trace_frames.last(), &mut throwable)
+                        {
+                            if let Some(data) = object.borrow_mut().exception.as_mut() {
+                                data.file = frame.file.clone();
+                                data.line = Some(frame.line);
+                            }
+                        }
+                        global_variables.store_thrown(*steps, throwable);
+                        return Err(format!("{THROWN_VALUE_PREFIX}{steps}"));
+                    }
+                };
+                let canonical = module.source_file.clone();
+                let already_included = global_variables.included_files.contains(&canonical);
+                if matches!(mode, crate::bytecode::IncludeMode::IncludeOnce | crate::bytecode::IncludeMode::RequireOnce) && already_included {
+                    stack.push(Value::Bool(true));
+                    return Ok(None);
+                }
+                global_variables.included_files.insert(canonical);
+                stack.push(execute_dynamic_module(module, variables, &mut bindings, global_variables,
+                    global_scope, functions, classes, static_properties, output, steps)?);
+            }
             Op::SetLine(line) => global_variables.set_trace_line(*line),
-            Op::SetFile(file) => global_variables.set_trace_file(file),
+            Op::SetFile(file) => {
+                global_variables.set_trace_file(file);
+            }
+            Op::MarkIncluded(file) => { global_variables.included_files.insert(file.clone()); }
             Op::Const(value) => stack.push(value.clone()),
             Op::LoadConstant(name) => stack.push(read_constant(name, global_variables)?),
             Op::DynamicClassName => {
@@ -1583,7 +1795,9 @@ fn execute_frame(
                 let property = stack.pop().ok_or("Invalid bytecode stack")?.show();
                 let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
                 let Value::Object(object) = receiver else { return Err("Cannot assign a reference to a property on a non-object".into()); };
-                object.borrow_mut().properties.insert(property, Value::Reference(reference));
+                let mut object = object.borrow_mut();
+                if !object.properties.contains_key(&property) { object.property_order.push(property.clone()); }
+                object.properties.insert(property, Value::Reference(reference));
             }
             Op::BindDynamicPropertyArrayReference(target_key_count, source, source_key_count, access_scope, in_constructor) => {
                 let key_count = target_key_count + source_key_count;
@@ -1773,6 +1987,7 @@ fn execute_frame(
                     return Err("Execution output limit exceeded".into());
                 }
                 output.push_str(&rendered);
+                global_variables.output_offset = output.len();
             }
             Op::Pop => { stack.pop().ok_or("Invalid bytecode stack")?; }
             Op::Dup => {
@@ -2009,12 +2224,22 @@ fn execute_frame(
                 stack.push(converted);
             }
             Op::InstanceOf => {
-                let expected = stack.pop().ok_or("Invalid bytecode stack")?.show().to_ascii_lowercase();
+                let expected_name = stack.pop().ok_or("Invalid bytecode stack")?.show();
+                let expected_key = expected_name.trim_start_matches('\\').to_ascii_lowercase();
+                if !classes.contains_key(&expected_key) && !crate::exception_builtins::is_class(&expected_key)
+                    && !global_variables.autoload_callbacks.is_empty()
+                {
+                    functions::invoke_registered_autoloaders(&expected_name, variables, &mut bindings, global_variables,
+                        global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                }
+                let expected = expected_key;
+                let mut active_classes = classes.clone();
+                active_classes.extend(global_variables.dynamic_classes.clone());
                 let value = stack.pop().ok_or("Invalid bytecode stack")?;
                 let matches = match value {
                     Value::Object(object) => {
                         let actual = object.borrow().class_name.to_ascii_lowercase();
-                        is_a_type(&actual, &expected, classes, &mut HashSet::new())
+                        is_a_type(&actual, &expected, &active_classes, &mut HashSet::new())
                     }
                     Value::Generator(_) => expected == "generator",
                     _ => false,
@@ -2105,8 +2330,12 @@ pub(super) fn new_generator(
     frame_id: u64,
     classes: &HashMap<String, BytecodeClass>,
 ) -> Result<Value, String> {
-    let function_for_validation = function.clone();
+    // Calling a generator function creates a Generator object; the function's
+    // by-reference marker applies to yielded values, not this factory result.
+    let mut function_for_validation = function.clone();
+    function_for_validation.returns_by_reference = false;
     let generator = Value::Generator(Rc::new(RefCell::new(PhpGenerator {
+        by_reference: function.returns_by_reference,
         function,
         variables,
         continuation: FrameContinuation::new(bindings, frame_id),
@@ -2182,12 +2411,19 @@ pub(super) fn advance_generator_with_exception(
                 generator.completed = true;
                 generator.current = None;
                 generator.return_value = result;
+                let frame = std::mem::take(&mut generator.variables);
+                let return_value = generator.return_value.clone().unwrap_or(Value::Null);
+                drop(generator);
+                functions::finish_user_frame(frame, &return_value, functions, classes, static_properties, global_variables, output, steps)?;
                 Ok(None)
             }
         }
         Err(error) => {
             generator.completed = true;
             generator.current = None;
+            let frame = std::mem::take(&mut generator.variables);
+            drop(generator);
+            functions::finish_user_frame(frame, &Value::Null, functions, classes, static_properties, global_variables, output, steps)?;
             Err(error)
         }
     }

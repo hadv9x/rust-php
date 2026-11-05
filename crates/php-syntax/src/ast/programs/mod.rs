@@ -20,5 +20,6 @@ pub struct Program {
 #[derive(Clone, Debug)]
 pub struct ConstantDecl {
     pub name: String,
+    pub attributes: Vec<super::AttributeDecl>,
     pub value: Expr,
 }
