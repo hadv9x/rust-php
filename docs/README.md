@@ -18,6 +18,10 @@ Use this page to find the documentation for each part of the project.
 
 ## Internals and use
 
+- [Contributing](../CONTRIBUTING.md) — contribution workflow, regression coverage, and local checks.
+- [MIT license](../LICENSE) — terms for using and distributing the project.
+- [Continuous integration](../.github/workflows/ci.yml) — GitHub Actions workspace test, check, and release build.
+- [Open-source maintenance checklist](open-source-maintenance.md) — current automation and GitHub settings maintainers need to configure.
 - [PHP compatibility backlog](php-compatibility-backlog.md) — the active ten-area implementation checklist and verification protocol.
 
 - [Compiler architecture](compiler-architecture.md) — project layers, bytecode flow, and design references.

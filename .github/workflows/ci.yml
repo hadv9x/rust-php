@@ -1,0 +1,40 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test workspace (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # action SHA
+        with:
+          toolchain: stable
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Check workspace
+        run: cargo check --workspace --locked
+
+      - name: Build CLI and server
+        run: cargo build --release -p php-cli --locked
