@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target/
 
+# Generated release packages and checksums
+/dist/
+
 # Local environment and editor files
 .env
 .env.*
