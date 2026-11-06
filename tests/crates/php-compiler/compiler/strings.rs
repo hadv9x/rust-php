@@ -30,6 +30,22 @@ fn sha1_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
 }
 
 #[test]
+fn htmlentities_escapes_html4_entities_and_honors_quotes_and_double_encode() {
+    let source = r#"<?php
+        $input = '<b>© à ß &amp; &madeup; "double" \'single\'';
+        echo htmlentities($input), '|';
+        echo htmlentities(string: $input, flags: ENT_COMPAT, double_encode: false), '|';
+        echo htmlentities($input, ENT_NOQUOTES), '|';
+        echo implode(',', array_map('htmlentities', ['©', '€'])), '|';
+        echo function_exists('htmlentities');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        r#"&lt;b&gt;&copy; &agrave; &szlig; &amp;amp; &amp;madeup; &quot;double&quot; &#039;single&#039;|&lt;b&gt;&copy; &agrave; &szlig; &amp; &amp;madeup; &quot;double&quot; 'single'|&lt;b&gt;&copy; &agrave; &szlig; &amp;amp; &amp;madeup; "double" 'single'|&copy;,&euro;|1"#
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

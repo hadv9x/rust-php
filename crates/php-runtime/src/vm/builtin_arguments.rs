@@ -272,6 +272,7 @@ fn signature(name: &str) -> Option<Signature> {
         "sha1" => (&["string", "binary"], &[(1, F)], false),
         "base64_encode" => (&["string"], &[], false),
         "base64_decode" => (&["string", "strict"], &[(1, F)], false),
+        "htmlentities" => (&["string", "flags", "encoding", "double_encode"], &[(1, Num(11.0)), (2, DefaultValue::Utf8), (3, DefaultValue::True)], false),
         "addcslashes" => (&["string", "characters"], &[], false),
         "number_format" => (&["num", "decimals", "decimal_separator", "thousands_separator"], &[(1, Num(0.0)), (2, DefaultValue::Dot), (3, DefaultValue::Comma)], false),
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" => (&["string1", "string2"], &[], false),
