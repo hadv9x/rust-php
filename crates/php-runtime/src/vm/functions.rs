@@ -4009,6 +4009,7 @@ fn hash_hmac_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) ->
     let digest = match algorithm.as_str() {
         "md5" => crate::string_builtins::md5_digest as fn(&[u8]) -> Vec<u8>,
         "sha1" => crate::string_builtins::sha1_digest as fn(&[u8]) -> Vec<u8>,
+        "sha256" => crate::string_builtins::sha256_digest as fn(&[u8]) -> Vec<u8>,
         _ => return Err(format!("ValueError:hash_hmac_file(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
     };
     let filename = arguments[1].show();
@@ -4040,7 +4041,7 @@ fn hash_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Resu
     let algorithm = arguments[0].show().to_ascii_lowercase();
     let filename = arguments[1].show();
     let binary = arguments.get(2).is_some_and(Value::truthy);
-    if !matches!(algorithm.as_str(), "md5" | "sha1" | "crc32b") {
+    if !matches!(algorithm.as_str(), "md5" | "sha1" | "sha256" | "crc32b") {
         return Err(format!("ValueError:hash_file(): Argument #1 ($algo) must be a valid hashing algorithm, {algorithm} given"));
     }
     let Some(contents) = filesystem_path(globals, std::path::Path::new(&filename), false)

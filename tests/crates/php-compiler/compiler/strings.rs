@@ -92,47 +92,55 @@ fn hash_equals_compares_strings_with_php_named_arguments_and_callbacks() {
 }
 
 #[test]
-fn hash_hmac_supports_md5_sha1_named_arguments_and_callbacks() {
+fn hash_hmac_supports_md5_sha1_sha256_named_arguments_and_callbacks() {
     let source = r#"<?php
         $data = 'what do ya want for nothing?';
         echo hash_hmac('md5', $data, 'Jefe'), '|';
         echo hash_hmac(algo: 'sha1', data: $data, key: 'Jefe'), '|';
-        echo implode(',', array_map('hash_hmac', ['md5', 'sha1'], [$data, $data], ['Jefe', 'Jefe'])), '|';
+        echo hash_hmac('sha256', $data, 'Jefe'), '|';
+        echo implode(',', array_map('hash_hmac', ['md5', 'sha1', 'sha256'], [$data, $data, $data], ['Jefe', 'Jefe', 'Jefe'])), '|';
         echo hash_hmac('md5', $data, 'Jefe', binary: true) !== hash_hmac('md5', $data, 'Jefe'), '|';
         echo function_exists('hash_hmac');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "750c783e6ab0b503eaa86e310a5db738|effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|750c783e6ab0b503eaa86e310a5db738,effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|1|1"
+        "750c783e6ab0b503eaa86e310a5db738|effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843|750c783e6ab0b503eaa86e310a5db738,effcdf6ae5eb2fa2d27416d5f184df9c259a7c79,5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843|1|1"
     );
 }
 
 #[test]
-fn hash_supports_md5_sha1_crc32b_and_php_named_arguments() {
+fn hash_supports_md5_sha1_sha256_crc32b_and_php_named_arguments() {
     let source = r#"<?php
         echo hash('md5', 'abc'), '|';
         echo hash(algo: 'sha1', data: 'abc'), '|';
+        echo hash('sha256', 'abc'), '|';
         echo hash('crc32b', '123456789'), '|';
-        echo implode(',', array_map('hash', ['md5', 'sha1'], ['abc', 'abc'])), '|';
+        echo implode(',', array_map('hash', ['md5', 'sha1', 'sha256'], ['abc', 'abc', 'abc'])), '|';
         echo hash('md5', 'abc', binary: true) !== hash('md5', 'abc'), '|';
         echo function_exists('hash');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "900150983cd24fb0d6963f7d28e17f72|a9993e364706816aba3e25717850c26c9cd0d89d|cbf43926|900150983cd24fb0d6963f7d28e17f72,a9993e364706816aba3e25717850c26c9cd0d89d|1|1"
+        "900150983cd24fb0d6963f7d28e17f72|a9993e364706816aba3e25717850c26c9cd0d89d|ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|cbf43926|900150983cd24fb0d6963f7d28e17f72,a9993e364706816aba3e25717850c26c9cd0d89d,ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|1|1"
     );
 }
 
 #[test]
 fn hash_algos_lists_the_supported_generic_hash_algorithms() {
     let source = "<?php echo implode(',', hash_algos()), '|', function_exists('hash_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,crc32b|1");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha256,crc32b|1");
 }
 
 #[test]
 fn hash_hmac_algos_lists_only_supported_hmac_algorithms() {
     let source = "<?php echo implode(',', hash_hmac_algos()), '|', function_exists('hash_hmac_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1|1");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha256|1");
+}
+
+#[test]
+fn hash_sha256_pbkdf2_matches_rfc_vector() {
+    let source = "<?php echo hash_pbkdf2('sha256', 'password', 'salt', 1, 64);";
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
 }
 
 #[test]
@@ -165,6 +173,17 @@ fn hash_hkdf_derives_deterministic_sha1_output_with_php_arguments() {
     let expected_bytes = [0x65, 0x5b, 0xb6, 0x71, 0xa0, 0x8a, 0xfe, 0x86, 0xf6, 0x85, 0x0a, 0xc8, 0x9b, 0xa4, 0x95, 0xf0, 0x47, 0xd3, 0xf8, 0x7e, 0xf5, 0x5d, 0x0f, 0xc6, 0x13, 0x1d, 0xe1, 0xc7, 0x25, 0x5a, 0x94, 0x85, 0x45, 0xb9, 0xd7, 0xb0, 0x98, 0x86, 0x3a, 0xda, 0x1f, 0x20];
     let expected = format!("{}|1|1|1|value-error|1", String::from_utf8_lossy(&expected_bytes));
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), expected);
+}
+
+#[test]
+fn hash_hkdf_supports_sha256_with_ascii_inputs() {
+    let source = r#"<?php
+        $derived = hash_hkdf('sha256', 'input key material', 42, 'context', 'pepper');
+        echo hash_equals($derived, hash_hkdf(algo: 'sha256', key: 'input key material', length: 42, info: 'context', salt: 'pepper')), '|';
+        echo $derived !== hash_hkdf('sha256', 'input key material', 42, 'other', 'pepper'), '|';
+        echo count(array_map('hash_hkdf', ['sha256'], ['key']));
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1|1|1");
 }
 
 #[test]

@@ -1161,6 +1161,50 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
     digest
 }
 
+pub(crate) fn sha256_digest(input: &[u8]) -> Vec<u8> {
+    const K: [u32; 64] = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+    ];
+    let mut bytes = input.to_vec();
+    let bit_length = (bytes.len() as u64).wrapping_mul(8);
+    bytes.push(0x80);
+    while bytes.len() % 64 != 56 { bytes.push(0); }
+    bytes.extend_from_slice(&bit_length.to_be_bytes());
+    let mut state = [0x6a09e667u32,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    for block in bytes.chunks_exact(64) {
+        let mut words = [0u32; 64];
+        for (index, word) in words.iter_mut().take(16).enumerate() {
+            *word = u32::from_be_bytes(block[index * 4..index * 4 + 4].try_into().unwrap());
+        }
+        for index in 16..64 {
+            let x = words[index - 15];
+            let y = words[index - 2];
+            let sigma0 = x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3);
+            let sigma1 = y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10);
+            words[index] = words[index - 16].wrapping_add(sigma0).wrapping_add(words[index - 7]).wrapping_add(sigma1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
+        for index in 0..64 {
+            let sum1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let choice = (e & f) ^ (!e & g);
+            let temp1 = h.wrapping_add(sum1).wrapping_add(choice).wrapping_add(K[index]).wrapping_add(words[index]);
+            let sum0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let majority = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = sum0.wrapping_add(majority);
+            h = g; g = f; f = e; e = d.wrapping_add(temp1); d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+        }
+        for (slot, value) in state.iter_mut().zip([a,b,c,d,e,f,g,h]) { *slot = slot.wrapping_add(value); }
+    }
+    state.iter().flat_map(|word| word.to_be_bytes()).collect()
+}
+
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
@@ -1181,14 +1225,14 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha256", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac_algos" {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_hmac_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha256"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac" {
@@ -1202,6 +1246,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => hmac_digest(&key, data.as_bytes(), md5_digest),
             "sha1" => hmac_digest(&key, data.as_bytes(), sha1_digest),
+            "sha256" => hmac_digest(&key, data.as_bytes(), sha256_digest),
             _ => return Err(format!("ValueError:hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
@@ -1228,6 +1273,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
             "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             _ => return Err(format!("ValueError:hash_pbkdf2(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let raw_length = if length == 0 { digest(&[]).len() } else if binary { length as usize } else { (length as usize).div_ceil(2) };
@@ -1265,6 +1311,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
             "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             _ => return Err(format!("ValueError:hash_hkdf(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let hash_length = digest(&[]).len();
@@ -1885,6 +1932,7 @@ pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
     match algorithm.to_ascii_lowercase().as_str() {
         "md5" => Some(md5_digest(data)),
         "sha1" => Some(sha1_digest(data)),
+        "sha256" => Some(sha256_digest(data)),
         "crc32b" => {
             let mut crc = !0u32;
             for byte in data {

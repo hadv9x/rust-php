@@ -294,16 +294,17 @@ fn hash_hmac_file_hashes_sandboxed_file_bytes_and_supports_callbacks() {
         error_reporting(E_WARNING);
         echo hash_hmac_file(algo: 'md5', filename: '{path}', key: 'Jefe'), '|';
         echo hash_hmac_file('sha1', '{path}', 'Jefe'), '|';
+        echo hash_hmac_file('sha256', '{path}', 'Jefe'), '|';
         echo array_map('hash_hmac_file', ['md5'], ['{path}'], ['Jefe'])[0], '|';
         echo hash_hmac_file('md5', '{missing}', 'Jefe') === false, '|', function_exists('hash_hmac_file');
     "#);
     let mut globals = std::collections::HashMap::new();
     globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
     let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
-    assert_eq!(result.output, "c819ae47a2b770908a0cfdfc97391bbe|6ecf193ad361be423fd50be4a4e5410d2915ba28|c819ae47a2b770908a0cfdfc97391bbe|1|1");
+    assert_eq!(result.output, "c819ae47a2b770908a0cfdfc97391bbe|6ecf193ad361be423fd50be4a4e5410d2915ba28|8b516fd2265edd5b1c38d222d926abd48ee507d505e6f5e45f7dae2e6f20eead|c819ae47a2b770908a0cfdfc97391bbe|1|1");
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[0].source_line, Some(6));
+    assert_eq!(result.diagnostics[0].source_line, Some(7));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -318,14 +319,14 @@ fn hash_file_hashes_sandboxed_bytes_and_supports_named_algorithms_and_callbacks(
     let script = format!(r#"<?php
         error_reporting(E_WARNING);
         echo hash_file(algo: 'md5', filename: '{path}'), '|';
-        echo hash_file('sha1', '{path}'), '|', hash_file('crc32b', '{path}'), '|';
+        echo hash_file('sha1', '{path}'), '|', hash_file('sha256', '{path}'), '|', hash_file('crc32b', '{path}'), '|';
         echo array_map('hash_file', ['md5'], ['{path}'])[0], '|';
         echo hash_file('md5', '{missing}') === false, '|', function_exists('hash_file');
     "#);
     let mut globals = std::collections::HashMap::new();
     globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
     let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
-    assert_eq!(result.output, "e01e7b08be3d4d8a1b74b61943856ac2|35a6dd9eec07ed9764c95cf36940b278b374f7b9|2aea1e63|e01e7b08be3d4d8a1b74b61943856ac2|1|1");
+    assert_eq!(result.output, "e01e7b08be3d4d8a1b74b61943856ac2|35a6dd9eec07ed9764c95cf36940b278b374f7b9|aaf2c38a3b8617bdff3f793d98c22458a3714a26faf5d06f900009885d42bdd9|2aea1e63|e01e7b08be3d4d8a1b74b61943856ac2|1|1");
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
     assert_eq!(result.diagnostics[0].source_line, Some(6));
