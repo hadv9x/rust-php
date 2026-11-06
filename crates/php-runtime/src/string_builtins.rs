@@ -1775,7 +1775,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     Ok(value)
 }
 
-fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
+pub(crate) fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
     const BLOCK_SIZE: usize = 64;
     let mut normalized_key = key.as_bytes().to_vec();
     if normalized_key.len() > BLOCK_SIZE { normalized_key = digest(&normalized_key); }

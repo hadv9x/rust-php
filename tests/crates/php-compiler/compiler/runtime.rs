@@ -283,6 +283,31 @@ fn sha1_file_hashes_raw_file_bytes_and_supports_named_callback_and_warning_paths
 }
 
 #[test]
+fn hash_hmac_file_hashes_sandboxed_file_bytes_and_supports_callbacks() {
+    let root = std::env::temp_dir().join(format!("php-rust-hmac-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("binary.dat"), [b'a', b'b', b'c', 0xff, 0]).unwrap();
+    let path = root.join("binary.dat").to_string_lossy().into_owned();
+    let missing = root.join("missing.dat").to_string_lossy().into_owned();
+    let script = format!(r#"<?php
+        error_reporting(E_WARNING);
+        echo hash_hmac_file(algo: 'md5', filename: '{path}', key: 'Jefe'), '|';
+        echo hash_hmac_file('sha1', '{path}', 'Jefe'), '|';
+        echo array_map('hash_hmac_file', ['md5'], ['{path}'], ['Jefe'])[0], '|';
+        echo hash_hmac_file('md5', '{missing}', 'Jefe') === false, '|', function_exists('hash_hmac_file');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "c819ae47a2b770908a0cfdfc97391bbe|6ecf193ad361be423fd50be4a4e5410d2915ba28|c819ae47a2b770908a0cfdfc97391bbe|1|1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(6));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stat_and_lstat_return_php_numeric_and_named_fields() {
     let source = r#"<?php
         $status = stat(filename: '../../Cargo.toml');
