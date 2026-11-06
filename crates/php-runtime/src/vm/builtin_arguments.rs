@@ -267,6 +267,7 @@ fn signature(name: &str) -> Option<Signature> {
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13" | "addslashes" | "stripslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment" | "str_decrement" => (&["string"], &[], false),
         "crc32" => (&["string"], &[], false),
         "md5" => (&["string", "binary"], &[(1, F)], false),
+        "sha1" => (&["string", "binary"], &[(1, F)], false),
         "base64_encode" => (&["string"], &[], false),
         "base64_decode" => (&["string", "strict"], &[(1, F)], false),
         "addcslashes" => (&["string", "characters"], &[], false),

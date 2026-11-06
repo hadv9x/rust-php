@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "str_word_count", "strspn",
@@ -35,7 +35,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "strtok" => &[0, 1],
         "levenshtein" => &[0, 1],
         "similar_text" => &[0, 1],
-        "count_chars" | "crc32" | "md5" | "base64_encode" | "base64_decode" => &[0],
+        "count_chars" | "crc32" | "md5" | "sha1" | "base64_encode" | "base64_decode" => &[0],
         "str_replace" | "str_ireplace" => &[0, 1, 2],
         "strtr" => &[0, 1, 2],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
@@ -779,10 +779,54 @@ fn md5(arguments: &[Value]) -> Result<Value, String> {
     Ok(Value::String(result))
 }
 
+fn sha1(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!("sha1() expects 1 or 2 arguments, {} given", arguments.len()));
+    }
+    let raw_output = arguments.get(1).is_some_and(Value::truthy);
+    let mut bytes = arguments[0].show().into_bytes();
+    let bit_length = (bytes.len() as u64).wrapping_mul(8);
+    bytes.push(0x80);
+    while bytes.len() % 64 != 56 { bytes.push(0); }
+    bytes.extend_from_slice(&bit_length.to_be_bytes());
+    let mut state = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+    for block in bytes.chunks_exact(64) {
+        let mut words = [0u32; 80];
+        for (index, word) in words.iter_mut().take(16).enumerate() {
+            *word = u32::from_be_bytes(block[index * 4..index * 4 + 4].try_into().unwrap());
+        }
+        for index in 16..80 { words[index] = (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16]).rotate_left(1); }
+        let [mut a, mut b, mut c, mut d, mut e] = state;
+        for (index, word) in words.into_iter().enumerate() {
+            let (function, constant) = match index {
+                0..=19 => ((b & c) | (!b & d), 0x5a827999),
+                20..=39 => (b ^ c ^ d, 0x6ed9eba1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
+                _ => (b ^ c ^ d, 0xca62c1d6),
+            };
+            let next = a.rotate_left(5).wrapping_add(function).wrapping_add(e).wrapping_add(constant).wrapping_add(word);
+            e = d; d = c; c = b.rotate_left(30); b = a; a = next;
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+        state[4] = state[4].wrapping_add(e);
+    }
+    let digest = state.iter().flat_map(|word| word.to_be_bytes()).collect::<Vec<_>>();
+    let result = if raw_output {
+        String::from_utf8_lossy(&digest).into_owned()
+    } else {
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    Ok(Value::String(result))
+}
+
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
     if function == "md5" { return md5(arguments); }
+    if function == "sha1" { return sha1(arguments); }
     if function == "base64_encode" { return base64_encode(arguments); }
     if function == "base64_decode" { return base64_decode(arguments); }
     if function == "sprintf" { return sprintf(arguments); }

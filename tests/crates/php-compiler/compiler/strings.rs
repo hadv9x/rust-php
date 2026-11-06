@@ -15,6 +15,21 @@ fn md5_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
 }
 
 #[test]
+fn sha1_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
+    let source = r#"<?php
+        echo sha1(''), '|', sha1(string: 'abc'), '|';
+        echo sha1(str_repeat('a', 1000000)), '|';
+        echo (sha1('abc', binary: true) !== sha1('abc')), '|';
+        echo implode(',', array_map('sha1', ['', 'abc'])), '|';
+        echo function_exists('sha1');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "da39a3ee5e6b4b0d3255bfef95601890afd80709|a9993e364706816aba3e25717850c26c9cd0d89d|34aa973cd4c4daa4f61eeb2bdbad27316534016f|1|da39a3ee5e6b4b0d3255bfef95601890afd80709,a9993e364706816aba3e25717850c26c9cd0d89d|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';
