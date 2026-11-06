@@ -23,6 +23,23 @@ fn by_reference_array_mutators_detach_copied_slots_and_preserve_embedded_referen
 }
 
 #[test]
+fn array_shift_and_splice_detach_copied_arrays_and_preserve_retained_references() {
+    let source = r#"<?php
+        $shared = 4;
+        $original = ['first', 'linked' => &$shared, 'last'];
+        $shifted = $original;
+        $removed = array_shift($shifted);
+        $shifted['linked'] = 8;
+        $spliced = $original;
+        $removedBySplice = array_splice($spliced, 0, 1, ['replacement']);
+        $spliced['linked'] = 9;
+        echo $removed, ':', $removedBySplice[0], '|';
+        echo implode(',', $original), '|', implode(',', $shifted), '|', implode(',', $spliced), '|', $shared;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "first:first|first,9,last|9,last|replacement,9,last|9");
+}
+
+#[test]
 fn fractional_float_array_keys_emit_precision_deprecation_and_truncate() {
     let source = r#"<?php
         $array = [1.5 => 'literal'];
