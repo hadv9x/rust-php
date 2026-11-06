@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
@@ -1173,6 +1173,13 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = hash_digest(&algorithm, data.as_bytes()).ok_or_else(|| format!("ValueError:hash(): Argument #1 ($algo) must be a valid hashing algorithm, {algorithm} given"))?;
         let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
         return Ok(Value::String(output));
+    }
+
+    if function == "hash_algos" {
+        if !arguments.is_empty() {
+            return Err(format!("ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given", arguments.len()));
+        }
+        return Ok(Value::from_array_entries(["md5", "sha1", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac" {

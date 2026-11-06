@@ -273,6 +273,7 @@ fn signature(name: &str) -> Option<Signature> {
         "hash_equals" => (&["known_string", "user_string"], &[], false),
         "hash_hmac" => (&["algo", "data", "key", "binary"], &[(3, F)], false),
         "hash" => (&["algo", "data", "binary"], &[(2, F)], false),
+        "hash_algos" => (&[], &[], false),
         "hash_file" => (&["algo", "filename", "binary"], &[(2, F)], false),
         "hash_hmac_file" => (&["algo", "filename", "key", "binary"], &[(3, F)], false),
         "base64_encode" => (&["string"], &[], false),

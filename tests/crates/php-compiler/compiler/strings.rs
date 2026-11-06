@@ -124,6 +124,12 @@ fn hash_supports_md5_sha1_crc32b_and_php_named_arguments() {
 }
 
 #[test]
+fn hash_algos_lists_the_supported_generic_hash_algorithms() {
+    let source = "<?php echo implode(',', hash_algos()), '|', function_exists('hash_algos');";
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,crc32b|1");
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';
