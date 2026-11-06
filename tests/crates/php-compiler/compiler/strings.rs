@@ -64,6 +64,21 @@ fn get_html_translation_table_returns_html4_entities_and_quote_modes() {
 }
 
 #[test]
+fn html_entity_decode_decodes_html4_and_numeric_entities_with_quote_flags() {
+    let source = r#"<?php
+        $input = '&lt;b&gt;&copy; &euro; &#x1F642; &quot; &#039; &apos; &unknown;';
+        echo html_entity_decode(string: $input), '|';
+        echo html_entity_decode($input, ENT_NOQUOTES), '|';
+        echo implode(',', array_map('html_entity_decode', ['&amp;', '&eacute;'])), '|';
+        echo function_exists('html_entity_decode');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "<b>© € 🙂 \" ' &apos; &unknown;|<b>© € 🙂 &quot; ' &apos; &unknown;|&,é|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

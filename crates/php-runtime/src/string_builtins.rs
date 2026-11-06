@@ -9,7 +9,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
-        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "get_html_translation_table", "str_word_count", "strspn",
+        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "str_word_count", "strspn",
         "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
         "str_starts_with", "str_ends_with", "strstr", "strchr", "stristr", "strcmp", "strcasecmp",
         "strnatcmp", "strnatcasecmp", "strncmp", "strncasecmp", "strtr", "strpos", "stripos",
@@ -50,7 +50,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "fprintf" => &[1],
         "addcslashes" => &[0, 1],
         "str_pad" => &[0, 2],
-        "htmlspecialchars" | "htmlentities" => &[0, 2],
+        "htmlspecialchars" | "htmlentities" | "html_entity_decode" => &[0, 2],
         "str_repeat" | "str_split" | "substr" | "implode" | "htmlspecialchars_decode"
         | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13"
         | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment" | "str_decrement"
@@ -479,6 +479,38 @@ fn decode_html(input: &str, flags: i64) -> String {
                     _ if entity.starts_with("&#x") || entity.starts_with("&#X") => entity[3..entity.len() - 1].chars().try_fold(0u32, |value, digit| value.checked_mul(16)?.checked_add(digit.to_digit(16)?)).and_then(char::from_u32),
                     _ if entity.starts_with("&#") => entity[2..entity.len() - 1].parse::<u32>().ok().and_then(char::from_u32),
                     _ => None,
+                };
+                if let Some(decoded) = decoded {
+                    result.push(decoded);
+                    cursor += length;
+                    continue;
+                }
+            }
+        }
+        let character = input[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+        result.push(character);
+        cursor += character.len_utf8();
+    }
+    result
+}
+
+fn decode_html_entities(input: &str, flags: i64) -> String {
+    let quote_mode = flags & 3;
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+    while cursor < input.len() {
+        if input.as_bytes()[cursor] == b'&' {
+            if let Some(length) = known_entity_length(&input[cursor..]) {
+                let entity = &input[cursor..cursor + length];
+                let body = &entity[1..entity.len() - 1];
+                let decoded = match body {
+                    "amp" => Some('&'), "lt" => Some('<'), "gt" => Some('>'),
+                    "quot" if quote_mode & 2 != 0 => Some('"'),
+                    "quot" => None,
+                    "#039" if quote_mode & 1 != 0 => Some('\''),
+                    _ if body.starts_with("#x") || body.starts_with("#X") => u32::from_str_radix(&body[2..], 16).ok().and_then(char::from_u32),
+                    _ if body.starts_with('#') => body[1..].parse::<u32>().ok().and_then(char::from_u32),
+                    _ => HTML4_ENTITY_TABLE.iter().find_map(|(character, name)| (*name == body).then_some(*character)),
                 };
                 if let Some(decoded) = decoded {
                     result.push(decoded);
@@ -1212,7 +1244,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         return Ok(Value::String(strip_tags(&arguments[0].show(), &allowed)));
     }
     let required = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "md5" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlentities" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "md5" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlentities" | "html_entity_decode" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -1231,6 +1263,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let maximum = match function.as_str() {
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "base64_decode" => 2,
+        "html_entity_decode" => 3,
         "addcslashes" => 2,
         "number_format" => 4,
         "strspn" | "strcspn" => 4,
@@ -1667,6 +1700,18 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
             let double_encode = arguments.get(3).map(Value::truthy).unwrap_or(true);
             Value::String(escape_html_entities(&string, flags, double_encode))
+        }
+        "html_entity_decode" => {
+            if let Some(Value::String(encoding)) = arguments.get(2) {
+                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                    return Err("html_entity_decode(): only UTF-8 encoding is supported".into());
+                }
+            }
+            let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+            if flags & 48 != 0 {
+                return Err("ValueError:html_entity_decode(): only the HTML 4.01 document type is supported".into());
+            }
+            Value::String(decode_html_entities(&string, flags))
         }
         "htmlspecialchars_decode" => {
             let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(3);

@@ -111,6 +111,8 @@ For a broader comparison against the official PHP Manual, see the [manual covera
 
 ## Recent verified work
 
+- Added `html_entity_decode()` for HTML 4.01 named entities and decimal/hexadecimal numeric references, with quote flags, named arguments, callbacks, and `function_exists()`. Unknown entities and HTML5-only `&apos;` remain unchanged; only UTF-8 and HTML 4.01 are supported. Regression covers named/numeric entities, quote filtering, unknown names, callback dispatch, and discovery against the [PHP manual](https://www.php.net/manual/en/function.html-entity-decode.php). Workspace tests (649 compiler integration tests), offline check, CLI build, all 118 PHP examples, and `git diff --check` passed.
+
 - Added `get_html_translation_table()` for HTML 4.01 `HTML_SPECIALCHARS` and `HTML_ENTITIES`, with quote flags, named arguments, callback dispatch, `function_exists()`, and the `HTML_SPECIALCHARS`/`HTML_ENTITIES` constants. UTF-8 is the only accepted encoding; XML/XHTML/HTML5 document flags remain unsupported. Regression covers map values/counts, quote selection, named calls, callbacks, and discovery. The signature and return map follow the [PHP manual](https://www.php.net/manual/en/function.get-html-translation-table.php). Workspace tests (648 compiler integration tests), offline check, CLI build, all 117 PHP examples, and `git diff --check` passed.
 
 - The Web Server now honors PHP `file_uploads` (default enabled) through php.ini and `PHP_RUST_FILE_UPLOADS`. With uploads disabled, multipart form fields remain available in `$_POST`, while file fields are skipped without creating temporary files; added parser and INI regressions. Workspace tests passed (43 server tests), as did offline check, CLI build, all 115 PHP examples, and `git diff --check`.
