@@ -1268,6 +1268,9 @@ pub(super) fn execute_instruction(
                     "md5_file" => {
                         stack.push(md5_file_builtin(&arguments, global_variables)?);
                     }
+                    "sha1_file" => {
+                        stack.push(sha1_file_builtin(&arguments, global_variables)?);
+                    }
                     "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "realpath" => {
                         if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", fallback_name, arguments.len())); }
                         let path = arguments.first().ok_or_else(|| format!("{}() expects a filename", fallback_name))?.show();
@@ -3967,6 +3970,31 @@ fn md5_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Resul
     }
 }
 
+fn sha1_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!("ArgumentCountError:sha1_file() expects 1 or 2 arguments, {} given", arguments.len()));
+    }
+    let filename = arguments[0].show();
+    let binary = arguments.get(1).is_some_and(Value::truthy);
+    let contents = filesystem_path(globals, std::path::Path::new(&filename), false)
+        .and_then(|path| std::fs::read(path).ok());
+    if let Some(contents) = contents {
+        let digest = crate::string_builtins::sha1_digest(&contents);
+        let result = if binary { String::from_utf8_lossy(&digest).into_owned() }
+            else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        Ok(Value::String(result))
+    } else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("sha1_file(): Failed to open stream: {filename}"),
+            source_file: None,
+            source_line: None,
+            output_offset: 0,
+        });
+        Ok(Value::Bool(false))
+    }
+}
+
 fn file_stat_value(name: &str, filename: &str, globals: &mut GlobalVariables) -> Value {
     let input_path = std::path::Path::new(filename);
     let resolved = if name.eq_ignore_ascii_case("lstat") {
@@ -6172,6 +6200,9 @@ pub(super) fn invoke_callable(
     }
     if normalized_name == "md5_file" {
         return md5_file_builtin(&arguments, global_variables);
+    }
+    if normalized_name == "sha1_file" {
+        return sha1_file_builtin(&arguments, global_variables);
     }
     if normalized_name == "count" {
         let mut callback_variables = HashMap::new();
