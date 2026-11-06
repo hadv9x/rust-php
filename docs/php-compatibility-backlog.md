@@ -111,6 +111,8 @@ For a broader comparison against the official PHP Manual, see the [manual covera
 
 ## Recent verified work
 
+- Added `get_html_translation_table()` for HTML 4.01 `HTML_SPECIALCHARS` and `HTML_ENTITIES`, with quote flags, named arguments, callback dispatch, `function_exists()`, and the `HTML_SPECIALCHARS`/`HTML_ENTITIES` constants. UTF-8 is the only accepted encoding; XML/XHTML/HTML5 document flags remain unsupported. Regression covers map values/counts, quote selection, named calls, callbacks, and discovery. The signature and return map follow the [PHP manual](https://www.php.net/manual/en/function.get-html-translation-table.php). Workspace tests (648 compiler integration tests), offline check, CLI build, all 117 PHP examples, and `git diff --check` passed.
+
 - The Web Server now honors PHP `file_uploads` (default enabled) through php.ini and `PHP_RUST_FILE_UPLOADS`. With uploads disabled, multipart form fields remain available in `$_POST`, while file fields are skipped without creating temporary files; added parser and INI regressions. Workspace tests passed (43 server tests), as did offline check, CLI build, all 115 PHP examples, and `git diff --check`.
 
 - JSON decoding now has regression coverage for unpaired high/low UTF-16 surrogates, malformed pairs, valid supplementary characters, `JSON_ERROR_UTF16`, its message, and `JSON_THROW_ON_ERROR`/`JsonException` behavior. The decoder already classified these cases; this closes an uncovered documented behavior path. Updated `docs/functions.md`. Workspace tests passed (642 compiler tests), as did offline check, CLI build, all 115 PHP examples, and `git diff --check`.

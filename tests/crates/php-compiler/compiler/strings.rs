@@ -46,6 +46,24 @@ fn htmlentities_escapes_html4_entities_and_honors_quotes_and_double_encode() {
 }
 
 #[test]
+fn get_html_translation_table_returns_html4_entities_and_quote_modes() {
+    let source = r#"<?php
+        $special = get_html_translation_table();
+        echo count($special), ':', $special['&'], ':', $special['"'], ':', $special["'"], '|';
+        $compat = get_html_translation_table(HTML_SPECIALCHARS, ENT_COMPAT);
+        echo count($compat), ':', isset($compat["'"]), '|';
+        $entities = get_html_translation_table(table: HTML_ENTITIES, flags: ENT_NOQUOTES);
+        echo $entities['©'], ':', isset($entities['"']), ':', isset($entities["'"]), ':', count($entities), '|';
+        echo count(array_map('get_html_translation_table', [HTML_SPECIALCHARS, HTML_ENTITIES])), '|';
+        echo function_exists('get_html_translation_table');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "5:&amp;:&quot;:&#039;|4:|&copy;:::251|2|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

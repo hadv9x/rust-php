@@ -420,6 +420,8 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "ENT_COMPAT" => 2.0,
         "ENT_QUOTES" => 3.0,
         "ENT_NOQUOTES" | "ENT_HTML401" => 0.0,
+        "HTML_SPECIALCHARS" => 0.0,
+        "HTML_ENTITIES" => 1.0,
         "ENT_SUBSTITUTE" => 8.0,
         "ENT_DISALLOWED" => 128.0,
         "ENT_XML1" => 16.0,

@@ -9,7 +9,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
-        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "str_word_count", "strspn",
+        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "get_html_translation_table", "str_word_count", "strspn",
         "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
         "str_starts_with", "str_ends_with", "strstr", "strchr", "stristr", "strcmp", "strcasecmp",
         "strnatcmp", "strnatcasecmp", "strncmp", "strncasecmp", "strtr", "strpos", "stripos",
@@ -1127,6 +1127,43 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
+
+    if function == "get_html_translation_table" {
+        if arguments.len() > 3 {
+            return Err(format!("get_html_translation_table() expects at most 3 arguments, {} given", arguments.len()));
+        }
+        let table = arguments.first().map(|value| value.number() as i64).unwrap_or(0);
+        if table != 0 && table != 1 {
+            return Err("ValueError:get_html_translation_table(): Argument #1 ($table) must be one of HTML_SPECIALCHARS or HTML_ENTITIES".into());
+        }
+        if let Some(Value::String(encoding)) = arguments.get(2) {
+            if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                return Err("get_html_translation_table(): only UTF-8 encoding is supported".into());
+            }
+        }
+        let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+        if flags & 48 != 0 {
+            return Err("ValueError:get_html_translation_table(): only the HTML 4.01 document type is supported".into());
+        }
+        let mut entries = Vec::new();
+        if table == 1 {
+            for (character, entity) in HTML4_ENTITY_TABLE {
+                if matches!(*character, '\'' | '"') { continue; }
+                entries.push((crate::ArrayKey::String(character.to_string()), Value::String(format!("&{entity};"))));
+            }
+            if flags & 3 != 0 { entries.push((crate::ArrayKey::String('"'.to_string()), Value::String("&quot;".into()))); }
+            if flags & 3 == 3 { entries.push((crate::ArrayKey::String('\''.to_string()), Value::String("&#039;".into()))); }
+        } else {
+            entries.extend([('&', "&amp;"), ('<', "&lt;"), ('>', "&gt;")].into_iter().map(|(character, entity)| (crate::ArrayKey::String(character.to_string()), Value::String(entity.into()))));
+            if flags & 3 != 0 {
+                entries.push((crate::ArrayKey::String('"'.to_string()), Value::String("&quot;".into())));
+            }
+            if flags & 3 == 3 {
+                entries.push((crate::ArrayKey::String('\''.to_string()), Value::String("&#039;".into())));
+            }
+        }
+        return Ok(Value::from_array_entries(entries));
+    }
     if function == "md5" { return md5(arguments); }
     if function == "sha1" { return sha1(arguments); }
     if function == "base64_encode" { return base64_encode(arguments); }
