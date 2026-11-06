@@ -461,7 +461,7 @@ fn custom_error_handlers_restore_in_nested_order() {
 }
 
 #[test]
-fn errors_raised_inside_a_handler_fall_back_without_recursive_handler_calls() {
+fn errors_raised_inside_a_handler_fall_back_without_recursion_and_keep_handler_active() {
     let source = r#"<?php
         $calls = 0;
         set_error_handler(function ($severity, $message) use (&$calls) {
@@ -470,10 +470,11 @@ fn errors_raised_inside_a_handler_fall_back_without_recursive_handler_calls() {
             return true;
         });
         trigger_error('outer', E_USER_NOTICE);
+        trigger_error('after', E_USER_NOTICE);
         echo $calls;
     "#;
     let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
-    assert_eq!(result.output, "1");
+    assert_eq!(result.output, "2");
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].message, "inner");
 }
