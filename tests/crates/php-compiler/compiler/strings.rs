@@ -97,16 +97,17 @@ fn hash_hmac_supports_md5_sha1_sha256_named_arguments_and_callbacks() {
         $data = 'what do ya want for nothing?';
         echo hash_hmac('md5', $data, 'Jefe'), '|';
         echo hash_hmac(algo: 'sha1', data: $data, key: 'Jefe'), '|';
+        echo hash_hmac('sha224', $data, 'Jefe'), '|';
         echo hash_hmac('sha256', $data, 'Jefe'), '|';
         echo hash_hmac('sha384', $data, 'Jefe'), '|';
         echo hash_hmac('sha512', $data, 'Jefe'), '|';
-        echo implode(',', array_map('hash_hmac', ['md5', 'sha1', 'sha256', 'sha384', 'sha512'], [$data, $data, $data, $data, $data], ['Jefe', 'Jefe', 'Jefe', 'Jefe', 'Jefe'])), '|';
+        echo implode(',', array_map('hash_hmac', ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512'], [$data, $data, $data, $data, $data, $data], ['Jefe', 'Jefe', 'Jefe', 'Jefe', 'Jefe', 'Jefe'])), '|';
         echo hash_hmac('md5', $data, 'Jefe', binary: true) !== hash_hmac('md5', $data, 'Jefe'), '|';
         echo function_exists('hash_hmac');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "750c783e6ab0b503eaa86e310a5db738|effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843|af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649|164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737|750c783e6ab0b503eaa86e310a5db738,effcdf6ae5eb2fa2d27416d5f184df9c259a7c79,5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843,af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649,164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737|1|1"
+        "750c783e6ab0b503eaa86e310a5db738|effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|a30e01098bc6dbbf45690f3a7e9e6d0f8bbea2a39e6148008fd05e44|5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843|af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649|164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737|750c783e6ab0b503eaa86e310a5db738,effcdf6ae5eb2fa2d27416d5f184df9c259a7c79,a30e01098bc6dbbf45690f3a7e9e6d0f8bbea2a39e6148008fd05e44,5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843,af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649,164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737|1|1"
     );
 }
 
@@ -115,36 +116,53 @@ fn hash_supports_md5_sha1_sha256_crc32b_and_php_named_arguments() {
     let source = r#"<?php
         echo hash('md5', 'abc'), '|';
         echo hash(algo: 'sha1', data: 'abc'), '|';
+        echo hash('sha224', 'abc'), '|';
         echo hash('sha256', 'abc'), '|';
         echo hash('sha512', 'abc'), '|';
         echo hash('sha384', 'abc'), '|';
         echo hash('crc32b', '123456789'), '|';
-        echo implode(',', array_map('hash', ['md5', 'sha1', 'sha256', 'sha384', 'sha512'], ['abc', 'abc', 'abc', 'abc', 'abc'])), '|';
+        echo implode(',', array_map('hash', ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512'], ['abc', 'abc', 'abc', 'abc', 'abc', 'abc'])), '|';
         echo hash('md5', 'abc', binary: true) !== hash('md5', 'abc'), '|';
         echo function_exists('hash');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "900150983cd24fb0d6963f7d28e17f72|a9993e364706816aba3e25717850c26c9cd0d89d|ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f|cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7|cbf43926|900150983cd24fb0d6963f7d28e17f72,a9993e364706816aba3e25717850c26c9cd0d89d,ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad,cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7,ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f|1|1"
+        "900150983cd24fb0d6963f7d28e17f72|a9993e364706816aba3e25717850c26c9cd0d89d|23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7|ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f|cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7|cbf43926|900150983cd24fb0d6963f7d28e17f72,a9993e364706816aba3e25717850c26c9cd0d89d,23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7,ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad,cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7,ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f|1|1"
     );
 }
 
 #[test]
 fn hash_algos_lists_the_supported_generic_hash_algorithms() {
     let source = "<?php echo implode(',', hash_algos()), '|', function_exists('hash_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha256,sha384,sha512,crc32b|1");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha224,sha256,sha384,sha512,crc32b|1");
 }
 
 #[test]
 fn hash_hmac_algos_lists_only_supported_hmac_algorithms() {
     let source = "<?php echo implode(',', hash_hmac_algos()), '|', function_exists('hash_hmac_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha256,sha384,sha512|1");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha224,sha256,sha384,sha512|1");
 }
 
 #[test]
 fn hash_sha256_pbkdf2_matches_rfc_vector() {
     let source = "<?php echo hash_pbkdf2('sha256', 'password', 'salt', 1, 64);";
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+}
+
+#[test]
+fn hash_sha224_pbkdf2_matches_reference_vector() {
+    let source = "<?php echo hash_pbkdf2('sha224', 'password', 'salt', 1, 56);";
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3c198cbdb9464b7857966bd05b7bc92bc1cc4e6e63155d4e490557fd");
+}
+
+#[test]
+fn hash_hkdf_supports_sha224_with_ascii_inputs() {
+    let source = r#"<?php
+        $derived = hash_hkdf('sha224', 'input key material', 28, 'context', 'pepper');
+        echo hash_equals($derived, hash_hkdf(algo: 'sha224', key: 'input key material', length: 28, info: 'context', salt: 'pepper')), '|';
+        echo $derived !== hash_hkdf('sha224', 'input key material', 28, 'other', 'pepper');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1|1");
 }
 
 #[test]

@@ -1162,6 +1162,16 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn sha256_digest(input: &[u8]) -> Vec<u8> {
+    sha256_digest_with_state(input, [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19])
+}
+
+pub(crate) fn sha224_digest(input: &[u8]) -> Vec<u8> {
+    let mut digest = sha256_digest_with_state(input, [0xc1059ed8,0x367cd507,0x3070dd17,0xf70e5939,0xffc00b31,0x68581511,0x64f98fa7,0xbefa4fa4]);
+    digest.truncate(28);
+    digest
+}
+
+fn sha256_digest_with_state(input: &[u8], mut state: [u32; 8]) -> Vec<u8> {
     const K: [u32; 64] = [
         0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
         0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -1177,7 +1187,6 @@ pub(crate) fn sha256_digest(input: &[u8]) -> Vec<u8> {
     bytes.push(0x80);
     while bytes.len() % 64 != 56 { bytes.push(0); }
     bytes.extend_from_slice(&bit_length.to_be_bytes());
-    let mut state = [0x6a09e667u32,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
     for block in bytes.chunks_exact(64) {
         let mut words = [0u32; 64];
         for (index, word) in words.iter_mut().take(16).enumerate() {
@@ -1290,14 +1299,14 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha256", "sha384", "sha512", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac_algos" {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_hmac_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha256", "sha384", "sha512"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac" {
@@ -1311,6 +1320,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => hmac_digest(&key, data.as_bytes(), md5_digest),
             "sha1" => hmac_digest(&key, data.as_bytes(), sha1_digest),
+            "sha224" => hmac_digest(&key, data.as_bytes(), sha224_digest),
             "sha256" => hmac_digest(&key, data.as_bytes(), sha256_digest),
             "sha384" => hmac_digest(&key, data.as_bytes(), sha384_digest),
             "sha512" => hmac_digest(&key, data.as_bytes(), sha512_digest),
@@ -1340,6 +1350,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
             "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            "sha224" => sha224_digest as fn(&[u8]) -> Vec<u8>,
             "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             "sha384" => sha384_digest as fn(&[u8]) -> Vec<u8>,
             "sha512" => sha512_digest as fn(&[u8]) -> Vec<u8>,
@@ -1380,6 +1391,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let digest = match algorithm.as_str() {
             "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
             "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            "sha224" => sha224_digest as fn(&[u8]) -> Vec<u8>,
             "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             "sha384" => sha384_digest as fn(&[u8]) -> Vec<u8>,
             "sha512" => sha512_digest as fn(&[u8]) -> Vec<u8>,
@@ -2003,6 +2015,7 @@ pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
     match algorithm.to_ascii_lowercase().as_str() {
         "md5" => Some(md5_digest(data)),
         "sha1" => Some(sha1_digest(data)),
+        "sha224" => Some(sha224_digest(data)),
         "sha256" => Some(sha256_digest(data)),
         "sha384" => Some(sha384_digest(data)),
         "sha512" => Some(sha512_digest(data)),
