@@ -92,6 +92,22 @@ fn hash_equals_compares_strings_with_php_named_arguments_and_callbacks() {
 }
 
 #[test]
+fn hash_hmac_supports_md5_sha1_named_arguments_and_callbacks() {
+    let source = r#"<?php
+        $data = 'what do ya want for nothing?';
+        echo hash_hmac('md5', $data, 'Jefe'), '|';
+        echo hash_hmac(algo: 'sha1', data: $data, key: 'Jefe'), '|';
+        echo implode(',', array_map('hash_hmac', ['md5', 'sha1'], [$data, $data], ['Jefe', 'Jefe'])), '|';
+        echo hash_hmac('md5', $data, 'Jefe', binary: true) !== hash_hmac('md5', $data, 'Jefe'), '|';
+        echo function_exists('hash_hmac');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "750c783e6ab0b503eaa86e310a5db738|effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|750c783e6ab0b503eaa86e310a5db738,effcdf6ae5eb2fa2d27416d5f184df9c259a7c79|1|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

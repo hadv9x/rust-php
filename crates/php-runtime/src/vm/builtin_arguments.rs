@@ -271,6 +271,7 @@ fn signature(name: &str) -> Option<Signature> {
         "sha1_file" => (&["filename", "binary"], &[(1, F)], false),
         "sha1" => (&["string", "binary"], &[(1, F)], false),
         "hash_equals" => (&["known_string", "user_string"], &[], false),
+        "hash_hmac" => (&["algo", "data", "key", "binary"], &[(3, F)], false),
         "base64_encode" => (&["string"], &[], false),
         "base64_decode" => (&["string", "strict"], &[(1, F)], false),
         "htmlentities" => (&["string", "flags", "encoding", "double_encode"], &[(1, Num(11.0)), (2, DefaultValue::Utf8), (3, DefaultValue::True)], false),

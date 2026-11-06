@@ -9,7 +9,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
-        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "str_word_count", "strspn",
+        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
         "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
         "str_starts_with", "str_ends_with", "strstr", "strchr", "stristr", "strcmp", "strcasecmp",
         "strnatcmp", "strnatcasecmp", "strncmp", "strncasecmp", "strtr", "strpos", "stripos",
@@ -39,6 +39,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "str_replace" | "str_ireplace" => &[0, 1, 2],
         "strtr" => &[0, 1, 2],
         "hash_equals" => &[0, 1],
+        "hash_hmac" => &[0, 1, 2],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
         "ucwords" | "str_word_count" => &[0, 2],
         "wordwrap" => &[0, 2],
@@ -1161,6 +1162,23 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
 
+    if function == "hash_hmac" {
+        if arguments.len() < 3 || arguments.len() > 4 {
+            return Err(format!("ArgumentCountError:hash_hmac() expects 3 or 4 arguments, {} given", arguments.len()));
+        }
+        let algorithm = arguments[0].show().to_ascii_lowercase();
+        let data = arguments[1].show();
+        let key = arguments[2].show();
+        let binary = arguments.get(3).is_some_and(Value::truthy);
+        let digest = match algorithm.as_str() {
+            "md5" => hmac_digest(&key, data.as_bytes(), md5_digest),
+            "sha1" => hmac_digest(&key, data.as_bytes(), sha1_digest),
+            _ => return Err(format!("ValueError:hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
+        };
+        let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        return Ok(Value::String(output));
+    }
+
     if function == "hash_equals" {
         if arguments.len() != 2 {
             return Err(format!("ArgumentCountError:hash_equals() expects exactly 2 arguments, {} given", arguments.len()));
@@ -1755,6 +1773,19 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => unreachable!(),
     };
     Ok(value)
+}
+
+fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
+    const BLOCK_SIZE: usize = 64;
+    let mut normalized_key = key.as_bytes().to_vec();
+    if normalized_key.len() > BLOCK_SIZE { normalized_key = digest(&normalized_key); }
+    normalized_key.resize(BLOCK_SIZE, 0);
+    let mut inner = normalized_key.iter().map(|byte| byte ^ 0x36).collect::<Vec<_>>();
+    inner.extend_from_slice(data);
+    let inner_digest = digest(&inner);
+    let mut outer = normalized_key.iter().map(|byte| byte ^ 0x5c).collect::<Vec<_>>();
+    outer.extend_from_slice(&inner_digest);
+    digest(&outer)
 }
 
 fn base64_encode(arguments: &[Value]) -> Result<Value, String> {
