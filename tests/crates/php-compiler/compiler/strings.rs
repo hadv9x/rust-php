@@ -1,6 +1,20 @@
 use php_compiler::compile_source;
 
 #[test]
+fn md5_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
+    let source = r#"<?php
+        echo md5(''), '|', md5(string: 'abc'), '|', md5(str_repeat('a', 1000000)), '|';
+        echo (md5('abc', binary: true) !== md5('abc')), '|';
+        echo implode(',', array_map('md5', ['', 'abc'])), '|';
+        echo function_exists('md5');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "d41d8cd98f00b204e9800998ecf8427e|900150983cd24fb0d6963f7d28e17f72|7707d6ae4e027c70eea2a935c2296f21|1|d41d8cd98f00b204e9800998ecf8427e,900150983cd24fb0d6963f7d28e17f72|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "str_word_count", "strspn",
@@ -35,7 +35,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "strtok" => &[0, 1],
         "levenshtein" => &[0, 1],
         "similar_text" => &[0, 1],
-        "count_chars" | "crc32" | "base64_encode" | "base64_decode" => &[0],
+        "count_chars" | "crc32" | "md5" | "base64_encode" | "base64_decode" => &[0],
         "str_replace" | "str_ireplace" => &[0, 1, 2],
         "strtr" => &[0, 1, 2],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
@@ -731,9 +731,58 @@ pub(crate) fn similar_text_with_percent(arguments: &[Value]) -> Result<(Value, f
     Ok((Value::Integer(matches as i64), percent))
 }
 
+fn md5(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!("md5() expects exactly 1 argument, {} given", arguments.len()));
+    }
+    let raw_output = arguments.get(1).is_some_and(Value::truthy);
+    let mut bytes = arguments[0].show().into_bytes();
+    let bit_length = (bytes.len() as u64).wrapping_mul(8);
+    bytes.push(0x80);
+    while bytes.len() % 64 != 56 { bytes.push(0); }
+    bytes.extend_from_slice(&bit_length.to_le_bytes());
+    let shifts: [u32; 64] = [
+        7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+        5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+        4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+        6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21,
+    ];
+    let mut state = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476];
+    for block in bytes.chunks_exact(64) {
+        let mut words = [0u32; 16];
+        for (index, word) in words.iter_mut().enumerate() {
+            *word = u32::from_le_bytes(block[index * 4..index * 4 + 4].try_into().unwrap());
+        }
+        let [mut a, mut b, mut c, mut d] = state;
+        for index in 0..64 {
+            let (f, g) = match index {
+                0..=15 => ((b & c) | (!b & d), index),
+                16..=31 => ((d & b) | (!d & c), (5 * index + 1) % 16),
+                32..=47 => (b ^ c ^ d, (3 * index + 5) % 16),
+                _ => (c ^ (b | !d), (7 * index) % 16),
+            };
+            let constant = ((1u64 << 32) as f64 * ((index + 1) as f64).sin().abs()).floor() as u32;
+            let next = b.wrapping_add(a.wrapping_add(f).wrapping_add(constant).wrapping_add(words[g]).rotate_left(shifts[index]));
+            a = d; d = c; c = b; b = next;
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+    }
+    let digest = state.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
+    let result = if raw_output {
+        String::from_utf8_lossy(&digest).into_owned()
+    } else {
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    Ok(Value::String(result))
+}
+
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
+    if function == "md5" { return md5(arguments); }
     if function == "base64_encode" { return base64_encode(arguments); }
     if function == "base64_decode" { return base64_decode(arguments); }
     if function == "sprintf" { return sprintf(arguments); }
@@ -780,7 +829,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         return Ok(Value::String(strip_tags(&arguments[0].show(), &allowed)));
     }
     let required = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "md5" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -797,7 +846,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported string function: {name}")),
     };
     let maximum = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "base64_decode" => 2,
         "addcslashes" => 2,
         "number_format" => 4,
