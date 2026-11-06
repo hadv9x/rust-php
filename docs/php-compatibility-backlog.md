@@ -111,6 +111,8 @@ For a broader comparison against the official PHP Manual, see the [manual covera
 
 ## Recent verified work
 
+- Added `hash_hmac_algos()` to enumerate HMAC implementations (`md5`, `sha1`) with zero-argument validation and `function_exists()`. Regression covers the list and discovery. CRC32B is excluded because it is not a cryptographic HMAC algorithm; broader HMAC algorithms remain open. Workspace tests (656 compiler integration tests), offline check, CLI build, all 122 PHP examples, and `git diff --check` passed.
+
 - Added `hash_algos()` to enumerate the generic hash algorithms implemented by the runtime (`md5`, `sha1`, `crc32b`), with `function_exists()` and zero-argument validation. Regression covers the ordered list and discovery; this list tracks only generic `hash()` support and does not imply equivalent HMAC support. Workspace tests (655 compiler integration tests), offline check, CLI build, all 122 PHP examples, and `git diff --check` passed.
 
 - Added `hash_file()` for sandbox-confined local files with MD5, SHA-1, and CRC32B, plus named arguments, callback dispatch, `function_exists()`, and warning/`false` on read failures. Regression hashes invalid UTF-8 bytes and covers all three algorithms, callbacks, named calls, and a missing file. Stream wrappers, other algorithms, and raw binary fidelity remain open. Behavior follows the [PHP manual](https://www.php.net/manual/en/function.hash-file.php). Workspace tests (654 compiler integration tests), offline check, CLI build, all 121 PHP examples, and `git diff --check` passed.
