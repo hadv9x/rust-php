@@ -1,6 +1,28 @@
 use php_compiler::compile_source;
 
 #[test]
+fn by_reference_array_mutators_detach_copied_slots_and_preserve_embedded_references() {
+    let source = r#"<?php
+        $original = [1, 2];
+        $pushed = $original;
+        array_push($pushed, 3);
+        $popped = $original;
+        $removed = array_pop($popped);
+        $unshifted = $original;
+        array_unshift($unshifted, 0);
+        echo implode(',', $original), '|', implode(',', $pushed), '|';
+        echo implode(',', $popped), ':', $removed, '|', implode(',', $unshifted), '|';
+        $shared = 4;
+        $with_reference = [&$shared];
+        $reference_copy = $with_reference;
+        array_push($reference_copy, 5);
+        $reference_copy[0] = 9;
+        echo $shared, ':', $with_reference[0], ':', $reference_copy[0];
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1,2|1,2,3|1:2|0,1,2|9:9:9");
+}
+
+#[test]
 fn fractional_float_array_keys_emit_precision_deprecation_and_truncate() {
     let source = r#"<?php
         $array = [1.5 => 'literal'];
