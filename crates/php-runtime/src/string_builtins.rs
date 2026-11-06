@@ -736,7 +736,18 @@ fn md5(arguments: &[Value]) -> Result<Value, String> {
         return Err(format!("md5() expects exactly 1 argument, {} given", arguments.len()));
     }
     let raw_output = arguments.get(1).is_some_and(Value::truthy);
-    let mut bytes = arguments[0].show().into_bytes();
+    let input = arguments[0].show();
+    let digest = md5_digest(input.as_bytes());
+    let result = if raw_output {
+        String::from_utf8_lossy(&digest).into_owned()
+    } else {
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    Ok(Value::String(result))
+}
+
+pub(crate) fn md5_digest(input: &[u8]) -> Vec<u8> {
+    let mut bytes = input.to_vec();
     let bit_length = (bytes.len() as u64).wrapping_mul(8);
     bytes.push(0x80);
     while bytes.len() % 64 != 56 { bytes.push(0); }
@@ -771,12 +782,7 @@ fn md5(arguments: &[Value]) -> Result<Value, String> {
         state[3] = state[3].wrapping_add(d);
     }
     let digest = state.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
-    let result = if raw_output {
-        String::from_utf8_lossy(&digest).into_owned()
-    } else {
-        digest.iter().map(|byte| format!("{byte:02x}")).collect()
-    };
-    Ok(Value::String(result))
+    digest
 }
 
 fn sha1(arguments: &[Value]) -> Result<Value, String> {

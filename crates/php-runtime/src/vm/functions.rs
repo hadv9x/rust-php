@@ -1265,6 +1265,9 @@ pub(super) fn execute_instruction(
                         let filename = arguments[0].show();
                         stack.push(file_stat_value(fallback_name, &filename, global_variables));
                     }
+                    "md5_file" => {
+                        stack.push(md5_file_builtin(&arguments, global_variables)?);
+                    }
                     "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "realpath" => {
                         if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", fallback_name, arguments.len())); }
                         let path = arguments.first().ok_or_else(|| format!("{}() expects a filename", fallback_name))?.show();
@@ -3939,6 +3942,31 @@ fn file_timestamp_value(name: &str, filename: &str, path: Option<&std::path::Pat
     Value::Bool(false)
 }
 
+fn md5_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!("ArgumentCountError:md5_file() expects 1 or 2 arguments, {} given", arguments.len()));
+    }
+    let filename = arguments[0].show();
+    let binary = arguments.get(1).is_some_and(Value::truthy);
+    let contents = filesystem_path(globals, std::path::Path::new(&filename), false)
+        .and_then(|path| std::fs::read(path).ok());
+    if let Some(contents) = contents {
+        let digest = crate::string_builtins::md5_digest(&contents);
+        let result = if binary { String::from_utf8_lossy(&digest).into_owned() }
+            else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        Ok(Value::String(result))
+    } else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("md5_file(): Failed to open stream: {filename}"),
+            source_file: None,
+            source_line: None,
+            output_offset: 0,
+        });
+        Ok(Value::Bool(false))
+    }
+}
+
 fn file_stat_value(name: &str, filename: &str, globals: &mut GlobalVariables) -> Value {
     let input_path = std::path::Path::new(filename);
     let resolved = if name.eq_ignore_ascii_case("lstat") {
@@ -5101,7 +5129,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
         "call_user_func" | "call_user_func_array" | "exit" | "die" | "func_get_args" | "func_get_arg" | "func_num_args" | "var_dump" |
         "function_exists" | "gc_collect_cycles" | "php_sapi_name" | "error_reporting" | "error_get_last" | "error_clear_last" | "class_exists" | "interface_exists" | "trait_exists" | "method_exists" | "property_exists" | "get_class" | "get_parent_class" | "get_called_class" | "is_a" | "is_subclass_of" | "is_callable" | "getenv" | "putenv" |
         "mongo_find" | "mongo_aggregate" | "mongo_count_documents" | "mongo_estimated_document_count" | "mongo_insert_one" | "mongo_insert_many" | "mongo_replace_one" | "mongo_update_one" | "mongo_update_many" | "mongo_delete_one" | "mongo_delete_many" | "mongo_begin_transaction" | "mongo_commit" | "mongo_rollback" |
-        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "stat" | "lstat" | "scandir" | "opendir" | "readdir" | "closedir" | "rewinddir" | "realpath" | "getcwd" | "get_include_path" | "set_include_path" | "sys_get_temp_dir" | "tempnam" | "unlink" | "touch" | "chmod" | "disk_free_space" | "diskfreespace" | "disk_total_space" | "copy" | "rename" | "mkdir" | "rmdir" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "strftime" | "gmstrftime" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
+        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "stat" | "lstat" | "scandir" | "opendir" | "readdir" | "closedir" | "rewinddir" | "realpath" | "getcwd" | "get_include_path" | "set_include_path" | "sys_get_temp_dir" | "tempnam" | "unlink" | "touch" | "chmod" | "disk_free_space" | "diskfreespace" | "disk_total_space" | "copy" | "rename" | "mkdir" | "rmdir" | "md5_file" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "strftime" | "gmstrftime" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
         "json_encode" | "json_decode" | "json_validate" | "json_last_error" | "json_last_error_msg" | "is_uploaded_file" | "move_uploaded_file" |
         "session_start" | "session_destroy" | "session_unset" | "session_status" | "session_id" |
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "bin2hex" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "strstr" | "strchr" | "stristr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" |
@@ -6141,6 +6169,9 @@ pub(super) fn invoke_callable(
         let result = clean_frame_after_error(validate_return_type(result, function, classes), &mut local_variables, functions, classes, static_properties, global_variables, output, steps)?;
         finish_user_frame(local_variables, &result, functions, classes, static_properties, global_variables, output, steps)?;
         return Ok(result);
+    }
+    if normalized_name == "md5_file" {
+        return md5_file_builtin(&arguments, global_variables);
     }
     if normalized_name == "count" {
         let mut callback_variables = HashMap::new();

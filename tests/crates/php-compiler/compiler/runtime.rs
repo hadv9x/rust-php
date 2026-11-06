@@ -233,6 +233,31 @@ fn filesystem_timestamp_failures_return_false_and_emit_warnings_directly_and_as_
 }
 
 #[test]
+fn md5_file_hashes_raw_file_bytes_and_supports_named_callback_and_warning_paths() {
+    let root = std::env::temp_dir().join(format!("php-rust-md5-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("binary.dat"), [b'a', b'b', b'c', 0xff, 0]).unwrap();
+    let path = root.join("binary.dat").to_string_lossy().into_owned();
+    let missing = root.join("missing.dat").to_string_lossy().into_owned();
+    let script = format!(r#"<?php
+        error_reporting(E_WARNING);
+        echo md5_file(filename: '{path}'), ':';
+        echo (md5_file(filename: '{path}', binary: true) !== md5_file('{path}')), ':';
+        echo array_map('md5_file', ['{path}'])[0], ':';
+        echo md5_file('{missing}') === false, ':', function_exists('md5_file');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "e01e7b08be3d4d8a1b74b61943856ac2:1:e01e7b08be3d4d8a1b74b61943856ac2:1:1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(6));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stat_and_lstat_return_php_numeric_and_named_fields() {
     let source = r#"<?php
         $status = stat(filename: '../../Cargo.toml');
