@@ -136,6 +136,22 @@ fn hash_hmac_algos_lists_only_supported_hmac_algorithms() {
 }
 
 #[test]
+fn hash_pbkdf2_derives_sha1_keys_with_hex_lengths_and_callbacks() {
+    let source = r#"<?php
+        echo hash_pbkdf2('sha1', 'password', 'salt', 1), '|';
+        echo hash_pbkdf2(algo: 'sha1', password: 'password', salt: 'salt', iterations: 2, length: 40), '|';
+        echo hash_pbkdf2('sha1', 'password', 'salt', 2, 12), '|';
+        echo implode(',', array_map('hash_pbkdf2', ['sha1'], ['password'], ['salt'], [1])), '|';
+        try { hash_pbkdf2('sha1', 'password', 'salt', 0); } catch (ValueError $error) { echo 'value-error|'; }
+        echo function_exists('hash_pbkdf2');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0c60c80f961f0e71f3a9b524af6012062fe037a6|ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957|ea6c014dc72d|0c60c80f961f0e71f3a9b524af6012062fe037a6|value-error|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

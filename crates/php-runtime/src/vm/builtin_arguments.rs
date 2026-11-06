@@ -275,6 +275,7 @@ fn signature(name: &str) -> Option<Signature> {
         "hash" => (&["algo", "data", "binary"], &[(2, F)], false),
         "hash_algos" => (&[], &[], false),
         "hash_hmac_algos" => (&[], &[], false),
+        "hash_pbkdf2" => (&["algo", "password", "salt", "iterations", "length", "binary", "options"], &[(4, Num(0.0)), (5, F), (6, DefaultValue::EmptyArray)], false),
         "hash_file" => (&["algo", "filename", "binary"], &[(2, F)], false),
         "hash_hmac_file" => (&["algo", "filename", "key", "binary"], &[(3, F)], false),
         "base64_encode" => (&["string"], &[], false),

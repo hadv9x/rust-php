@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos", "hash_hmac_algos",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos", "hash_hmac_algos", "hash_pbkdf2",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
@@ -41,6 +41,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "hash_equals" => &[0, 1],
         "hash_hmac" => &[0, 1, 2],
         "hash" => &[0, 1],
+        "hash_pbkdf2" => &[0, 1, 2],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
         "ucwords" | "str_word_count" => &[0, 2],
         "wordwrap" => &[0, 2],
@@ -1204,6 +1205,49 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         };
         let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
         return Ok(Value::String(output));
+    }
+
+    if function == "hash_pbkdf2" {
+        if arguments.len() < 4 || arguments.len() > 7 {
+            return Err(format!("ArgumentCountError:hash_pbkdf2() expects between 4 and 7 arguments, {} given", arguments.len()));
+        }
+        let algorithm = arguments[0].show().to_ascii_lowercase();
+        let password = arguments[1].show();
+        let salt = arguments[2].show();
+        let iterations = arguments[3].number() as i64;
+        let length = arguments.get(4).map_or(0, |value| value.number() as i64);
+        let binary = arguments.get(5).is_some_and(Value::truthy);
+        if iterations <= 0 { return Err("ValueError:hash_pbkdf2(): Argument #4 ($iterations) must be greater than 0".into()); }
+        if length < 0 { return Err("ValueError:hash_pbkdf2(): Argument #5 ($length) must be greater than or equal to 0".into()); }
+        if iterations > 1_000_000 { return Err("ValueError:hash_pbkdf2(): Argument #4 ($iterations) exceeds the runtime limit".into()); }
+        if length > 1_048_576 { return Err("ValueError:hash_pbkdf2(): Argument #5 ($length) exceeds the runtime output limit".into()); }
+        if arguments.get(6).is_some_and(|value| !matches!(value, Value::Array(values) if values.is_empty())) {
+            return Err("ValueError:hash_pbkdf2(): non-empty options are unsupported".into());
+        }
+        let digest = match algorithm.as_str() {
+            "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
+            "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            _ => return Err(format!("ValueError:hash_pbkdf2(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
+        };
+        let raw_length = if length == 0 { digest(&[]).len() } else if binary { length as usize } else { (length as usize).div_ceil(2) };
+        let mut derived = Vec::with_capacity(raw_length.min(1_048_576));
+        let blocks = raw_length.div_ceil(digest(&[]).len());
+        for block_index in 1..=blocks {
+            let mut message = salt.as_bytes().to_vec();
+            message.extend_from_slice(&(block_index as u32).to_be_bytes());
+            let mut u = hmac_digest(&password, &message, digest);
+            let mut accumulator = u.clone();
+            for _ in 1..iterations {
+                u = hmac_digest(&password, &u, digest);
+                for (value, next) in accumulator.iter_mut().zip(&u) { *value ^= *next; }
+            }
+            derived.extend_from_slice(&accumulator);
+        }
+        derived.truncate(raw_length);
+        if binary { return Ok(Value::String(String::from_utf8_lossy(&derived).into_owned())); }
+        let mut hex = derived.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        if length != 0 { hex.truncate(length as usize); }
+        return Ok(Value::String(hex));
     }
 
     if function == "hash_equals" {
