@@ -1224,6 +1224,55 @@ pub(crate) fn sha384_digest(input: &[u8]) -> Vec<u8> {
     digest
 }
 
+pub(crate) fn sha3_224_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 28) }
+pub(crate) fn sha3_256_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 32) }
+pub(crate) fn sha3_384_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 48) }
+pub(crate) fn sha3_512_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 64) }
+
+fn sha3_digest(input: &[u8], output_length: usize) -> Vec<u8> {
+    const ROUND_CONSTANTS: [u64; 24] = [
+        0x0000000000000001,0x0000000000008082,0x800000000000808a,0x8000000080008000,
+        0x000000000000808b,0x0000000080000001,0x8000000080008081,0x8000000000008009,
+        0x000000000000008a,0x0000000000000088,0x0000000080008009,0x000000008000000a,
+        0x000000008000808b,0x800000000000008b,0x8000000000008089,0x8000000000008003,
+        0x8000000000008002,0x8000000000000080,0x000000000000800a,0x800000008000000a,
+        0x8000000080008081,0x8000000000008080,0x0000000080000001,0x8000000080008008,
+    ];
+    const ROTATION: [u32; 25] = [0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
+    let rate = 200 - 2 * output_length;
+    let mut state = [0u64; 25];
+    let mut padded = input.to_vec();
+    padded.push(0x06);
+    while padded.len() % rate != rate - 1 { padded.push(0); }
+    padded.push(0x80);
+    for block in padded.chunks_exact(rate) {
+        for (index, bytes) in block.chunks_exact(8).enumerate() {
+            state[index] ^= u64::from_le_bytes(bytes.try_into().unwrap());
+        }
+        for round_constant in ROUND_CONSTANTS {
+            let mut column = [0u64; 5];
+            for x in 0..5 { column[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20]; }
+            for x in 0..5 {
+                let delta = column[(x + 4) % 5] ^ column[(x + 1) % 5].rotate_left(1);
+                for y in 0..5 { state[x + 5 * y] ^= delta; }
+            }
+            let mut moved = [0u64; 25];
+            for x in 0..5 {
+                for y in 0..5 {
+                    moved[y + 5 * ((2 * x + 3 * y) % 5)] = state[x + 5 * y].rotate_left(ROTATION[x + 5 * y]);
+                }
+            }
+            for x in 0..5 {
+                for y in 0..5 {
+                    state[x + 5 * y] = moved[x + 5 * y] ^ ((!moved[(x + 1) % 5 + 5 * y]) & moved[(x + 2) % 5 + 5 * y]);
+                }
+            }
+            state[0] ^= round_constant;
+        }
+    }
+    state.iter().flat_map(|lane| lane.to_le_bytes()).take(output_length).collect()
+}
+
 fn sha512_digest_with_state(input: &[u8], mut state: [u64; 8]) -> Vec<u8> {
     const K: [u64; 80] = [
         0x428a2f98d728ae22,0x7137449123ef65cd,0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc,
@@ -1299,14 +1348,14 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384", "sha3-512", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac_algos" {
         if !arguments.is_empty() {
             return Err(format!("ArgumentCountError:hash_hmac_algos() expects exactly 0 arguments, {} given", arguments.len()));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384", "sha3-512"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
     }
 
     if function == "hash_hmac" {
@@ -1324,6 +1373,10 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             "sha256" => hmac_digest(&key, data.as_bytes(), sha256_digest),
             "sha384" => hmac_digest(&key, data.as_bytes(), sha384_digest),
             "sha512" => hmac_digest(&key, data.as_bytes(), sha512_digest),
+            "sha3-224" => hmac_digest_bytes_with_block(key.as_bytes(), data.as_bytes(), sha3_224_digest, 144),
+            "sha3-256" => hmac_digest_bytes_with_block(key.as_bytes(), data.as_bytes(), sha3_256_digest, 136),
+            "sha3-384" => hmac_digest_bytes_with_block(key.as_bytes(), data.as_bytes(), sha3_384_digest, 104),
+            "sha3-512" => hmac_digest_bytes_with_block(key.as_bytes(), data.as_bytes(), sha3_512_digest, 72),
             _ => return Err(format!("ValueError:hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
@@ -1354,18 +1407,23 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             "sha384" => sha384_digest as fn(&[u8]) -> Vec<u8>,
             "sha512" => sha512_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-224" => sha3_224_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-256" => sha3_256_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-384" => sha3_384_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-512" => sha3_512_digest as fn(&[u8]) -> Vec<u8>,
             _ => return Err(format!("ValueError:hash_pbkdf2(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let raw_length = if length == 0 { digest(&[]).len() } else if binary { length as usize } else { (length as usize).div_ceil(2) };
+        let block_size = hmac_block_size(&algorithm);
         let mut derived = Vec::with_capacity(raw_length.min(1_048_576));
         let blocks = raw_length.div_ceil(digest(&[]).len());
         for block_index in 1..=blocks {
             let mut message = salt.as_bytes().to_vec();
             message.extend_from_slice(&(block_index as u32).to_be_bytes());
-            let mut u = hmac_digest(&password, &message, digest);
+            let mut u = hmac_digest_bytes_with_block(password.as_bytes(), &message, digest, block_size);
             let mut accumulator = u.clone();
             for _ in 1..iterations {
-                u = hmac_digest(&password, &u, digest);
+                u = hmac_digest_bytes_with_block(password.as_bytes(), &u, digest, block_size);
                 for (value, next) in accumulator.iter_mut().zip(&u) { *value ^= *next; }
             }
             derived.extend_from_slice(&accumulator);
@@ -1395,20 +1453,24 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             "sha256" => sha256_digest as fn(&[u8]) -> Vec<u8>,
             "sha384" => sha384_digest as fn(&[u8]) -> Vec<u8>,
             "sha512" => sha512_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-224" => sha3_224_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-256" => sha3_256_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-384" => sha3_384_digest as fn(&[u8]) -> Vec<u8>,
+            "sha3-512" => sha3_512_digest as fn(&[u8]) -> Vec<u8>,
             _ => return Err(format!("ValueError:hash_hkdf(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let hash_length = digest(&[]).len();
         let output_length = if length == 0 { hash_length } else { length as usize };
         if output_length > 255 * hash_length { return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be less than or equal to 255 times the hash length".into()); }
         let effective_salt = if salt.is_empty() { String::from_utf8(vec![0; hash_length]).unwrap() } else { salt };
-        let prk = hmac_digest_bytes(effective_salt.as_bytes(), key.as_bytes(), digest);
+        let prk = hmac_digest_bytes_with_block(effective_salt.as_bytes(), key.as_bytes(), digest, hmac_block_size(&algorithm));
         let mut output = Vec::with_capacity(output_length);
         let mut previous = Vec::new();
         for counter in 1..=output_length.div_ceil(hash_length) {
             let mut message = previous;
             message.extend_from_slice(info.as_bytes());
             message.push(counter as u8);
-            previous = hmac_digest_bytes(&prk, &message, digest);
+            previous = hmac_digest_bytes_with_block(&prk, &message, digest, hmac_block_size(&algorithm));
             output.extend_from_slice(&previous);
         }
         output.truncate(output_length);
@@ -2019,6 +2081,10 @@ pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
         "sha256" => Some(sha256_digest(data)),
         "sha384" => Some(sha384_digest(data)),
         "sha512" => Some(sha512_digest(data)),
+        "sha3-224" => Some(sha3_224_digest(data)),
+        "sha3-256" => Some(sha3_256_digest(data)),
+        "sha3-384" => Some(sha3_384_digest(data)),
+        "sha3-512" => Some(sha3_512_digest(data)),
         "crc32b" => {
             let mut crc = !0u32;
             for byte in data {
@@ -2037,6 +2103,21 @@ pub(crate) fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) 
 
 pub(crate) fn hmac_digest_bytes(key: &[u8], data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
     let block_size = if digest(&[]).len() > 32 { 128 } else { 64 };
+    hmac_digest_bytes_with_block(key, data, digest, block_size)
+}
+
+pub(crate) fn hmac_block_size(algorithm: &str) -> usize {
+    match algorithm {
+        "sha384" | "sha512" => 128,
+        "sha3-224" => 144,
+        "sha3-256" => 136,
+        "sha3-384" => 104,
+        "sha3-512" => 72,
+        _ => 64,
+    }
+}
+
+pub(crate) fn hmac_digest_bytes_with_block(key: &[u8], data: &[u8], digest: fn(&[u8]) -> Vec<u8>, block_size: usize) -> Vec<u8> {
     let mut normalized_key = key.to_vec();
     if normalized_key.len() > block_size { normalized_key = digest(&normalized_key); }
     normalized_key.resize(block_size, 0);

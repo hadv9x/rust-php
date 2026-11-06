@@ -7,6 +7,8 @@ echo ($first !== $second ? 'separate keys' : 'same key'), "\n";
 echo strlen($sha256Key), "\n";
 $sha224Key = hash_hkdf('sha224', 'input key material', 28, 'encryption');
 echo strlen($sha224Key), "\n";
+$sha3Key = hash_hkdf('sha3-256', 'input key material', 32, 'encryption');
+echo strlen($sha3Key), "\n";
 $sha384Key = hash_hkdf('sha384', 'input key material', 48, 'encryption');
 echo strlen($sha384Key), "\n";
 $sha512Key = hash_hkdf('sha512', 'input key material', 64, 'encryption');

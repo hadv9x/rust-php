@@ -298,16 +298,17 @@ fn hash_hmac_file_hashes_sandboxed_file_bytes_and_supports_callbacks() {
         echo hash_hmac_file('sha256', '{path}', 'Jefe'), '|';
         echo hash_hmac_file('sha384', '{path}', 'Jefe'), '|';
         echo hash_hmac_file('sha512', '{path}', 'Jefe'), '|';
+        echo hash_hmac_file('sha3-256', '{path}', 'Jefe'), '|';
         echo array_map('hash_hmac_file', ['md5'], ['{path}'], ['Jefe'])[0], '|';
         echo hash_hmac_file('md5', '{missing}', 'Jefe') === false, '|', function_exists('hash_hmac_file');
     "#);
     let mut globals = std::collections::HashMap::new();
     globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
     let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
-    assert_eq!(result.output, "c819ae47a2b770908a0cfdfc97391bbe|6ecf193ad361be423fd50be4a4e5410d2915ba28|64eb1cbacf4262a96bcc25c39515d9cb4dc971c5533426bf9f201251|8b516fd2265edd5b1c38d222d926abd48ee507d505e6f5e45f7dae2e6f20eead|7c01540c71fd538a29ad5722a20f90a2865d54de27a327cfaee64174ffa93b87828491a33938d3f065ded092f77757b7|60437d7f9ecca948390f509a919ba4cc2de606fa1be29c828e9824f5bce1436bd908397bb41355607adba623723f3b882ddad6a9bdaa599906e9e3f906baeefa|c819ae47a2b770908a0cfdfc97391bbe|1|1");
+    assert_eq!(result.output, "c819ae47a2b770908a0cfdfc97391bbe|6ecf193ad361be423fd50be4a4e5410d2915ba28|64eb1cbacf4262a96bcc25c39515d9cb4dc971c5533426bf9f201251|8b516fd2265edd5b1c38d222d926abd48ee507d505e6f5e45f7dae2e6f20eead|7c01540c71fd538a29ad5722a20f90a2865d54de27a327cfaee64174ffa93b87828491a33938d3f065ded092f77757b7|60437d7f9ecca948390f509a919ba4cc2de606fa1be29c828e9824f5bce1436bd908397bb41355607adba623723f3b882ddad6a9bdaa599906e9e3f906baeefa|532d0d8aea4097bff07f96e6f25df9bbe2b28580fced0f64ef94a08c4698fe80|c819ae47a2b770908a0cfdfc97391bbe|1|1");
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[0].source_line, Some(10));
+    assert_eq!(result.diagnostics[0].source_line, Some(11));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -322,14 +323,14 @@ fn hash_file_hashes_sandboxed_bytes_and_supports_named_algorithms_and_callbacks(
     let script = format!(r#"<?php
         error_reporting(E_WARNING);
         echo hash_file(algo: 'md5', filename: '{path}'), '|';
-        echo hash_file('sha1', '{path}'), '|', hash_file('sha224', '{path}'), '|', hash_file('sha256', '{path}'), '|', hash_file('sha384', '{path}'), '|', hash_file('sha512', '{path}'), '|', hash_file('crc32b', '{path}'), '|';
+        echo hash_file('sha1', '{path}'), '|', hash_file('sha224', '{path}'), '|', hash_file('sha256', '{path}'), '|', hash_file('sha384', '{path}'), '|', hash_file('sha512', '{path}'), '|', hash_file('sha3-256', '{path}'), '|', hash_file('crc32b', '{path}'), '|';
         echo array_map('hash_file', ['md5'], ['{path}'])[0], '|';
         echo hash_file('md5', '{missing}') === false, '|', function_exists('hash_file');
     "#);
     let mut globals = std::collections::HashMap::new();
     globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
     let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
-    assert_eq!(result.output, "e01e7b08be3d4d8a1b74b61943856ac2|35a6dd9eec07ed9764c95cf36940b278b374f7b9|dff31520dcc05d5ec602ddafb2ab0c7afd0b519b6c9c9ecf364891dc|aaf2c38a3b8617bdff3f793d98c22458a3714a26faf5d06f900009885d42bdd9|41b4ec8b5cbd2907a6073630771a846eb6c7a6440f64f7b9ebd18f7f24e0f3099180712dc3ca5d657e3e633eb416f4f5|6728812a326d117173726d543ac8fce73782f68335c7efacaed2767b40a01efb2286d2229d3fef49bf68bc984e123a2829abd570cee5cf9f098972f6aff932eb|2aea1e63|e01e7b08be3d4d8a1b74b61943856ac2|1|1");
+    assert_eq!(result.output, "e01e7b08be3d4d8a1b74b61943856ac2|35a6dd9eec07ed9764c95cf36940b278b374f7b9|dff31520dcc05d5ec602ddafb2ab0c7afd0b519b6c9c9ecf364891dc|aaf2c38a3b8617bdff3f793d98c22458a3714a26faf5d06f900009885d42bdd9|41b4ec8b5cbd2907a6073630771a846eb6c7a6440f64f7b9ebd18f7f24e0f3099180712dc3ca5d657e3e633eb416f4f5|6728812a326d117173726d543ac8fce73782f68335c7efacaed2767b40a01efb2286d2229d3fef49bf68bc984e123a2829abd570cee5cf9f098972f6aff932eb|9403ac260343e90b651b310981002e4e34e54bc4f153cf9ee9a162ae6c94ca0b|2aea1e63|e01e7b08be3d4d8a1b74b61943856ac2|1|1");
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
     assert_eq!(result.diagnostics[0].source_line, Some(6));
