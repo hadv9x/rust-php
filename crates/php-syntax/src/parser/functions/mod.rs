@@ -430,7 +430,7 @@ fn collect_arrow_captures(expression: &Expr, parameters: &[String], captures: &m
                 for argument in arguments { visit(argument, parameters, captures); }
             }
             Expr::DynamicNewObject(class, arguments, _) => { visit(class, parameters, captures); for argument in arguments { visit(argument, parameters, captures); } }
-            Expr::NamedArgument(_, value) | Expr::UnpackArgument(value) | Expr::Clone(value) | Expr::Empty(value) | Expr::Negate(value) | Expr::Positive(value) | Expr::Not(value) | Expr::ErrorSuppress(value) | Expr::BitwiseNot(value) | Expr::YieldFrom(value) => visit(value, parameters, captures),
+            Expr::NamedArgument(_, value) | Expr::UnpackArgument(value) | Expr::Clone(value) | Expr::Empty(value) | Expr::Negate(value) | Expr::Positive(value) | Expr::Not(value) | Expr::ErrorSuppress(value) | Expr::BitwiseNot(value) | Expr::YieldFrom(value) | Expr::DeprecatedInterpolation(value, _) => visit(value, parameters, captures),
             Expr::Cast(_, value) => visit(value, parameters, captures),
             Expr::MethodCall(object, _, arguments) => {
                 visit(object, parameters, captures);

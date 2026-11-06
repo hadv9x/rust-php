@@ -59,6 +59,38 @@ $referenceGenerator = outerReferenceValues($reference);
 foreach ($referenceGenerator as &$value) { $value = 12; }
 unset($value);
 echo 'delegated reference source: ', $reference, "\n";
+function &localReferenceValues() { $local = 9; yield $local; echo 'resumed local reference: ', $local, "\n"; }
+$localReferenceGenerator = localReferenceValues();
+foreach ($localReferenceGenerator as &$value) { $value = 14; }
+unset($value);
+$arrayReference = 6;
+$referenceValues = [&$arrayReference];
+function &delegateArrayReferences($values) { yield from $values; }
+$arrayReferenceGenerator = delegateArrayReferences($referenceValues);
+foreach ($arrayReferenceGenerator as &$value) { $value += 2; break; }
+unset($value);
+echo 'yield-from array reference: ', $arrayReference, "\n";
+class ReferenceDelegatedIterator implements Iterator {
+    public $position = 0;
+    public $values = [8];
+    public function rewind() { $this->position = 0; }
+    public function valid() { return $this->position < count($this->values); }
+    public function &current() { return $this->values[$this->position]; }
+    public function key() { return $this->position; }
+    public function next() { $this->position++; }
+}
+class ReferenceDelegatedCollection implements IteratorAggregate {
+    public $iterator;
+    public function __construct($iterator) { $this->iterator = $iterator; }
+    public function getIterator() { return $this->iterator; }
+}
+function &delegateIteratorReferences($iterator) { yield from $iterator; }
+$referenceIterator = new ReferenceDelegatedIterator();
+$referenceCollection = new ReferenceDelegatedCollection(new ReferenceDelegatedCollection($referenceIterator));
+$referenceRelay = delegateIteratorReferences($referenceCollection);
+foreach ($referenceRelay as &$relayedValue) { $relayedValue *= 2; }
+unset($relayedValue);
+echo 'yield-from iterator reference: ', $referenceIterator->values[0], "\n";
 $materialized = iterator_to_array(outerValues(), false);
 echo $materialized[0], ':', $materialized[1], ':', $materialized[2], "\n";
 $counted = delegatedValues();

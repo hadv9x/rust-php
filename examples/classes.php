@@ -946,6 +946,13 @@ $generatorCycleNode->generator = generatorCycleCollectionExample($generatorCycle
 unset($generatorCycleNode);
 echo "generator-cycle-collected:", gc_collect_cycles(), "\n";
 
+class OverridePropertyContract { public string $label = ''; }
+class OverridePropertyImplementation extends OverridePropertyContract {
+    #[\Override]
+    public string $label = 'property override';
+}
+echo (new OverridePropertyImplementation())->label, "\n";
+
 class ReflectionFilterExample { public function present() {} }
 try { (new ReflectionClass(ReflectionFilterExample::class))->getMethod('missing'); }
 catch (ReflectionException $error) { echo 'missing reflected method: ', get_class($error), "\n"; }

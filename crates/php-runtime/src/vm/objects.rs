@@ -1836,6 +1836,9 @@ pub(super) fn stringify(
     finish_object_frame(locals, &result, functions, classes, static_properties, global_variables, output, steps)?;
     match result {
         Value::String(string) => Ok(string),
+        Value::Integer(_) | Value::Number(_) | Value::Bool(_) | Value::Null if method.strict_types => {
+            Err(format!("TypeError:{class_name}::__toString() must return string"))
+        }
         Value::Integer(value) => Ok(value.to_string()),
         Value::Number(value) => Ok(Value::Number(value).show()),
         Value::Bool(value) => Ok(if value { "1".into() } else { String::new() }),

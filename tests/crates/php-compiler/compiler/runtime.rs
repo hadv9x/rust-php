@@ -208,10 +208,249 @@ fn filesystem_metadata_helpers_support_named_arguments_and_introspection() {
         echo stream_get_contents($stream, 10), ':'; fclose($stream);
         echo is_resource($stream), ':', file_exists('../../Cargo.toml'), ':', fopen('missing-compatibility-test-file', 'rb') === false, ':';
         echo file_exists(filename: '../../Cargo.toml'), ':', is_file('../../Cargo.toml'), ':', is_dir(filename: '../../crates'), ':', is_link(filename: '../../Cargo.toml'), ':', is_readable(filename: '../../Cargo.toml'), ':';
-        echo filesize(filename: '../../Cargo.toml') > 0, ':', realpath('../../Cargo.toml') !== false, ':';
-        echo file_exists('missing-compatibility-test-file'), ':', is_writable(filename: 'missing-compatibility-test-file'), ':', function_exists('is_executable'), ':', strlen(getcwd()) > 0, "\n";
+        $metadataPath = getcwd() . '/Cargo.toml';
+        echo 'ctime=', filectime($metadataPath) > 0, ';inode=', fileinode(filename: $metadataPath) > 0, ';owner=', fileowner($metadataPath) >= 0, ';group=', filegroup($metadataPath) >= 0, ';perms=', fileperms($metadataPath) > 0, ';type=', filetype($metadataPath), ';callback=', array_map('filetype', [$metadataPath])[0], ';';
+        echo 'size=', filesize(filename: '../../Cargo.toml') > 0, ';mtime=', filemtime(filename: $metadataPath) > 0, ';atime=', fileatime(filename: $metadataPath) > 0, ';callback=', array_map('filemtime', [$metadataPath])[0] > 0, ';realpath=', realpath('../../Cargo.toml') !== false, ';';
+        echo file_exists('missing-compatibility-test-file'), ':', is_writable(filename: 'missing-compatibility-test-file'), ':', function_exists('is_executable'), ':', function_exists('filemtime'), ':', function_exists('stat'), ':', function_exists('filetype'), ':', strlen(getcwd()) > 0, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "[workspace:1:[workspace::1:1:1:1:1::1:1:1:::1:1\n");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "[workspace:1:[workspace::1:1:1:1:1::1:ctime=1;inode=1;owner=1;group=1;perms=1;type=file;callback=file;size=1;mtime=1;atime=1;callback=1;realpath=1;::1:1:1:1:1\n");
+}
+
+#[test]
+fn filesystem_timestamp_failures_return_false_and_emit_warnings_directly_and_as_callbacks() {
+    let source = r#"<?php
+        error_reporting(E_WARNING);
+        echo filemtime(filename: 'missing-timestamp-file') === false, ':';
+        echo array_map('fileatime', ['missing-timestamp-file'])[0] === false;
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1:1");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert_eq!(result.diagnostics[0].message, "filemtime(): stat failed for missing-timestamp-file");
+    assert_eq!(result.diagnostics[1].message, "fileatime(): stat failed for missing-timestamp-file");
+    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(3), Some(4)]);
+}
+
+#[test]
+fn stat_and_lstat_return_php_numeric_and_named_fields() {
+    let source = r#"<?php
+        $status = stat(filename: '../../Cargo.toml');
+        $linkStatus = lstat('../../Cargo.toml');
+        $callbackStatus = array_map('stat', ['../../Cargo.toml'])[0];
+        echo count($status), ':', $status[7] === $status['size'], ':', $status[9] === $status['mtime'], ':';
+        echo $linkStatus[7] === $linkStatus['size'], ':', $callbackStatus['size'] > 0, ':';
+        echo function_exists('stat'), ':', function_exists('lstat');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "26:1:1:1:1:1:1");
+}
+
+#[test]
+fn stat_failures_return_false_and_emit_source_located_warnings() {
+    let source = "<?php\nerror_reporting(E_WARNING);\nvar_dump(stat(filename: 'missing-stat-file'));\n";
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert!(result.output.contains("bool(false)"));
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].message, "stat(): stat failed for missing-stat-file");
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+}
+
+#[test]
+fn scandir_supports_php_sort_orders_named_arguments_and_callback_dispatch() {
+    let source = r#"<?php
+        $ascending = scandir(directory: '../../examples', sorting_order: SCANDIR_SORT_ASCENDING);
+        $descending = scandir('../../examples', SCANDIR_SORT_DESCENDING);
+        $unsorted = scandir('../../examples', SCANDIR_SORT_NONE);
+        $callback = array_map('scandir', ['../../examples'])[0];
+        echo $ascending[0], ':', $ascending[1], ':', $ascending[2], ':';
+        echo $descending[0], ':', $descending[count($descending) - 1], ':';
+        echo $unsorted[0], ':', $unsorted[1], ':', file_exists('../../examples/' . $callback[2]), ':', function_exists('scandir');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ".:..:ExampleAutoloaded.php:word-logical-operators.php:.:.:..:1:1");
+}
+
+#[test]
+fn scandir_failure_returns_false_and_emits_source_located_warning() {
+    let source = "<?php\nerror_reporting(E_WARNING);\n$entries = scandir(directory: 'missing-scan-directory');\necho $entries === false;";
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].message, "scandir(): failed to open directory missing-scan-directory");
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+}
+
+#[test]
+fn opendir_readdir_closedir_share_directory_resource_state() {
+    let source = r#"<?php
+        $handle = opendir(directory: '../../examples');
+        $first = array_map('readdir', [$handle])[0];
+        $second = readdir();
+        $closed = array_map('closedir', [$handle])[0];
+        $implicitHandle = array_map('opendir', ['../../examples'])[0];
+        $implicitClosed = closedir();
+        echo is_resource($handle), ':', $first, ':', $second, ':', $closed === null, ':';
+        echo $implicitClosed === null, ':', is_resource($implicitHandle), ':', function_exists('opendir'), ':', function_exists('readdir'), ':', function_exists('closedir');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":.:..:1:1::1:1:1");
+}
+
+#[test]
+fn opendir_failure_returns_false_and_emits_source_located_warning() {
+    let source = "<?php\nerror_reporting(E_WARNING);\n$handle = opendir('missing-open-directory');\necho $handle === false;";
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+}
+
+#[test]
+fn rewinddir_resets_the_directory_handle_and_is_discoverable() {
+    let source = r#"<?php
+        $handle = opendir('../../examples');
+        $first = readdir($handle);
+        readdir($handle);
+        $rewound = rewinddir($handle);
+        $again = readdir($handle);
+        $seen = 1;
+        while (readdir($handle) !== false) { $seen++; }
+        echo $first, ':', $again, ':', $rewound === null, ':', $seen === count(scandir('../../examples')), ':', readdir($handle) === false, ':', function_exists('rewinddir');
+        closedir($handle);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ".:.:1:1:1:1");
+}
+
+#[test]
+fn explicit_null_directory_handles_emit_php_85_deprecations() {
+    let source = "<?php\n$handle = opendir('../../examples');\nreaddir(null);\nrewinddir(null);\nclosedir(null);";
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.diagnostics.len(), 3);
+    for (diagnostic, function) in result.diagnostics.iter().zip(["readdir", "rewinddir", "closedir"]) {
+        assert_eq!(diagnostic.level, php_runtime::DiagnosticLevel::Deprecated);
+        assert_eq!(diagnostic.message, format!("Passing null to {function}() is deprecated, instead the last opened directory stream should be provided"));
+    }
+}
+
+#[test]
+fn touch_creates_files_sets_both_timestamps_and_dispatches_as_callback() {
+    let root = std::env::temp_dir().join(format!("php-rust-touch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("created.txt").to_string_lossy().into_owned();
+    let script = format!(r#"<?php
+        $created = touch(filename: '{path}', mtime: 123456789, atime: 234567890);
+        $mtime = filemtime('{path}');
+        $atime = fileatime('{path}');
+        $callback = array_map('touch', ['{path}'])[0];
+        echo $created, ':', $mtime, ':', $atime, ':', $callback, ':', function_exists('touch');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    assert_eq!(compile_source(&script).unwrap().execute_with_globals(globals).unwrap().output, "1:123456789:234567890:1:1");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn touch_defaults_atime_to_mtime_and_warns_when_sandbox_rejects_path() {
+    let root = std::env::temp_dir().join(format!("php-rust-touch-failure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("created.txt").to_string_lossy().into_owned();
+    let missing = root.join("missing").join("file.txt").to_string_lossy().into_owned();
+    let script = format!("<?php\ntouch('{path}', 123456789);\n$ok = touch('{missing}');\necho fileatime('{path}'), ':', $ok === false;");
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "123456789:1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn chmod_updates_sandboxed_file_modes_and_dispatches_as_callback() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("php-rust-chmod-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let file_path = root.join("mode.txt");
+    let path = file_path.to_string_lossy().into_owned();
+    std::fs::write(&file_path, "x").unwrap();
+    let script = format!(r#"<?php
+        $first = chmod(filename: '{path}', permissions: 416);
+        $firstMode = fileperms('{path}') & 511;
+        $callback = array_map('chmod', ['{path}'], [420])[0];
+        echo $first, ':', $firstMode, ':', $callback, ':', (fileperms('{path}') & 511), ':', function_exists('chmod');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    assert_eq!(compile_source(&script).unwrap().execute_with_globals(globals).unwrap().output, "1:416:1:420:1");
+    assert_eq!(std::fs::metadata(&file_path).unwrap().permissions().mode() & 0o777, 0o644);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn chmod_failure_returns_false_and_emits_source_located_warning() {
+    let root = std::env::temp_dir().join(format!("php-rust-chmod-failure-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let missing = root.join("missing.txt").to_string_lossy().into_owned();
+    let script = format!("<?php\nerror_reporting(E_WARNING);\n$result = chmod('{missing}', 420);\necho $result === false;");
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn disk_space_functions_return_bytes_support_aliases_callbacks_and_sandbox_warnings() {
+    let root = std::env::temp_dir().join(format!("php-rust-disk-space-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let directory = root.to_string_lossy().into_owned();
+    let missing = root.join("missing").to_string_lossy().into_owned();
+    let script = format!(r#"<?php
+        error_reporting(E_WARNING);
+        $free = disk_free_space(directory: '{directory}');
+        $total = disk_total_space('{directory}');
+        $alias = diskfreespace('{directory}');
+        $callback = array_map('disk_total_space', ['{directory}'])[0];
+        $failed = disk_free_space('{missing}');
+        echo ($free > 0), ':', ($total >= $free), ':', ($alias > 0), ':', ($callback > 0), ':', ($failed === false), ':', function_exists('diskfreespace');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(directory));
+    let result = compile_source(&script).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "1:1:1:1:1:1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(result.diagnostics[0].source_line, Some(7));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn lstat_keeps_the_final_symlink_component_inside_the_sandbox() {
+    use std::os::unix::fs::symlink;
+    let root = std::env::temp_dir().join(format!("php-rust-lstat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("target.txt"), "payload").unwrap();
+    symlink("target.txt", root.join("link.txt")).unwrap();
+    let script = format!("<?php $path = '{}'; echo stat($path)['size'], ':', lstat($path)['size'];", root.join("link.txt").display());
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".into(), php_runtime::Value::String(root.to_string_lossy().into_owned()));
+    assert_eq!(compile_source(&script).unwrap().execute_with_globals(globals).unwrap().output, "7:10");
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -273,6 +512,99 @@ fn file_put_contents_writes_arrays_and_honors_append_and_lock_flags() {
     assert_eq!(compile_source(&source).unwrap().execute().unwrap(), "11:6:hello-world-again:8:streamed:1\n");
     assert_eq!(std::fs::read(&path).unwrap(), b"streamed");
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn copy_supports_named_arguments_callback_dispatch_and_failure_diagnostics() {
+    static NEXT_COPY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let nonce = NEXT_COPY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let source_path = std::env::temp_dir().join(format!("php-rust-copy-{}-{nonce}-source.tmp", std::process::id()));
+    let target_path = std::env::temp_dir().join(format!("php-rust-copy-{}-{nonce}-target.tmp", std::process::id()));
+    let callback_target = std::env::temp_dir().join(format!("php-rust-copy-{}-{nonce}-callback.tmp", std::process::id()));
+    std::fs::write(&source_path, b"copy payload").unwrap();
+    let source_path = source_path.to_string_lossy().into_owned();
+    let target_path = target_path.to_string_lossy().into_owned();
+    let callback_target = callback_target.to_string_lossy().into_owned();
+    let source = format!(r#"<?php
+        echo copy(from: '{source_path}', to: '{target_path}'), ':';
+        $results = array_map('copy', ['{source_path}'], ['{callback_target}']);
+        echo $results[0], ':', file_get_contents('{target_path}'), ':', file_get_contents('{callback_target}'), ':';
+        echo function_exists('copy');
+    "#);
+    assert_eq!(compile_source(&source).unwrap().execute().unwrap(), "1:1:copy payload:copy payload:1");
+    assert_eq!(std::fs::read(&target_path).unwrap(), b"copy payload");
+    assert_eq!(std::fs::read(&callback_target).unwrap(), b"copy payload");
+
+    let failure = compile_source("<?php $result = copy('/missing/php-rust-source', '/tmp/php-rust-copy-target'); echo $result;")
+        .unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(failure.output, "");
+    assert_eq!(failure.diagnostics.len(), 1);
+    assert_eq!(failure.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert!(failure.diagnostics[0].message.starts_with("copy(): Failed to copy "));
+
+    std::fs::remove_file(target_path).unwrap();
+    std::fs::remove_file(callback_target).unwrap();
+    std::fs::remove_file(source_path).unwrap();
+}
+
+#[test]
+fn rename_supports_named_arguments_callback_dispatch_and_failure_diagnostics() {
+    static NEXT_RENAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let nonce = NEXT_RENAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let direct_source = std::env::temp_dir().join(format!("php-rust-rename-{}-{nonce}-source.tmp", std::process::id()));
+    let direct_target = std::env::temp_dir().join(format!("php-rust-rename-{}-{nonce}-target.tmp", std::process::id()));
+    let callback_source = std::env::temp_dir().join(format!("php-rust-rename-{}-{nonce}-callback-source.tmp", std::process::id()));
+    let callback_target = std::env::temp_dir().join(format!("php-rust-rename-{}-{nonce}-callback-target.tmp", std::process::id()));
+    std::fs::write(&direct_source, b"direct").unwrap();
+    std::fs::write(&callback_source, b"callback").unwrap();
+    let direct_source = direct_source.to_string_lossy().into_owned();
+    let direct_target = direct_target.to_string_lossy().into_owned();
+    let callback_source = callback_source.to_string_lossy().into_owned();
+    let callback_target = callback_target.to_string_lossy().into_owned();
+    let source = format!(r#"<?php
+        echo rename(from: '{direct_source}', to: '{direct_target}'), ':', file_get_contents('{direct_target}'), ':';
+        $results = array_map('rename', ['{callback_source}'], ['{callback_target}']);
+        echo $results[0], ':', file_get_contents('{callback_target}'), ':', function_exists('rename');
+    "#);
+    assert_eq!(compile_source(&source).unwrap().execute().unwrap(), "1:direct:1:callback:1");
+
+    let failure = compile_source("<?php $result = rename('/missing/php-rust-source', '/tmp/php-rust-rename-target'); echo $result;")
+        .unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(failure.output, "");
+    assert_eq!(failure.diagnostics.len(), 1);
+    assert_eq!(failure.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert!(failure.diagnostics[0].message.starts_with("rename(): Failed to rename "));
+
+    std::fs::remove_file(direct_target).unwrap();
+    std::fs::remove_file(callback_target).unwrap();
+}
+
+#[test]
+fn mkdir_and_rmdir_support_recursive_sandboxed_and_callback_operations() {
+    static NEXT_DIRECTORY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let nonce = NEXT_DIRECTORY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("php-rust-dir-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let nested = root.join("a/b").to_string_lossy().into_owned();
+    let first = root.join("a").to_string_lossy().into_owned();
+    let callback_dir = root.join("callback").to_string_lossy().into_owned();
+    let root_path = root.to_string_lossy().into_owned();
+    let source = format!(r#"<?php
+        echo mkdir(directory: '{nested}', recursive: true), ':', is_dir('{nested}'), ':', mkdir(directory: '{nested}', recursive: true), ':';
+        $created = array_map('mkdir', ['{callback_dir}']);
+        echo $created[0], ':', is_dir('{callback_dir}'), ':';
+        $removed = array_map('rmdir', ['{nested}', '{first}', '{callback_dir}']);
+        echo $removed[0], $removed[1], $removed[2], ':';
+        echo function_exists('mkdir'), function_exists('rmdir');
+    "#);
+    let mut globals = std::collections::HashMap::new();
+    globals.insert("\0filesystem_root".to_string(), php_runtime::Value::String(root_path.clone()));
+    let result = compile_source(&source).unwrap().execute_with_globals(globals).unwrap();
+    assert_eq!(result.output, "1:1::1:1:111:11");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    std::fs::remove_dir(root).unwrap();
 }
 
 #[test]

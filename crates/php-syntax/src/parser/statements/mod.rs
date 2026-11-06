@@ -320,6 +320,34 @@ impl Parser<'_> {
         }
     }
 
+    fn alternative_if_body(&mut self) -> Result<Vec<Stmt>, String> {
+        let mut body = Vec::new();
+        while !matches!(self.peek(), TokenKind::Word(end) if end == "else" || end == "elseif" || end == "endif") {
+            if self.peek() == &TokenKind::Eof { return Err(self.error("Unterminated alternative if body")); }
+            body.push(self.statement()?);
+        }
+        Ok(body)
+    }
+
+    fn alternative_if_tail(&mut self) -> Result<Vec<Stmt>, String> {
+        if matches!(self.peek(), TokenKind::Word(end) if end == "elseif") {
+            self.take();
+            self.expect(TokenKind::Lp, "Expected ( after elseif")?;
+            let condition = self.expression(0)?;
+            self.expect(TokenKind::Rp, "Expected ) after elseif condition")?;
+            self.expect(TokenKind::Colon, "Expected : after elseif condition")?;
+            let then_body = self.alternative_if_body()?;
+            let else_body = self.alternative_if_tail()?;
+            Ok(vec![Stmt::If { condition, then_body, else_body }])
+        } else if matches!(self.peek(), TokenKind::Word(end) if end == "else") {
+            self.take();
+            self.expect(TokenKind::Colon, "Expected : after else")?;
+            self.alternative_if_body()
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     /// Parse one statement or declaration from the token stream.
     pub(in crate::parser) fn statement(&mut self) -> Result<Stmt, String> {
         if self.peek() == &TokenKind::AttributeStart {
@@ -431,22 +459,8 @@ impl Parser<'_> {
                 let condition = self.expression(0)?;
                 self.expect(TokenKind::Rp, "Expected ) after if condition")?;
                 let (then_body, else_body) = if self.eat(&TokenKind::Colon) {
-                    let mut then_body = Vec::new();
-                    while !matches!(self.peek(), TokenKind::Word(end) if end == "else" || end == "elseif" || end == "endif") {
-                        if self.peek() == &TokenKind::Eof { return Err(self.error("Unterminated alternative if body")); }
-                        then_body.push(self.statement()?);
-                    }
-                    let else_body = if matches!(self.peek(), TokenKind::Word(end) if end == "else") {
-                        self.take();
-                        self.expect(TokenKind::Colon, "Expected : after else")?;
-                        let mut body = Vec::new();
-                        while !matches!(self.peek(), TokenKind::Word(end) if end == "endif") {
-                            if self.peek() == &TokenKind::Eof { return Err(self.error("Unterminated alternative else body")); }
-                            body.push(self.statement()?);
-                        }
-                        body
-                    } else { Vec::new() };
-                    if matches!(self.peek(), TokenKind::Word(end) if end == "elseif") { return Err(self.error("Alternative elseif is not supported yet")); }
+                    let then_body = self.alternative_if_body()?;
+                    let else_body = self.alternative_if_tail()?;
                     self.expect(TokenKind::Word("endif".into()), "Expected endif")?;
                     self.expect(TokenKind::Semi, "Expected ; after endif")?;
                     (then_body, else_body)
@@ -495,6 +509,15 @@ impl Parser<'_> {
                 }
             }
             TokenKind::Word(word) if word == "throw" => (Stmt::Throw { value: self.expression(0)?, line: statement_line }, true),
+            TokenKind::Word(word) if word == "exit" || word == "die" => {
+                let value = if self.eat(&TokenKind::Lp) {
+                    let value = if self.peek() == &TokenKind::Rp { None } else { Some(self.call_argument()?) };
+                    self.expect(TokenKind::Rp, "Expected ) after exit status")?;
+                    value
+                } else if matches!(self.peek(), TokenKind::Semi | TokenKind::Rb | TokenKind::Eof) { None }
+                else { Some(self.expression(1)?) };
+                (Stmt::Exit(value), true)
+            }
             TokenKind::Word(word) if word == "while" || word == "foreach" => {
                 (self.loop_statement(&word)?, false)
             }

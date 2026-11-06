@@ -275,12 +275,117 @@ impl Parser<'_> {
         self.grouped_expression(1)
     }
 
+    fn interpolated_string(value: String) -> Result<Expr, String> {
+        let bytes = value.as_bytes();
+        let mut parts = Vec::new();
+        let mut literal_start = 0usize;
+        let mut index = 0usize;
+        while index < bytes.len() {
+            if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{')
+                && bytes.get(index + 2).is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            {
+                let start = index + 2;
+                let mut end = start + 1;
+                while bytes.get(end).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') { end += 1; }
+                if bytes.get(end) == Some(&b'}') {
+                    let name = &value[start..end];
+                    parts.push(Expr::String(value[literal_start..index].to_string()));
+                    parts.push(Expr::DeprecatedInterpolation(
+                        Box::new(Expr::Variable(name.to_string())),
+                        format!("Using ${{{name}}} in strings is deprecated, use {{${name}}} instead"),
+                    ));
+                    index = end + 1;
+                    literal_start = index;
+                    continue;
+                }
+            }
+            if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
+                if let Some(relative_end) = value[index + 2..].find('}') {
+                    let end = index + 2 + relative_end;
+                    let inner = value[index + 2..end].trim();
+                    if inner.starts_with('$') {
+                        let program = crate::parser::parse(&format!("<?php echo {inner};"))?;
+                        let expression = match program.statements.into_iter().next() {
+                            Some(crate::ast::Stmt::SourceLine(_, statement)) => match *statement { crate::ast::Stmt::Echo(mut expressions) if expressions.len() == 1 => expressions.remove(0), other => return Err(format!("Expected interpolation expression, got {other:?}")) },
+                            Some(crate::ast::Stmt::Echo(mut expressions)) if expressions.len() == 1 => expressions.remove(0),
+                            _ => return Err("Expected interpolation expression".into()),
+                        };
+                        parts.push(Expr::String(value[literal_start..index].to_string()));
+                        parts.push(Expr::DeprecatedInterpolation(
+                            Box::new(Expr::DynamicVariableExpr(Box::new(expression))),
+                            "Using ${expr} (variable variables) in strings is deprecated, use {${expr}} instead".into(),
+                        ));
+                        index = end + 1;
+                        literal_start = index;
+                        continue;
+                    }
+                }
+            }
+            if bytes[index] == b'{' && bytes.get(index + 1) == Some(&b'$') {
+                let mut depth = 1usize;
+                let mut end = index + 1;
+                let mut quote = None;
+                while end < bytes.len() && depth > 0 {
+                    let byte = bytes[end];
+                    if let Some(q) = quote {
+                        if byte == b'\\' { end += 2; continue; }
+                        if byte == q { quote = None; }
+                    } else if byte == b'\'' || byte == b'"' { quote = Some(byte); }
+                    else if byte == b'{' { depth += 1; }
+                    else if byte == b'}' { depth -= 1; }
+                    end += 1;
+                }
+                if depth == 0 {
+                    let inner = &value[index + 1..end - 1];
+                    let program = crate::parser::parse(&format!("<?php echo {inner};"))?;
+                    let expression = match program.statements.into_iter().next() {
+                        Some(crate::ast::Stmt::SourceLine(_, statement)) => match *statement { crate::ast::Stmt::Echo(mut expressions) if expressions.len() == 1 => expressions.remove(0), other => return Err(format!("Expected interpolation expression, got {other:?}")) },
+                        Some(crate::ast::Stmt::Echo(mut expressions)) if expressions.len() == 1 => expressions.remove(0),
+                        _ => return Err("Expected interpolation expression".into()),
+                    };
+                    parts.push(Expr::String(value[literal_start..index].to_string()));
+                    parts.push(expression);
+                    index = end;
+                    literal_start = index;
+                    continue;
+                }
+            }
+            if bytes[index] == b'\\' && bytes.get(index + 1) == Some(&b'$') {
+                parts.push(Expr::String(value[literal_start..index].to_string()));
+                parts.push(Expr::String("$".into()));
+                index += 2;
+                literal_start = index;
+            } else if bytes[index] == b'$'
+                && bytes.get(index + 1).is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            {
+                let start = index + 1;
+                index = start + 1;
+                while bytes.get(index).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') { index += 1; }
+                parts.push(Expr::String(value[literal_start..start - 1].to_string()));
+                parts.push(Expr::Variable(value[start..index].to_string()));
+                literal_start = index;
+            } else {
+                index += 1;
+            }
+        }
+        if literal_start < value.len() || parts.is_empty() {
+            parts.push(Expr::String(value[literal_start..].to_string()));
+        }
+        let mut parts = parts.into_iter();
+        let Some(mut expression) = parts.next() else { return Ok(Expr::String(String::new())); };
+        for part in parts {
+            expression = Expr::Binary(crate::ast::BinaryOp::Concatenate, Box::new(expression), Box::new(part));
+        }
+        Ok(expression)
+    }
+
     /// Parse an expression while respecting the requested operator precedence.
     pub(in crate::parser) fn expression(&mut self, min_precedence: u8) -> Result<Expr, String> {
         let token_offset = self.peek_offset();
         let mut left = match self.take() {
             TokenKind::Num(number, integer) => integer.map_or(Expr::Number(number), Expr::Integer),
             TokenKind::Str(value) => Expr::String(value),
+            TokenKind::InterpolatedStr(value) => Self::interpolated_string(value)?,
             TokenKind::Var(name) if self.eat(&TokenKind::DoubleColon) => {
                 let class = Box::new(Expr::Variable(name));
                 if self.eat(&TokenKind::DynamicExprStart) {

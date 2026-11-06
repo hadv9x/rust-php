@@ -10,6 +10,16 @@ mod arrays;
 mod control;
 mod symbol_table;
 
+/// Apply the VM's PHP 8 loose comparison semantics for runtime builtins.
+pub(crate) fn php_loose_equal(left: &Value, right: &Value) -> bool {
+    operators::loose_equal(left, right)
+}
+
+/// Apply PHP's strict identity rules for values compared by runtime builtins.
+pub(crate) fn php_strict_identical(left: &Value, right: &Value) -> bool {
+    operators::strict_identical(left, right)
+}
+
 pub(crate) fn intval_string(input: &str, base: u32) -> i64 {
     functions::intval_string(input, base)
 }
@@ -93,6 +103,8 @@ pub(super) enum VariableBinding {
 #[derive(Default)]
 pub(super) struct GlobalVariables {
     pub(super) source_file: String,
+    exit_code: i32,
+    exiting: bool,
     values: HashMap<String, Value>,
     aliases: HashMap<String, String>,
     /// Visible symbol order for PHP's `$GLOBALS` and global `get_defined_vars()`.
@@ -114,6 +126,13 @@ pub(super) struct GlobalVariables {
     output_offset: usize,
     last_error: Option<crate::RuntimeDiagnostic>,
     error_reporting: Option<i64>,
+    error_handler: Option<Value>,
+    error_handler_stack: Vec<(Option<Value>, i64)>,
+    error_handler_mask: i64,
+    pending_user_handler_diagnostics: Vec<crate::RuntimeDiagnostic>,
+    handling_user_error: bool,
+    /// Implicit directory handle used by readdir()/closedir() when omitted.
+    pub(super) last_directory_handle: Option<Value>,
     destructor_queue: Vec<Value>,
     destructed_objects: HashSet<usize>,
     /// Active PHP source frames, updated by compiled statement line markers.
@@ -164,6 +183,11 @@ impl GlobalVariables {
         let bit = match diagnostic.level {
             crate::DiagnosticLevel::Warning => 2,
             crate::DiagnosticLevel::Deprecated => 8192,
+            crate::DiagnosticLevel::Notice => 8,
+            crate::DiagnosticLevel::UserWarning => 512,
+            crate::DiagnosticLevel::UserDeprecated => 16384,
+            crate::DiagnosticLevel::UserNotice => 1024,
+            crate::DiagnosticLevel::Fatal => 256,
         };
         if let Some(frame) = self.active_trace_frames.last() {
             if diagnostic.source_file.is_none() && !frame.file.is_empty() { diagnostic.source_file = Some(frame.file.clone()); }
@@ -171,7 +195,13 @@ impl GlobalVariables {
         }
         diagnostic.output_offset = self.output_offset;
         self.last_error = Some(diagnostic.clone());
-        if mask & bit != 0 {
+        if diagnostic.level == crate::DiagnosticLevel::Fatal {
+            self.diagnostics.push(diagnostic);
+        } else if !self.handling_user_error
+            && self.error_handler.as_ref().is_some_and(|_| self.error_handler_mask & bit != 0)
+        {
+            self.pending_user_handler_diagnostics.push(diagnostic);
+        } else if mask & bit != 0 {
             self.diagnostics.push(diagnostic);
         }
     }
@@ -269,8 +299,11 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "NAN" => return Some(Value::Number(f64::NAN)),
         "PHP_FLOAT_DIG" => return Some(Value::Integer(15)),
         "E_WARNING" => return Some(Value::Integer(2)),
+        "E_NOTICE" => return Some(Value::Integer(8)),
         "E_DEPRECATED" => return Some(Value::Integer(8192)),
+        "E_USER_ERROR" => return Some(Value::Integer(256)),
         "E_USER_WARNING" => return Some(Value::Integer(512)),
+        "E_USER_NOTICE" => return Some(Value::Integer(1024)),
         "E_USER_DEPRECATED" => return Some(Value::Integer(16384)),
         "E_ALL" => return Some(Value::Integer(32767)),
         "PHP_ROUND_HALF_UP" => return Some(Value::Integer(1)),
@@ -319,6 +352,9 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "FILE_SKIP_EMPTY_LINES" => return Some(Value::Integer(4)),
         "FILE_APPEND" => return Some(Value::Integer(8)),
         "FILE_NO_DEFAULT_CONTEXT" => return Some(Value::Integer(16)),
+        "SCANDIR_SORT_ASCENDING" => return Some(Value::Integer(0)),
+        "SCANDIR_SORT_DESCENDING" => return Some(Value::Integer(1)),
+        "SCANDIR_SORT_NONE" => return Some(Value::Integer(2)),
         "PATHINFO_DIRNAME" => return Some(Value::Integer(1)),
         "PATHINFO_BASENAME" => return Some(Value::Integer(2)),
         "PATHINFO_EXTENSION" => return Some(Value::Integer(4)),
@@ -1442,6 +1478,7 @@ pub(crate) fn execute_with_globals_and_limits_and_diagnostics(
             let session_id = global_variables.get("\0session_id").map(Value::show).unwrap_or_default();
             Ok(crate::ExecutionResult {
                 output,
+                exit_code: global_variables.exit_code,
                 diagnostics: global_variables.diagnostics,
                 status_code: global_variables.http_status,
                 headers: global_variables.http_headers,
@@ -1487,7 +1524,7 @@ fn execute_code(
     let mut continuation = FrameContinuation::new(initial_bindings, *steps);
     let result = execute_frame(
         code, functions, classes, static_properties, variables, global_variables, global_scope,
-        frame_scope, &mut continuation, Value::Null, None, false, output, steps,
+        frame_scope, &mut continuation, Value::Null, None, false, false, output, steps,
     );
     global_variables.active_trace_frames.pop();
     result
@@ -1525,11 +1562,69 @@ pub(super) fn execute_dynamic_module(
     let result = execute_frame(
         &module.instructions, functions, classes, static_properties, variables,
         global_variables, global_scope, &module.source_file, &mut nested, Value::Null, None,
-        false, output, steps,
+        false, false, output, steps,
     );
     global_variables.active_trace_frames.pop();
     *bindings = nested.bindings;
     result.map(|value| value.unwrap_or(Value::Integer(1)))
+}
+
+fn dispatch_pending_error_handlers(
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    frame_id: u64,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    while !global_variables.pending_user_handler_diagnostics.is_empty() {
+        let diagnostic = global_variables.pending_user_handler_diagnostics.remove(0);
+        let Some(handler) = global_variables.error_handler.clone() else { continue; };
+        let error_type = match diagnostic.level {
+            crate::DiagnosticLevel::Warning => 2,
+            crate::DiagnosticLevel::Deprecated => 8192,
+            crate::DiagnosticLevel::Notice => 8,
+            crate::DiagnosticLevel::UserWarning => 512,
+            crate::DiagnosticLevel::UserDeprecated => 16384,
+            crate::DiagnosticLevel::UserNotice => 1024,
+            crate::DiagnosticLevel::Fatal => 256,
+        };
+        let arguments = vec![
+            Value::Integer(error_type),
+            Value::String(diagnostic.message.clone()),
+            Value::String(diagnostic.source_file.clone().unwrap_or_else(|| "Command line code".into())),
+            Value::Integer(diagnostic.source_line.unwrap_or(0) as i64),
+        ];
+        global_variables.handling_user_error = true;
+        let outcome = (|| {
+            let (instruction, mut stack) = functions::callback_call_args(handler, arguments, false)?;
+            functions::execute_instruction(
+                &instruction, &mut stack, variables, bindings, global_variables, global_scope,
+                frame_id, functions, classes, static_properties, output, steps,
+            )?;
+            Ok::<bool, String>(stack.pop().is_some_and(|value| value.truthy()))
+        })();
+        global_variables.handling_user_error = false;
+        let handled = outcome?;
+        let mask = global_variables.error_reporting.unwrap_or(32767);
+        let bit = match diagnostic.level {
+            crate::DiagnosticLevel::Warning => 2,
+            crate::DiagnosticLevel::Deprecated => 8192,
+            crate::DiagnosticLevel::Notice => 8,
+            crate::DiagnosticLevel::UserWarning => 512,
+            crate::DiagnosticLevel::UserDeprecated => 16384,
+            crate::DiagnosticLevel::UserNotice => 1024,
+            crate::DiagnosticLevel::Fatal => 256,
+        };
+        if !handled && mask & bit != 0 {
+            global_variables.diagnostics.push(diagnostic);
+        }
+    }
+    Ok(())
 }
 
 fn execute_frame(
@@ -1545,6 +1640,7 @@ fn execute_frame(
     resume_value: Value,
     resume_exception: Option<Value>,
     allow_yield: bool,
+    yield_by_reference: bool,
     output: &mut String,
     steps: &mut u64,
 ) -> Result<Option<Value>, String> {
@@ -1578,7 +1674,7 @@ fn execute_frame(
     }
     continuation.yielded = None;
 
-    while pc < code.len() {
+    while pc < code.len() && !global_variables.exiting {
         if seen_symbol_generation != global_variables.dynamic_symbol_generation {
             if global_variables.dynamic_symbol_generation != 0 {
                 let mut combined_functions = functions.clone();
@@ -1609,7 +1705,7 @@ fn execute_frame(
             pc += 1;
             instruction
         };
-        let execution = (|| -> Result<Option<Value>, String> {
+        let mut execution = (|| -> Result<Option<Value>, String> {
         if let Op::Jump(target) = instruction {
             if let Some(finalizer) = route_exit_through_finally(pc - 1, Some(*target), &mut handlers) {
                 pending_exits.push(PendingExit::Jump(*target));
@@ -1625,6 +1721,15 @@ fn execute_frame(
         if objects::execute_instruction(instruction, &mut stack, variables, &mut bindings, global_variables, global_scope, frame_id, frame_scope, functions, classes, static_properties, output, steps, &mut pc)? { return Ok(None); }
         if functions::execute_instruction(instruction, &mut stack, variables, &mut bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)? { return Ok(None); }
         match instruction {
+            Op::ReportDiagnostic(level, message) => {
+                global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                    level: *level,
+                    message: message.clone(),
+                    source_file: None,
+                    source_line: None,
+                    output_offset: output.len(),
+                });
+            }
             Op::Include(mode) => {
                 let requested = stack.pop().ok_or("Invalid bytecode stack")?.show();
                 let current_file = global_variables.active_trace_frames.last().map(|frame| frame.file.as_str()).unwrap_or(&global_variables.source_file).to_string();
@@ -1686,6 +1791,13 @@ fn execute_frame(
             }
             Op::MarkIncluded(file) => { global_variables.included_files.insert(file.clone()); }
             Op::Const(value) => stack.push(value.clone()),
+            Op::Exit(argument_name, strict_types) => {
+                if argument_name.as_deref().is_some_and(|name| name != "status") {
+                    return Err(format!("Error:Unknown named parameter ${}", argument_name.as_deref().unwrap_or_default()));
+                }
+                let status = stack.pop().unwrap_or(Value::Integer(0)).dereference();
+                functions::apply_exit_status(status, output, global_variables, *strict_types, functions, classes, static_properties, steps)?;
+            }
             Op::LoadConstant(name) => stack.push(read_constant(name, global_variables)?),
             Op::DynamicClassName => {
                 let value = stack.pop().ok_or("Invalid bytecode stack")?;
@@ -2019,6 +2131,7 @@ fn execute_frame(
             Op::Yield | Op::YieldKeyed => {
                 if !allow_yield { return Err("Cannot use yield outside a generator function".into()); }
                 let value = stack.pop().ok_or("Invalid bytecode stack")?;
+                report_non_reference_yield(global_variables, yield_by_reference, &value, output.len());
                 let key = if matches!(instruction, Op::YieldKeyed) {
                     Some(stack.pop().ok_or("Invalid bytecode stack")?)
                 } else {
@@ -2125,6 +2238,7 @@ fn execute_frame(
                     )?;
                 }
                 if let Some((key, value)) = first_entry {
+                    report_non_reference_yield(global_variables, yield_by_reference, &value, output.len());
                     continuation.pc = iterator_key;
                     continuation.stack = std::mem::take(&mut stack);
                     continuation.iterators = std::mem::take(&mut iterators);
@@ -2260,6 +2374,12 @@ fn execute_frame(
         }
         Ok(None)
         })();
+        if let Err(error) = dispatch_pending_error_handlers(
+            variables, &mut bindings, global_variables, global_scope, frame_id,
+            functions, classes, static_properties, output, steps,
+        ) {
+            execution = Err(error);
+        }
         match execution {
             Ok(Some(value)) => return Ok(Some(value)),
             Ok(None) => {}
@@ -2317,6 +2437,18 @@ fn execute_frame(
         }
     }
     Ok(None)
+}
+
+fn report_non_reference_yield(globals: &mut GlobalVariables, by_reference: bool, value: &Value, output_offset: usize) {
+    if by_reference && !matches!(value, Value::Reference(_)) {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Notice,
+            message: "Only variable references should be yielded by reference".into(),
+            source_file: None,
+            source_line: None,
+            output_offset,
+        });
+    }
 }
 
 pub(super) fn is_generator_function(function: &BytecodeFunction) -> bool {
@@ -2386,7 +2518,7 @@ pub(super) fn advance_generator_with_exception(
     let result = execute_frame(
         &function.instructions, functions, classes, static_properties, variables,
         global_variables, false, &function_scope(&function), continuation,
-        resume_value, resume_exception, true, output, steps,
+        resume_value, resume_exception, true, function.returns_by_reference, output, steps,
     );
     match result {
         Ok(result) => {

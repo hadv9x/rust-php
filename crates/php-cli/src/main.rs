@@ -40,6 +40,10 @@ fn main() {
                 let level = match diagnostic.level {
                     php_runtime::DiagnosticLevel::Warning => "Warning",
                     php_runtime::DiagnosticLevel::Deprecated => "Deprecated",
+                    php_runtime::DiagnosticLevel::Notice | php_runtime::DiagnosticLevel::UserNotice => "Notice",
+                    php_runtime::DiagnosticLevel::UserWarning => "Warning",
+                    php_runtime::DiagnosticLevel::UserDeprecated => "Deprecated",
+                    php_runtime::DiagnosticLevel::Fatal => "Fatal error",
                 };
                 if let Some(line) = diagnostic.source_line {
                     if let Some(file) = diagnostic.source_file {
@@ -51,6 +55,7 @@ fn main() {
                     eprintln!("{level}: {}", diagnostic.message);
                 }
             }
+            if result.exit_code != 0 { process::exit(result.exit_code); }
         }
         Err(error) => { eprintln!("php-rust: {error}"); process::exit(1); }
     }

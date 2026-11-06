@@ -63,6 +63,37 @@ fn foreach_by_reference_mutates_values_yielded_by_reference_generators() {
 }
 
 #[test]
+fn by_reference_generators_report_notices_for_non_reference_yields() {
+    let source = r#"<?php
+        function &noticeGenerator() {
+            yield 1 + 2;
+            yield from [4];
+        }
+        foreach (noticeGenerator() as $value) { echo $value, ','; }
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "3,4,");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result.diagnostics.iter().all(|diagnostic| {
+        diagnostic.level == php_runtime::DiagnosticLevel::Notice
+            && diagnostic.message == "Only variable references should be yielded by reference"
+    }));
+    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(3), Some(4)]);
+}
+
+#[test]
+fn by_reference_generator_scalar_local_yield_mutates_suspended_frame() {
+    let source = r#"<?php function &g() { $value=3; yield $value; echo $value; } foreach (g() as &$value) { $value=42; }"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42");
+}
+
+#[test]
+fn foreach_by_reference_accepts_temporary_array_expressions() {
+    let source = r#"<?php foreach ([1, 2] as &$value) { $value *= 10; echo $value, ','; }"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "10,20,");
+}
+
+#[test]
 fn foreach_by_reference_rejects_non_reference_generators() {
     let source = r#"<?php
         function valueGenerator() { $value = 1; yield $value; }
@@ -123,6 +154,50 @@ fn by_reference_yield_from_preserves_delegated_generator_references() {
         foreach ($generator as &$value) { $value = 42; }
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42");
+}
+
+#[test]
+fn by_reference_yield_from_preserves_reference_cells_from_arrays() {
+    let source = r#"<?php
+        function &arrayReferenceGenerator($values) {
+            yield from $values;
+        }
+        $cell = 3;
+        $values = [&$cell];
+        $generator = arrayReferenceGenerator($values);
+        foreach ($generator as &$value) { $value *= 10; break; }
+        unset($value);
+        echo $cell;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "30");
+}
+
+#[test]
+fn by_reference_yield_from_preserves_user_iterator_current_references() {
+    let source = r#"<?php
+        class YieldFromReferenceIterator implements Iterator {
+            public $position = 0;
+            public $values = [4, 7];
+            public function rewind() { $this->position = 0; }
+            public function valid() { return $this->position < count($this->values); }
+            public function &current() { return $this->values[$this->position]; }
+            public function key() { return $this->position; }
+            public function next() { $this->position++; }
+        }
+        class YieldFromReferenceCollection implements IteratorAggregate {
+            public $iterator;
+            public function __construct($iterator) { $this->iterator = $iterator; }
+            public function getIterator() { return $this->iterator; }
+        }
+        function &delegateUserIterator($iterator) { yield from $iterator; }
+        $iterator = new YieldFromReferenceIterator();
+        $collection = new YieldFromReferenceCollection(new YieldFromReferenceCollection($iterator));
+        $generator = delegateUserIterator($collection);
+        foreach ($generator as &$value) { $value *= 10; }
+        unset($value);
+        echo implode(',', $iterator->values);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "40,70");
 }
 
 #[test]

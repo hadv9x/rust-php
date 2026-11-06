@@ -280,7 +280,7 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                             b'f' => value.push('\x0c'),
                             b'\\' => value.push('\\'),
                             b'"' => value.push('"'),
-                            b'$' => value.push('$'),
+                            b'$' => { value.push('\\'); value.push('$'); },
                             _ => {
                                 value.push('\\');
                                 let width = utf8_width(escaped);
@@ -299,13 +299,15 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
             }
             if i == bytes.len() { return Err(format_diagnostic(source, token_start, "Unterminated string")); }
             i += 1;
-            tokens.push(Token { kind: TokenKind::Str(value), offset: token_start });
+            let kind = if quote == b'"' { TokenKind::InterpolatedStr(value) } else { TokenKind::Str(value) };
+            tokens.push(Token { kind, offset: token_start });
             continue;
         }
 
         if bytes.get(i..i + 3) == Some(&b"<<<"[..]) {
             let header_end = source[i..].find('\n').map(|offset| i + offset).ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc header"))?;
             let header = source[i + 3..header_end].trim().trim_end_matches('\r').trim();
+            let nowdoc = header.starts_with('\'');
             let label = header.trim_matches(['\'', '"']);
             if label.is_empty() || !label.chars().enumerate().all(|(index, ch)| ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())) {
                 return Err(format_diagnostic(source, token_start, "Invalid heredoc label"));
@@ -319,17 +321,40 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                 let trimmed = line.trim_start();
                 if let Some(rest) = trimmed.strip_prefix(label) {
                     if rest.trim().is_empty() || rest.trim_start().chars().next().is_some_and(|ch| matches!(ch, ';' | ',' | ')' | ']' | '}')) {
-                        let leading = line.len() - line.trim_start().len();
-                        closing = Some((line_start, line_start + leading + label.len()));
+                        let indentation = &line[..line.len() - line.trim_start().len()];
+                        if !indentation.bytes().all(|byte| matches!(byte, b' ' | b'\t')) {
+                            return Err(format_diagnostic(source, line_start, "Invalid body indentation level"));
+                        }
+                        closing = Some((line_start, line_start + indentation.len() + label.len(), indentation.to_string()));
                         break;
                     }
                 }
                 line_start = line_end + usize::from(line_end < source.len());
             }
-            let (body_end, after_end) = closing.ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc"))?;
+            let (body_end, after_end, indentation) = closing.ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc"))?;
             let body_end = if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\n') { body_end - 1 } else { body_end };
             let body_end = if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\r') { body_end - 1 } else { body_end };
-            tokens.push(Token { kind: TokenKind::Str(source[body_start..body_end].to_string()), offset: token_start });
+            let body = &source[body_start..body_end];
+            let body = if indentation.is_empty() {
+                body.to_string()
+            } else {
+                let mut lines = Vec::new();
+                for line in body.split('\n') {
+                    let line = line.strip_suffix('\r').unwrap_or(line);
+                    if line.trim().is_empty() {
+                        lines.push(String::new());
+                        continue;
+                    }
+                    if !line.starts_with(&indentation) {
+                        return Err(format_diagnostic(source, body_start, "Invalid body indentation level"));
+                    }
+                    let remainder = &line[indentation.len()..];
+                    lines.push(remainder.to_string());
+                }
+                lines.join("\n")
+            };
+            let kind = if nowdoc { TokenKind::Str(body) } else { TokenKind::InterpolatedStr(body) };
+            tokens.push(Token { kind, offset: token_start });
             i = after_end;
             continue;
         }

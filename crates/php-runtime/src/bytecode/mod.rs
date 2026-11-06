@@ -1,6 +1,6 @@
 //! Instruction set consumed by the virtual machine.
 
-use crate::{ArrayKey, Value};
+use crate::{ArrayKey, DiagnosticLevel, Value};
 
 /// A caller-side l-value that can be passed to a by-reference parameter.
 #[derive(Clone, Debug)]
@@ -43,6 +43,8 @@ pub enum CastType { Integer, Float, String, Bool, Array, Object }
 #[derive(Clone, Debug)]
 /// An instruction in the VM stack-machine bytecode.
 pub enum Op {
+    /// Emit a PHP warning/deprecation at the current source location.
+    ReportDiagnostic(DiagnosticLevel, String),
     /// Set the active source line for the current execution frame.
     SetLine(usize),
     /// Set the active source file for the current execution frame.
@@ -292,6 +294,8 @@ pub enum Op {
     /// Assign to a static property and preserve the value as an expression result.
     AssignStaticPropertyExpr(String, String, Option<String>),
     GetClassConstant(String, String, Option<String>),
+    /// Terminate the current script with an optional integer status or string message.
+    Exit(Option<String>, bool),
     CallMethod(String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
     CallParentMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
     CallStaticMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),

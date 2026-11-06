@@ -610,6 +610,16 @@ impl CodeGenerator<'_> {
                 self.expression(value);
                 self.instructions.push(Op::ThrowAt(*line));
             }
+            Stmt::Exit(value) => {
+                let (value, argument_name) = match value {
+                    Some(Expr::NamedArgument(name, value)) => (Some(value.as_ref()), Some(name.clone())),
+                    Some(value) => (Some(value), None),
+                    None => (None, None),
+                };
+                if let Some(value) = value { self.expression(value); }
+                else { self.instructions.push(Op::Const(Value::Integer(0))); }
+                self.instructions.push(Op::Exit(argument_name, self.strict_types));
+            }
             Stmt::While { .. } | Stmt::Foreach { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
             Stmt::DoWhile { .. } | Stmt::For { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
             Stmt::Break(level) => self.loop_jump_expr(true, level),

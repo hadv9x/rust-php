@@ -167,7 +167,12 @@ pub(super) fn array_pad(args: &[Value]) -> Result<Value, String> {
     let count = amount - source.len();
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     if target < 0 { for _ in 0..count { append(&mut result, args[2].clone()); } }
-    for (_, value) in source { append(&mut result, value.clone()); }
+    for (key, value) in source {
+        match key {
+            ArrayKey::Integer(_) => append(&mut result, value.clone()),
+            ArrayKey::String(_) => insert(&mut result, key.clone(), value.clone()),
+        }
+    }
     if target >= 0 { for _ in 0..count { append(&mut result, args[2].clone()); } }
     Ok(array_value(result))
 }
@@ -177,7 +182,12 @@ pub(super) fn array_pad(args: &[Value]) -> Result<Value, String> {
 pub(super) enum DiffMode { Values, ValuesAndKeys, Keys }
 
 /// Compute array difference or intersection with the selected key/value comparison mode.
-pub(super) fn array_diff(args: &[Value], mode: DiffMode, intersect: bool) -> Result<Value, String> {
+pub(super) fn array_diff(
+    args: &[Value],
+    mode: DiffMode,
+    intersect: bool,
+    stringify: &mut dyn FnMut(&Value) -> Result<String, String>,
+) -> Result<Value, String> {
     // All diff/intersect variants preserve keys from the first input array.
     let name = match (mode, intersect) {
         (DiffMode::Values, false) => "array_diff", (DiffMode::Values, true) => "array_intersect",
@@ -188,13 +198,22 @@ pub(super) fn array_diff(args: &[Value], mode: DiffMode, intersect: bool) -> Res
     let arrays = args.iter().map(|value| entries(value, name)).collect::<Result<Vec<_>, _>>()?;
     let mut result = Vec::new();
     for (key, value) in arrays[0] {
-        let found_in_all = arrays[1..].iter().all(|array| array.iter().any(|(candidate_key, candidate_value)| {
-            match mode {
-                DiffMode::Values => equal(value, candidate_value, false),
-                DiffMode::Keys => key == candidate_key,
-                DiffMode::ValuesAndKeys => key == candidate_key && equal(value, candidate_value, false),
+        let mut found_in_all = true;
+        for array in &arrays[1..] {
+            let mut found = false;
+            for (candidate_key, candidate_value) in *array {
+                let values_match = match mode {
+                    DiffMode::Values | DiffMode::ValuesAndKeys => stringify(value)? == stringify(candidate_value)?,
+                    DiffMode::Keys => true,
+                };
+                let keys_match = match mode {
+                    DiffMode::Values => true,
+                    DiffMode::ValuesAndKeys | DiffMode::Keys => key == candidate_key,
+                };
+                if values_match && keys_match { found = true; break; }
             }
-        }));
+            if !found { found_in_all = false; break; }
+        }
         if found_in_all == intersect { insert(&mut result, key.clone(), value.clone()); }
     }
     Ok(array_value(result))
@@ -210,6 +229,7 @@ pub(super) fn array_diff_with_callbacks(
     compare_keys: bool,
     exact_keys: bool,
     invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+    stringify: &mut dyn FnMut(&Value) -> Result<String, String>,
 ) -> Result<Value, String> {
     let callback_count = usize::from(compare_values) + usize::from(compare_keys);
     require_count(name, args, 2 + callback_count, usize::MAX)?;
@@ -231,7 +251,7 @@ pub(super) fn array_diff_with_callbacks(
                 } else if let Some(callback) = value_callback {
                     invoke(callback, vec![value.clone(), candidate_value.clone()])?.number() == 0.0
                 } else {
-                    equal(value, candidate_value, false)
+                    stringify(value)? == stringify(candidate_value)?
                 };
                 if !value_matches { continue; }
                 let key_matches = if let Some(callback) = key_callback {

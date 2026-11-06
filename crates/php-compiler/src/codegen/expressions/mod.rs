@@ -338,6 +338,10 @@ impl CodeGenerator<'_> {
             Expr::Integer(value) => self.instructions.push(Op::Const(Value::Integer(*value))),
             Expr::Number(value) => self.instructions.push(Op::Const(Value::Number(*value))),
             Expr::String(value) => self.instructions.push(Op::Const(Value::String(value.clone()))),
+            Expr::DeprecatedInterpolation(value, message) => {
+                self.instructions.push(Op::ReportDiagnostic(php_runtime::DiagnosticLevel::Deprecated, message.clone()));
+                self.expression(value);
+            }
             Expr::Bool(value) => self.instructions.push(Op::Const(Value::Bool(*value))),
             Expr::Null => self.instructions.push(Op::Const(Value::Null)),
             Expr::Constant(name) => self.instructions.push(Op::LoadConstant(name.clone())),

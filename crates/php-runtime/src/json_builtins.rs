@@ -366,6 +366,7 @@ impl JsonParser<'_> {
     }
 
     fn array(&mut self, depth: usize) -> Result<Value, String> {
+        if depth > self.max_depth { return Err("Maximum stack depth exceeded".into()); }
         self.cursor += 1;
         self.whitespace();
         let mut values = Vec::new();
@@ -385,6 +386,7 @@ impl JsonParser<'_> {
     }
 
     fn object(&mut self, depth: usize) -> Result<Value, String> {
+        if depth > self.max_depth { return Err("Maximum stack depth exceeded".into()); }
         self.cursor += 1;
         self.whitespace();
         let mut properties = HashMap::new();

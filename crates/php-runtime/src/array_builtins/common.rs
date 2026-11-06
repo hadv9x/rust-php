@@ -85,31 +85,13 @@ pub(super) fn append(array: &mut Vec<(ArrayKey, Value)>, value: Value) {
 
 /// Compare two runtime values without type coercion.
 pub(super) fn strict_equal(left: &Value, right: &Value) -> bool {
-    let left = left.dereference();
-    let right = right.dereference();
-    match (&left, &right) {
-        (Value::Integer(a), Value::Integer(b)) => a == b,
-        (Value::Number(a), Value::Number(b)) => a == b,
-        (Value::String(a), Value::String(b)) => a == b,
-        (Value::Bool(a), Value::Bool(b)) => a == b,
-        (Value::Null, Value::Null) => true,
-        (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().all(|(key, value)| {
-            b.iter().find(|(other_key, _)| other_key == key).is_some_and(|(_, other)| strict_equal(value, other))
-        }),
-        _ => false,
-    }
+    crate::vm::php_strict_identical(left, right)
 }
 
 /// Compare runtime values using strict or PHP-like loose comparison.
 pub(super) fn equal(left: &Value, right: &Value, strict: bool) -> bool {
     if strict { return strict_equal(left, right); }
-    let left = left.dereference();
-    let right = right.dereference();
-    match (&left, &right) {
-        (Value::String(a), Value::String(b)) => a == b,
-        (Value::Array(_), Value::Array(_)) => strict_equal(&left, &right),
-        _ => left.number() == right.number(),
-    }
+    crate::vm::php_loose_equal(left, right)
 }
 
 /// Build a PHP array runtime value from ordered entries.

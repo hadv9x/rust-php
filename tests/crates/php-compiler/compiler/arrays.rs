@@ -1302,6 +1302,23 @@ fn range_dereferences_numeric_string_and_character_boundaries() {
 }
 
 #[test]
+fn range_uses_php_83_step_coercion_and_negative_step_rules() {
+    let source = r#"<?php
+        $integerStep = range(1, 5, 2.0);
+        $fractionalStep = range(1, 5, 1.5);
+        echo implode(',', array_map('gettype', $integerStep)), '|';
+        echo implode(',', array_map('gettype', $fractionalStep)), '|';
+        echo implode(',', range(5, 1, -2)), '|';
+        echo implode(',', range('e', 'a', -2)), "\n";
+        try { range(1, 5, -2); } catch (ValueError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "integer,integer,integer|double,double,double|5,3,1|e,c,a\nValueError:range(): Argument #3 ($step) must be greater than 0 for increasing ranges",
+    );
+}
+
+#[test]
 fn range_numeric_strings_trim_only_php_ascii_whitespace() {
     let source = r#"<?php
         echo implode(',', range(' 1', 2)), '|';
@@ -1345,6 +1362,62 @@ fn array_map_dispatches_array_builtin_callbacks() {
         echo implode(',', $padded[0]), ':', implode(',', $padded[1]), ':', implode(',', $filledRanges[0]), ':', $filledRanges[1][2];
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3,7,5|2,12,5|1,1,1|2:2|1:1|2:2:2|2:1:1:7:9|1,0,0:9,9,2,3:a,a:b");
+}
+
+#[test]
+fn array_pad_preserves_string_keys_and_reindexes_numeric_keys() {
+    let source = r#"<?php
+        $shared = 'shared';
+        $input = [8 => &$shared, 'label' => 'keep', 15 => 'tail'];
+        $right = array_pad($input, 5, 'pad');
+        $left = array_pad($input, -5, 'pad');
+        echo implode(',', array_keys($right)), '|', implode(',', array_keys($left)), '|';
+        $right[0] = 'updated';
+        echo $shared, ':', $right['label'], ':', $left['label'];
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0,label,1,2,3|0,1,2,label,3|updated:keep:keep");
+}
+
+#[test]
+fn loose_array_search_and_diff_use_php8_string_number_comparisons() {
+    let source = r#"<?php
+        echo in_array(0, ['not numeric']), ':', in_array(0, ['0']), '|';
+        echo array_search(0, ['not numeric', '0']), '|';
+        echo implode(',', array_values(array_diff(['not numeric', '0'], [0]))), '|';
+        echo implode(',', array_values(array_diff(['00', '0'], [0]))), ':';
+        echo implode(',', array_values(array_intersect(['00', '0'], [0])));
+        class ArrayDiffStringable { public function __toString(): string { return 'match'; } }
+        echo '|', count(array_diff([new ArrayDiffStringable()], ['match'])), ':', count(array_intersect([new ArrayDiffStringable()], ['match']));
+        echo ':', count(array_diff_uassoc([new ArrayDiffStringable()], ['match'], fn($left, $right) => $left <=> $right));
+        echo ':', count(array_intersect_uassoc([new ArrayDiffStringable()], ['match'], fn($left, $right) => $left <=> $right));
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":1|1|not numeric|00:0|0:1:0:1");
+}
+
+#[test]
+fn strict_array_search_requires_nested_array_key_order() {
+    let source = r#"<?php
+        $ordered = ['first' => 'a', 'second' => 'b'];
+        $reordered = ['second' => 'b', 'first' => 'a'];
+        echo in_array($ordered, [$reordered], true), ':', in_array($ordered, [$ordered], true), ':';
+        echo array_search($ordered, [$reordered], true) === false;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":1:1");
+}
+
+#[test]
+fn strict_array_search_uses_identity_for_objects_generators_and_streams() {
+    let source = r#"<?php
+        $object = new stdClass();
+        $otherObject = new stdClass();
+        $generator = (function () { yield 1; })();
+        $stream = fopen('php://temp', 'r+');
+        $otherStream = fopen('php://temp', 'r+');
+        echo in_array($object, [$object], true), ':', in_array($object, [$otherObject], true), ':';
+        echo in_array($generator, [$generator], true), ':', in_array($stream, [$stream], true), ':';
+        echo in_array($stream, [$otherStream], true);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1::1:1:");
 }
 
 #[test]
@@ -1472,6 +1545,33 @@ fn incrementing_non_ascii_string_preserves_utf8_bytes_and_reports_nonnumeric_dep
     assert_eq!(result.diagnostics.len(), 1);
     assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
     assert!(result.diagnostics[0].message.contains("Increment on non-numeric string is deprecated"));
+}
+
+#[test]
+fn increment_deprecations_use_custom_error_handlers_and_handler_exceptions_are_catchable() {
+    let source = r#"<?php
+        $captured = [];
+        set_error_handler(function ($severity, $message, $file, $line) use (&$captured) {
+            $captured = [$severity, $message, basename($file), $line];
+            return true;
+        }, E_DEPRECATED);
+        error_reporting(0);
+        $value = 'word';
+        ++$value;
+        restore_error_handler();
+        echo $captured[0], ':', str_contains($captured[1], 'Increment on non-numeric string'), ':',
+            $captured[2], ':', $captured[3], ':', $value, ':';
+        try {
+            set_error_handler(function () { throw new RuntimeException('increment handler'); }, E_DEPRECATED);
+            $other = 'text';
+            ++$other;
+        } catch (RuntimeException $error) {
+            echo $error->getMessage();
+        }
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "8192:1:Command line code:9:wore:increment handler");
+    assert!(result.diagnostics.is_empty());
 }
 
 #[test]
@@ -1635,4 +1735,17 @@ fn pos_aliases_current_for_direct_named_and_callback_calls() {
         echo implode(',', array_map('pos', [$values, ['only' => 7]])), "\n";
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:10:10:10,7\n");
+}
+
+#[test]
+fn array_first_and_last_follow_insertion_order_without_moving_array_pointer() {
+    let source = r#"<?php
+        $values = [7 => 'first', 'middle' => 'next', -2 => 'last'];
+        next($values);
+        echo array_first(array: $values), ':', array_last($values), ':', current($values), ':';
+        echo array_first([]) === null, ':', array_last([]) === null, ':';
+        echo implode(',', array_map('array_first', [[], ['sparse' => 'one', 9 => 'two']])), ':';
+        echo function_exists('array_first'), function_exists('array_last');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "first:last:next:1:1:,one:11");
 }

@@ -86,7 +86,6 @@ impl CodeGenerator<'_> {
             Stmt::Foreach { iterable, key_name, value_name, value_by_reference, body, .. } => {
                 let iterator_id = self.instructions.len();
                 let reference_path = if *value_by_reference { variable_array_path(iterable) } else { None };
-                let uses_references = reference_path.is_some();
                 if let Some((variable, keys)) = reference_path {
                     self.instructions.push(Op::Load(variable.clone()));
                     for key in &keys { self.expression(key); }
@@ -96,12 +95,12 @@ impl CodeGenerator<'_> {
                     self.instructions.push(Op::IterStart(iterator_id, self.current_class.clone()));
                 }
                 let next_item = self.instructions.len();
-                self.instructions.push(Op::IterNext(iterator_id, key_name.clone(), value_name.clone(), uses_references, 0));
+                self.instructions.push(Op::IterNext(iterator_id, key_name.clone(), value_name.clone(), *value_by_reference, 0));
                 self.push_control_context();
                 self.statements(body);
                 self.instructions.push(Op::Jump(next_item));
                 let end = self.instructions.len();
-                self.instructions[next_item] = Op::IterNext(iterator_id, key_name.clone(), value_name.clone(), uses_references, end);
+                self.instructions[next_item] = Op::IterNext(iterator_id, key_name.clone(), value_name.clone(), *value_by_reference, end);
                 self.finish_loop(next_item, end);
             }
             _ => unreachable!("loop_statement only handles loop AST nodes"),

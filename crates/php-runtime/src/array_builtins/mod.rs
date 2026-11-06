@@ -107,7 +107,7 @@ pub(crate) fn call(
         _ => None,
     };
     if let Some((intersect, ignore_values, compare_values, compare_keys, exact_keys)) = callback_diff {
-        return Ok((transform::array_diff_with_callbacks(name, &args, intersect, ignore_values, compare_values, compare_keys, exact_keys, invoke)?, Vec::new()));
+        return Ok((transform::array_diff_with_callbacks(name, &args, intersect, ignore_values, compare_values, compare_keys, exact_keys, invoke, stringify)?, Vec::new()));
     }
     let mutation = match name {
         "array_pop" => Some(mutation::array_pop(&args)?),
@@ -162,12 +162,12 @@ pub(crate) fn call(
         "array_fill" => construct::array_fill(&args),
         "array_fill_keys" => construct::array_fill_keys(&args, diagnostics),
         "range" => construct::range(&args, diagnostics),
-        "array_diff" => transform::array_diff(&args, transform::DiffMode::Values, false),
-        "array_intersect" => transform::array_diff(&args, transform::DiffMode::Values, true),
-        "array_diff_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, false),
-        "array_intersect_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, true),
-        "array_diff_key" => transform::array_diff(&args, transform::DiffMode::Keys, false),
-        "array_intersect_key" => transform::array_diff(&args, transform::DiffMode::Keys, true),
+        "array_diff" => transform::array_diff(&args, transform::DiffMode::Values, false, stringify),
+        "array_intersect" => transform::array_diff(&args, transform::DiffMode::Values, true, stringify),
+        "array_diff_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, false, stringify),
+        "array_intersect_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, true, stringify),
+        "array_diff_key" => transform::array_diff(&args, transform::DiffMode::Keys, false, stringify),
+        "array_intersect_key" => transform::array_diff(&args, transform::DiffMode::Keys, true, stringify),
         "array_key_first" => query::array_edge_key(&args, false),
         "array_key_last" => query::array_edge_key(&args, true),
         "array_first" => query::array_edge_value(&args, false),

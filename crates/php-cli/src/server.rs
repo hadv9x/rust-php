@@ -29,6 +29,7 @@ const ACCEPT_BACKLOG: u32 = 1024;
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 15;
 const DEFAULT_MAX_INPUT_VARS: usize = 1000;
 const DEFAULT_MAX_INPUT_NESTING_LEVEL: usize = 64;
+const DEFAULT_MAX_FILE_UPLOADS: usize = 20;
 #[cfg(windows)]
 const PATH_SEPARATOR: char = ';';
 #[cfg(not(windows))]
@@ -73,6 +74,9 @@ struct ServerConfig {
     request_timeout: Duration,
     max_body_bytes: usize,
     max_upload_bytes: usize,
+    file_uploads: bool,
+    max_file_uploads: usize,
+    max_multipart_body_parts: Option<usize>,
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: Vec<PathBuf>,
@@ -140,7 +144,7 @@ enum RequestError {
 }
 
 fn usage() {
-    println!("Usage: php-rust-server [--config FILE] [--root DIR] [--bind ADDRESS] [--max-in-flight N] [--request-timeout-secs N] [--max-body-bytes N] [--max-upload-bytes N] [--max-input-vars N] [--max-input-nesting-level N] [--max-execution-steps N] [--max-execution-time-secs N] [--max-output-bytes N]");
+    println!("Usage: php-rust-server [--config FILE] [--root DIR] [--bind ADDRESS] [--max-in-flight N] [--request-timeout-secs N] [--max-body-bytes N] [--max-upload-bytes N] [--max-file-uploads N] [--max-multipart-body-parts N] [--max-input-vars N] [--max-input-nesting-level N] [--max-execution-steps N] [--max-execution-time-secs N] [--max-output-bytes N]");
     println!("Defaults: --root public --bind 127.0.0.1:3000 --max-in-flight 128");
     println!("Config file: php-rust.ini (or --config FILE / PHP_RUST_CONFIG)");
     println!("Config precedence: command line > PHP_RUST_* environment > php-rust.ini > defaults");
@@ -198,6 +202,9 @@ fn parse_ini_into(path: &Path, settings: &mut std::collections::HashMap<String, 
         let (target, value) = match key.as_str() {
             "post_max_size" => ("PHP_RUST_MAX_BODY_BYTES", parse_php_size(&value).ok_or_else(|| format!("{}:{}: invalid post_max_size", path.display(), line_index + 1))?.to_string()),
             "upload_max_filesize" => ("PHP_RUST_MAX_UPLOAD_FILE_BYTES", if value.trim() == "0" { 0 } else { parse_php_size(&value).ok_or_else(|| format!("{}:{}: invalid upload_max_filesize", path.display(), line_index + 1))? }.to_string()),
+            "file_uploads" => ("PHP_RUST_FILE_UPLOADS", value.clone()),
+            "max_file_uploads" => ("PHP_RUST_MAX_FILE_UPLOADS", value.clone()),
+            "max_multipart_body_parts" => ("PHP_RUST_MAX_MULTIPART_BODY_PARTS", value.clone()),
             "session.cookie_secure" => ("PHP_RUST_COOKIE_SECURE", value.clone()),
             "display_errors" => ("PHP_RUST_DISPLAY_ERRORS", value.clone()),
             "default_mimetype" => ("PHP_RUST_DEFAULT_MIMETYPE", value.clone()),
@@ -360,6 +367,15 @@ fn parse_php_timeout(value: &str) -> Option<u64> {
     Some(if seconds <= 0 { 300 } else { seconds.min(300) as u64 })
 }
 
+fn parse_multipart_body_limit(value: Option<&str>) -> Result<Option<usize>, String> {
+    let Some(value) = value else { return Ok(None); };
+    match value.trim().parse::<i64>() {
+        Ok(-1) => Ok(None),
+        Ok(limit) if limit >= 0 => Ok(Some(limit as usize)),
+        _ => Err("max_multipart_body_parts must be -1 or a non-negative integer".into()),
+    }
+}
+
 fn parse_args() -> Result<ServerConfig, String> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     if arguments.iter().any(|argument| argument == "--help" || argument == "-h") { usage(); std::process::exit(0); }
@@ -379,6 +395,9 @@ fn parse_args() -> Result<ServerConfig, String> {
         request_timeout: Duration::from_secs(config_value(&settings, "PHP_RUST_REQUEST_TIMEOUT_SECS", "PHP_RUST_REQUEST_TIMEOUT_SECS", DEFAULT_REQUEST_TIMEOUT_SECS)?),
         max_body_bytes: config_value(&settings, "PHP_RUST_MAX_BODY_BYTES", "PHP_RUST_MAX_BODY_BYTES", MAX_BODY_BYTES)?,
         max_upload_bytes: config_value(&settings, "PHP_RUST_MAX_UPLOAD_FILE_BYTES", "PHP_RUST_MAX_UPLOAD_FILE_BYTES", MAX_BODY_BYTES)?,
+        file_uploads: config_bool(&settings, "PHP_RUST_FILE_UPLOADS", true)?,
+        max_file_uploads: config_value(&settings, "PHP_RUST_MAX_FILE_UPLOADS", "PHP_RUST_MAX_FILE_UPLOADS", DEFAULT_MAX_FILE_UPLOADS)?,
+        max_multipart_body_parts: parse_multipart_body_limit(env::var("PHP_RUST_MAX_MULTIPART_BODY_PARTS").ok().or_else(|| settings.get("PHP_RUST_MAX_MULTIPART_BODY_PARTS").cloned()).as_deref())?,
         max_input_vars: config_value(&settings, "PHP_RUST_MAX_INPUT_VARS", "PHP_RUST_MAX_INPUT_VARS", DEFAULT_MAX_INPUT_VARS)?,
         max_input_nesting_level: config_value(&settings, "PHP_RUST_MAX_INPUT_NESTING_LEVEL", "PHP_RUST_MAX_INPUT_NESTING_LEVEL", DEFAULT_MAX_INPUT_NESTING_LEVEL)?,
         include_path: settings.get("PHP_INI_VALUE:include_path").map(|value| value.split(PATH_SEPARATOR).map(|part| PathBuf::from(if part.is_empty() { "." } else { part })).collect()).unwrap_or_else(|| if cfg!(windows) { vec![PathBuf::from(".")] } else { vec![PathBuf::from("."), PathBuf::from("/usr/share/php")] }),
@@ -411,6 +430,8 @@ fn parse_args() -> Result<ServerConfig, String> {
             "--request-timeout-secs" => config.request_timeout = Duration::from_secs(parse_option(&mut args, "--request-timeout-secs")?),
             "--max-body-bytes" => config.max_body_bytes = parse_option(&mut args, "--max-body-bytes")?,
             "--max-upload-bytes" => config.max_upload_bytes = parse_option(&mut args, "--max-upload-bytes")?,
+            "--max-file-uploads" => config.max_file_uploads = parse_option(&mut args, "--max-file-uploads")?,
+            "--max-multipart-body-parts" => config.max_multipart_body_parts = Some(parse_option(&mut args, "--max-multipart-body-parts")?),
             "--max-input-vars" => config.max_input_vars = parse_option(&mut args, "--max-input-vars")?,
             "--max-input-nesting-level" => config.max_input_nesting_level = parse_option(&mut args, "--max-input-nesting-level")?,
             "--max-execution-steps" => config.execution_limits.max_instructions = parse_option(&mut args, "--max-execution-steps")?,
@@ -423,6 +444,8 @@ fn parse_args() -> Result<ServerConfig, String> {
     if config.request_timeout.is_zero() || config.request_timeout > Duration::from_secs(300) { return Err("request timeout must be between 1 and 300 seconds".into()); }
     if config.max_body_bytes == 0 || config.max_body_bytes > 64 * 1024 * 1024 { return Err("max body size must be between 1 byte and 64 MiB".into()); }
     if config.max_upload_bytes > 64 * 1024 * 1024 { return Err("max upload file size must be at most 64 MiB".into()); }
+    if config.max_file_uploads > 1000 { return Err("max file uploads must be between 0 and 1000".into()); }
+    if config.max_multipart_body_parts.is_some_and(|limit| limit > 100_000) { return Err("max multipart body parts must be at most 100000".into()); }
     if config.max_input_vars == 0 || config.max_input_vars > 10_000 { return Err("max input variables must be between 1 and 10000".into()); }
     if config.max_input_nesting_level > 256 { return Err("max input nesting level must be between 0 and 256".into()); }
     if config.default_mimetype.is_empty() || config.default_mimetype.chars().any(|ch| matches!(ch, '\r' | '\n' | ';')) || config.default_charset.chars().any(|ch| matches!(ch, '\r' | '\n' | ';')) {
@@ -466,6 +489,10 @@ fn render_diagnostic(diagnostic: &RuntimeDiagnostic) -> String {
     let severity = match diagnostic.level {
         php_runtime::DiagnosticLevel::Warning => "Warning",
         php_runtime::DiagnosticLevel::Deprecated => "Deprecated",
+        php_runtime::DiagnosticLevel::Notice | php_runtime::DiagnosticLevel::UserNotice => "Notice",
+        php_runtime::DiagnosticLevel::UserWarning => "Warning",
+        php_runtime::DiagnosticLevel::UserDeprecated => "Deprecated",
+        php_runtime::DiagnosticLevel::Fatal => "Fatal error",
     };
     match (&diagnostic.source_file, diagnostic.source_line) {
         (Some(file), Some(line)) => format!("{severity}: {} in {file} on line {line}\n", diagnostic.message),
@@ -534,6 +561,9 @@ async fn handle_connection(stream: TcpStream, config: Arc<ServerConfig>, session
         let secure_session_cookies = config.secure_session_cookies;
         let display_errors = config.display_errors;
         let max_upload_bytes = config.max_upload_bytes;
+        let file_uploads = config.file_uploads;
+        let max_file_uploads = config.max_file_uploads;
+        let max_multipart_body_parts = config.max_multipart_body_parts.unwrap_or_else(|| config.max_input_vars.saturating_add(config.max_file_uploads));
         let max_input_vars = config.max_input_vars;
         let max_input_nesting_level = config.max_input_nesting_level;
         let include_path = config.include_path.clone();
@@ -548,7 +578,7 @@ async fn handle_connection(stream: TcpStream, config: Arc<ServerConfig>, session
         let body = request.body;
         let sessions = Arc::clone(&sessions);
         let response = tokio::task::spawn_blocking(move || {
-            execute_request_with_session_and_limits_and_include_path(&root, &path, &query, &method, &protocol, &content_type, &host, &request_headers, &body, limits, sessions, secure_session_cookies, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &include_path)
+            execute_request_with_session_and_limits_and_include_path(&root, &path, &query, &method, &protocol, &content_type, &host, &request_headers, &body, limits, sessions, secure_session_cookies, display_errors, max_upload_bytes, file_uploads, max_file_uploads, max_multipart_body_parts, max_input_vars, max_input_nesting_level, &include_path)
         }).await;
         match response {
             Ok(Ok(mut response)) => {
@@ -871,10 +901,13 @@ fn execute_request_with_session_and_limits(
     secure_session_cookie: bool,
     display_errors: DisplayErrors,
     max_upload_bytes: usize,
+    file_uploads: bool,
+    max_file_uploads: usize,
+    max_multipart_body_parts: usize,
     max_input_vars: usize,
     max_input_nesting_level: usize,
 ) -> Result<WebResponse, RequestError> {
-    execute_request_with_session_and_limits_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &[])
+    execute_request_with_session_and_limits_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, display_errors, max_upload_bytes, file_uploads, max_file_uploads, max_multipart_body_parts, max_input_vars, max_input_nesting_level, &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -893,11 +926,14 @@ fn execute_request_with_session_and_limits_and_include_path(
     secure_session_cookie: bool,
     display_errors: DisplayErrors,
     max_upload_bytes: usize,
+    file_uploads: bool,
+    max_file_uploads: usize,
+    max_multipart_body_parts: usize,
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: &[PathBuf],
 ) -> Result<WebResponse, RequestError> {
-    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, Some(store), secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, include_path)
+    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, Some(store), secure_session_cookie, display_errors, max_upload_bytes, file_uploads, max_file_uploads, max_multipart_body_parts, max_input_vars, max_input_nesting_level, include_path)
 }
 
 #[cfg(test)]
@@ -916,10 +952,13 @@ fn execute_request_with_context(
     secure_session_cookie: bool,
     display_errors: DisplayErrors,
     max_upload_bytes: usize,
+    file_uploads: bool,
+    max_file_uploads: usize,
+    max_multipart_body_parts: usize,
     max_input_vars: usize,
     max_input_nesting_level: usize,
 ) -> Result<WebResponse, RequestError> {
-    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, session_store, secure_session_cookie, display_errors, max_upload_bytes, max_input_vars, max_input_nesting_level, &[])
+    execute_request_with_context_and_include_path(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, session_store, secure_session_cookie, display_errors, max_upload_bytes, file_uploads, max_file_uploads, max_multipart_body_parts, max_input_vars, max_input_nesting_level, &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -938,6 +977,9 @@ fn execute_request_with_context_and_include_path(
     secure_session_cookie: bool,
     display_errors: DisplayErrors,
     max_upload_bytes: usize,
+    file_uploads: bool,
+    max_file_uploads: usize,
+    max_multipart_body_parts: usize,
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: &[PathBuf],
@@ -974,7 +1016,7 @@ fn execute_request_with_context_and_include_path(
     let session = session_store.map(|store| load_session_context(request_headers, &store).map(|session| (store, session))).transpose()?;
     let mut input_diagnostics = Vec::new();
     let get = parse_urlencoded(query, max_input_vars, max_input_nesting_level, &mut input_diagnostics);
-    let (post, files, upload_paths) = parse_post_data(content_type, body, max_upload_bytes, max_input_vars, max_input_nesting_level, &mut input_diagnostics)?;
+    let (post, files, upload_paths) = parse_post_data(content_type, body, max_upload_bytes, file_uploads, max_file_uploads, max_multipart_body_parts, max_input_vars, max_input_nesting_level, &mut input_diagnostics)?;
     let cookies = request_headers.iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("cookie"))
         .map(|(_, value)| parse_cookies(value))
@@ -1209,7 +1251,7 @@ fn commit_session(
     Ok(())
 }
 
-fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max_input_vars: usize, max_nesting_level: usize, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<(Vec<(String, Value)>, Vec<(String, Value)>, Vec<PathBuf>), RequestError> {
+fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, file_uploads: bool, max_file_uploads: usize, max_multipart_body_parts: usize, max_input_vars: usize, max_nesting_level: usize, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Result<(Vec<(String, Value)>, Vec<(String, Value)>, Vec<PathBuf>), RequestError> {
     if content_type.to_ascii_lowercase().starts_with("application/x-www-form-urlencoded") {
         return Ok((parse_urlencoded(&String::from_utf8_lossy(body), max_input_vars, max_nesting_level, diagnostics), Vec::new(), Vec::new()));
     }
@@ -1231,13 +1273,26 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
     let mut files = Vec::new();
     let mut upload_guard = UploadTempGuard(Vec::new());
     let mut max_form_upload_size = 0i64;
+    let mut accepted_uploads = 0usize;
+    let mut upload_limit_reported = false;
     if body.get(cursor..cursor + 2) == Some(b"--") { return Ok((post, files, Vec::new())); }
     if body.get(cursor..cursor + 2) != Some(b"\r\n") { return Err(RequestError::InvalidRequest("invalid multipart boundary terminator".into())); }
     cursor += 2;
-    let mut parts = 0usize;
+    let mut input_variables = 0usize;
+    let mut input_limit_reported = false;
+    let mut multipart_parts = 0usize;
     loop {
-        parts += 1;
-        if parts > max_input_vars { return Err(RequestError::InvalidRequest("too many multipart fields".into())); }
+        multipart_parts += 1;
+        if multipart_parts > max_multipart_body_parts {
+            diagnostics.push(RuntimeDiagnostic {
+                level: php_runtime::DiagnosticLevel::Warning,
+                message: format!("Multipart body parts limit exceeded {max_multipart_body_parts}. To increase the limit change max_multipart_body_parts in php.ini."),
+                source_file: None,
+                source_line: None,
+                output_offset: 0,
+            });
+            break;
+        }
         let header_end = find_bytes(&body[cursor..], b"\r\n\r\n")
             .map(|index| cursor + index)
             .ok_or_else(|| RequestError::InvalidRequest("multipart field headers are incomplete".into()))?;
@@ -1253,11 +1308,39 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
             name.eq_ignore_ascii_case("content-disposition").then_some(value.trim())
         }).ok_or_else(|| RequestError::InvalidRequest("multipart Content-Disposition is missing".into()))?;
         let (field_name, filename) = parse_disposition(disposition)?;
+        let filename = filename.map(|filename| uploaded_filename(&filename).to_string());
         let part_content_type = header_text.lines().find_map(|line| {
             let (name, value) = line.split_once(':')?;
             name.eq_ignore_ascii_case("content-type").then(|| value.trim().to_string())
         }).unwrap_or_else(|| "text/plain".into());
         if let Some(filename) = filename {
+            if !file_uploads {
+                cursor = next_boundary + delimiter.len();
+                if body.get(cursor..cursor + 2) == Some(b"--") { break; }
+                if body.get(cursor..cursor + 2) != Some(b"\r\n") { return Err(RequestError::InvalidRequest("invalid multipart boundary separator".into())); }
+                cursor += 2;
+                continue;
+            }
+            if !filename.is_empty() {
+                accepted_uploads += 1;
+                if accepted_uploads > max_file_uploads {
+                    if !upload_limit_reported {
+                        diagnostics.push(RuntimeDiagnostic {
+                            level: php_runtime::DiagnosticLevel::Warning,
+                            message: "Maximum number of allowable file uploads has been exceeded".into(),
+                            source_file: None,
+                            source_line: None,
+                            output_offset: 0,
+                        });
+                        upload_limit_reported = true;
+                    }
+                    cursor = next_boundary + delimiter.len();
+                    if body.get(cursor..cursor + 2) == Some(b"--") { break; }
+                    if body.get(cursor..cursor + 2) != Some(b"\r\n") { return Err(RequestError::InvalidRequest("invalid multipart boundary separator".into())); }
+                    cursor += 2;
+                    continue;
+                }
+            }
             let (temp_name, upload_type, error, size) = if filename.is_empty() {
                 (String::new(), String::new(), 4.0, 0.0) // UPLOAD_ERR_NO_FILE
             } else if part_data.len() > max_upload_bytes {
@@ -1281,11 +1364,17 @@ fn parse_post_data(content_type: &str, body: &[u8], max_upload_bytes: usize, max
             }
         } else {
             let value = String::from_utf8_lossy(part_data).into_owned();
-            if field_name.eq_ignore_ascii_case("MAX_FILE_SIZE") {
-                max_form_upload_size = parse_form_upload_size(&value);
-            }
-            if insert_param(&mut post, &normalize_param_name(&field_name), Value::String(value), max_nesting_level) {
-                diagnostics.push(input_nesting_diagnostic(max_nesting_level));
+            input_variables += 1;
+            if input_variables <= max_input_vars {
+                if field_name.eq_ignore_ascii_case("MAX_FILE_SIZE") {
+                    max_form_upload_size = parse_form_upload_size(&value);
+                }
+                if insert_param(&mut post, &normalize_param_name(&field_name), Value::String(value), max_nesting_level) {
+                    diagnostics.push(input_nesting_diagnostic(max_nesting_level));
+                }
+            } else if !input_limit_reported {
+                diagnostics.push(input_vars_diagnostic(max_input_vars));
+                input_limit_reported = true;
             }
         }
         cursor = next_boundary + delimiter.len();
@@ -1338,6 +1427,10 @@ fn parse_disposition(value: &str) -> Result<(String, Option<String>), RequestErr
     Ok((name, filename))
 }
 
+fn uploaded_filename(filename: &str) -> &str {
+    filename.rsplit(['/', '\\']).next().unwrap_or(filename)
+}
+
 fn write_upload_temp(data: &[u8]) -> Result<PathBuf, RequestError> {
     for _ in 0..8 {
         let id = NEXT_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
@@ -1368,7 +1461,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn parse_urlencoded(input: &str, max_variables: usize, max_nesting_level: usize, diagnostics: &mut Vec<RuntimeDiagnostic>) -> Vec<(String, Value)> {
-    input.split('&').take(max_variables).filter(|part| !part.is_empty()).filter_map(|part| {
+    let parts = input.split('&').filter(|part| !part.is_empty()).collect::<Vec<_>>();
+    if parts.len() > max_variables { diagnostics.push(input_vars_diagnostic(max_variables)); }
+    parts.into_iter().take(max_variables).filter_map(|part| {
         let (key, value) = part.split_once('=').unwrap_or((part, ""));
         Some((url_decode(key)?, Value::String(url_decode(value)?)))
     }).fold(Vec::new(), |mut entries, (key, value)| {
@@ -1377,6 +1472,16 @@ fn parse_urlencoded(input: &str, max_variables: usize, max_nesting_level: usize,
         }
         entries
     })
+}
+
+fn input_vars_diagnostic(max_variables: usize) -> RuntimeDiagnostic {
+    RuntimeDiagnostic {
+        level: php_runtime::DiagnosticLevel::Warning,
+        message: format!("Input variables exceeded {max_variables}. To increase the limit change max_input_vars in php.ini."),
+        source_file: None,
+        source_line: None,
+        output_offset: 0,
+    }
 }
 
 fn input_nesting_diagnostic(max_nesting_level: usize) -> RuntimeDiagnostic {
@@ -1557,8 +1662,8 @@ async fn run_server() {
     let sessions: SessionStore = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let config = Arc::new(config);
     log_event(3, "server_started", &format!(
-        "bind={} root={:?} max_in_flight={} request_timeout_secs={} max_body_bytes={} max_upload_bytes={} max_input_vars={} max_input_nesting_level={} max_execution_steps={} max_execution_time_secs={:?} max_output_bytes={} secure_session_cookies={} databases={:?}",
-        bind, config.root, config.max_in_flight, config.request_timeout.as_secs(), config.max_body_bytes, config.max_upload_bytes, config.max_input_vars, config.max_input_nesting_level,
+        "bind={} root={:?} max_in_flight={} request_timeout_secs={} max_body_bytes={} max_upload_bytes={} file_uploads={} max_file_uploads={} max_input_vars={} max_input_nesting_level={} max_execution_steps={} max_execution_time_secs={:?} max_output_bytes={} secure_session_cookies={} databases={:?}",
+        bind, config.root, config.max_in_flight, config.request_timeout.as_secs(), config.max_body_bytes, config.max_upload_bytes, config.file_uploads, config.max_file_uploads, config.max_input_vars, config.max_input_nesting_level,
         config.execution_limits.max_instructions, config.execution_limits.max_execution_time.map(|duration| duration.as_secs()), config.execution_limits.max_output_bytes, config.secure_session_cookies, database_registry.names(),
     ));
     let mut tasks = JoinSet::new();

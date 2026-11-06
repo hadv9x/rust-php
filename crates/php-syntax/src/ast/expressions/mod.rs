@@ -14,6 +14,8 @@ pub enum Expr {
     Integer(i64),
     Number(f64),
     String(String),
+    /// Evaluate a string expression after emitting the specified compatibility diagnostic.
+    DeprecatedInterpolation(Box<Expr>, String),
     Bool(bool),
     Null,
     /// A global or namespaced constant reference.

@@ -37,6 +37,7 @@ struct Signature {
 fn signature(name: &str) -> Option<Signature> {
     use DefaultValue::{False as F, Null as N, Number as Num};
     let (names, defaults, variadic): (&'static [&'static str], &'static [(usize, DefaultValue)], bool) = match name.to_ascii_lowercase().as_str() {
+        "exit" | "die" => (&["status"], &[], false),
         "mongo_find" => (&["connection", "database", "collection", "filter", "limit"], &[(3, N), (4, Num(0.0))], false),
         "mongo_aggregate" => (&["connection", "database", "collection", "pipeline"], &[], false),
         "mongo_count_documents" => (&["connection", "database", "collection", "filter"], &[(3, N)], false),
@@ -134,6 +135,8 @@ fn signature(name: &str) -> Option<Signature> {
         "getrandmax" | "mt_getrandmax" => (&[], &[], false),
         "str_shuffle" => (&["string"], &[], false),
         "date" | "gmdate" => (&["format", "timestamp"], &[(1, N)], false),
+        "strftime" | "gmstrftime" => (&["format", "timestamp"], &[(1, N)], false),
+        "strptime" => (&["timestamp", "format"], &[], false),
         "getdate" => (&["timestamp"], &[(0, N)], false),
         "gettimeofday" => (&["as_float"], &[(0, F)], false),
         "idate" => (&["format", "timestamp"], &[(1, N)], false),
@@ -180,6 +183,9 @@ fn signature(name: &str) -> Option<Signature> {
         "putenv" => (&["assignment"], &[], false),
         "php_sapi_name" => (&[], &[], false),
         "error_reporting" => (&["error_level"], &[], false),
+        "trigger_error" | "user_error" => (&["message", "error_level"], &[(1, Num(1024.0))], false),
+        "set_error_handler" => (&["callback", "error_levels"], &[(1, Num(32767.0))], false),
+        "restore_error_handler" => (&[], &[], false),
         "generator::current" | "generator::key" | "generator::valid" | "generator::rewind"
         | "generator::next" | "generator::getreturn" => (&[], &[], false),
         "generator::send" => (&["value"], &[], false),
@@ -218,13 +224,14 @@ fn signature(name: &str) -> Option<Signature> {
         "get_called_class" => (&[], &[], false),
         "get_parent_class" => (&["object_or_class"], &[(0, N)], false),
         "is_a" => (&["object_or_class", "class", "allow_string"], &[(2, F)], false),
-        "is_subclass_of" => (&["object_or_class", "class", "allow_string"], &[(2, F)], false),
+        "is_subclass_of" => (&["object_or_class", "class", "allow_string"], &[(2, DefaultValue::True)], false),
         "is_callable" => (&["value", "syntax_only", "callable_name"], &[(1, F), (2, N)], false),
         "header" => (&["header", "replace", "response_code"], &[(1, DefaultValue::True), (2, N)], false),
         "http_response_code" => (&["response_code"], &[(0, N)], false),
         "header_remove" => (&["name"], &[(0, N)], false),
         "headers_list" => (&[], &[], false),
-        "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" => (&["filename"], &[], false),
+        "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "realpath" => (&["filename"], &[], false),
+        "stat" | "lstat" => (&["filename"], &[], false),
         "getcwd" => (&[], &[], false),
         "get_include_path" => (&[], &[], false),
         "set_include_path" => (&["include_path"], &[], false),
@@ -234,9 +241,19 @@ fn signature(name: &str) -> Option<Signature> {
         "hrtime" => (&["as_number"], &[(0, F)], false),
         "file_get_contents" => (&["filename", "use_include_path", "context", "offset", "length"], &[(1, F), (2, N), (3, Num(0.0)), (4, N)], false),
         "file" => (&["filename", "flags", "context"], &[(1, Num(0.0)), (2, N)], false),
+        "scandir" => (&["directory", "sorting_order", "context"], &[(1, Num(0.0)), (2, N)], false),
+        "opendir" => (&["directory", "context"], &[(1, N)], false),
+        "readdir" | "closedir" | "rewinddir" => (&["dir_handle"], &[], false),
         "file_put_contents" => (&["filename", "data", "flags", "context"], &[(2, Num(0.0)), (3, N)], false),
+        "copy" => (&["from", "to", "context"], &[(2, N)], false),
+        "rename" => (&["from", "to", "context"], &[(2, N)], false),
+        "mkdir" => (&["directory", "permissions", "recursive", "context"], &[(1, Num(511.0)), (2, F), (3, N)], false),
+        "rmdir" => (&["directory", "context"], &[(1, N)], false),
         "tempnam" => (&["directory", "prefix"], &[], false),
         "unlink" => (&["filename"], &[], false),
+        "touch" => (&["filename", "mtime", "atime"], &[(1, N), (2, N)], false),
+        "chmod" => (&["filename", "permissions"], &[], false),
+        "disk_free_space" | "diskfreespace" | "disk_total_space" => (&["directory"], &[], false),
         "fopen" => (&["filename", "mode", "use_include_path", "context"], &[(2, F), (3, N)], false),
         "fwrite" => (&["stream", "data", "length"], &[(2, N)], false),
         "fread" => (&["stream", "length"], &[], false),
@@ -248,6 +265,9 @@ fn signature(name: &str) -> Option<Signature> {
         "json_validate" => (&["json", "depth", "flags"], &[(1, Num(512.0)), (2, Num(0.0))], false),
         "json_last_error" | "json_last_error_msg" => (&[], &[], false),
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13" | "addslashes" | "stripslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment" | "str_decrement" => (&["string"], &[], false),
+        "crc32" => (&["string"], &[], false),
+        "base64_encode" => (&["string"], &[], false),
+        "base64_decode" => (&["string", "strict"], &[(1, F)], false),
         "addcslashes" => (&["string", "characters"], &[], false),
         "number_format" => (&["num", "decimals", "decimal_separator", "thousands_separator"], &[(1, Num(0.0)), (2, DefaultValue::Dot), (3, DefaultValue::Comma)], false),
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" => (&["string1", "string2"], &[], false),
@@ -276,6 +296,11 @@ fn signature(name: &str) -> Option<Signature> {
         "dirname" => (&["path", "levels"], &[(1, Num(1.0))], false),
         "pathinfo" => (&["path", "flags"], &[(1, Num(15.0))], false),
         "strip_tags" => (&["string", "allowed_tags"], &[(1, DefaultValue::EmptyString)], false),
+        "sprintf" => (&["format"], &[], true),
+        "printf" => (&["format"], &[], true),
+        "vprintf" | "vsprintf" => (&["format", "values"], &[], false),
+        "fprintf" => (&["stream", "format"], &[], true),
+        "parse_str" => (&["string", "result"], &[], false),
         "stripcslashes" => (&["string"], &[], false),
         "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => (&["string"], &[], false),
         "explode" => (&["separator", "string", "limit"], &[(2, Num(i64::MAX as f64))], false),
@@ -346,6 +371,7 @@ fn signature(name: &str) -> Option<Signature> {
 pub(super) fn is_vm_function(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     !name.contains("::")
+        && (name != "strptime" || cfg!(unix))
         && !matches!(name.as_str(),
             "exception" | "error" | "typeerror" | "argumentcounterror" | "compileerror" | "parseerror"
             | "arithmeticerror" | "divisionbyzeroerror" | "assertionerror" | "unhandledmatcherror"
@@ -566,7 +592,7 @@ mod tests {
         // while forwarding arguments to another callable.
         let custom_binding = ["call_user_func"];
         let names = [
-            "addcslashes", "addslashes", "basename", "boolval", "call_user_func_array", "checkdate", "chr", "class_exists", "compact", "constant", "count_chars", "date", "define", "defined", "dirname", "error_clear_last", "error_get_last", "error_reporting", "explode", "extract", "fclose", "feof", "file", "file_exists", "file_get_contents", "file_put_contents", "filesize", "floatval", "fopen", "fread", "fseek", "ftell", "func_get_arg", "func_get_args", "func_num_args", "function_exists", "fwrite", "gc_collect_cycles", "get_called_class", "get_class", "get_debug_type", "get_defined_vars", "get_parent_class", "getcwd", "get_include_path", "getdate", "getenv", "gettimeofday", "putenv", "getrandmax", "gettype", "gmdate", "gmmktime", "header", "header_remove", "headers_list", "hrtime", "hex2bin", "htmlspecialchars", "htmlspecialchars_decode", "http_response_code", "idate", "implode", "interface_exists", "trait_exists", "intval", "is_a", "is_array", "is_bool", "is_callable", "is_countable", "is_iterable", "is_dir", "is_double", "is_executable", "is_file", "is_float", "is_int", "is_integer", "is_link", "is_null", "is_numeric", "is_object", "is_readable", "is_real", "is_resource", "is_scalar", "is_string", "is_subclass_of", "is_uploaded_file", "is_writable", "json_decode", "json_encode", "json_last_error", "json_last_error_msg", "json_validate", "lcfirst", "localtime", "ltrim", "method_exists", "microtime", "mktime", "mongo_aggregate", "mongo_begin_transaction", "mongo_commit", "mongo_count_documents", "mongo_delete_many", "mongo_delete_one", "mongo_estimated_document_count", "mongo_find", "mongo_insert_many", "mongo_insert_one", "mongo_replace_one", "mongo_rollback", "mongo_update_many", "mongo_update_one", "move_uploaded_file", "mt_getrandmax", "mt_rand", "nl2br", "number_format", "ord", "pathinfo", "php_sapi_name", "property_exists", "rand", "random_int", "realpath", "rewind", "rtrim", "session_destroy", "session_id", "session_start", "session_status", "session_unset", "set_include_path", "spl_autoload", "spl_autoload_call", "spl_autoload_extensions", "spl_autoload_functions", "spl_autoload_register", "spl_autoload_unregister", "str_contains", "str_decrement", "str_ends_with", "str_increment", "str_ireplace", "str_pad", "str_repeat", "str_replace", "str_shuffle", "str_split", "str_starts_with", "str_word_count", "strcasecmp", "strchr", "strcmp", "strcspn", "stream_get_contents", "stripos", "stripslashes", "stristr", "strlen", "strnatcasecmp", "strnatcmp", "strncasecmp", "strncmp", "strpbrk", "strpos", "strrev", "strripos", "strrpos", "strspn", "strstr", "strtolower", "strtotime", "strtoupper", "strtr", "strval", "substr", "substr_count", "substr_replace", "sys_get_temp_dir", "tempnam", "time", "trim", "ucfirst", "ucwords", "unlink", "var_dump", "wordwrap",
+            "addcslashes", "addslashes", "basename", "boolval", "call_user_func_array", "checkdate", "chr", "class_exists", "compact", "constant", "count_chars", "date", "define", "defined", "dirname", "error_clear_last", "error_get_last", "error_reporting", "trigger_error", "user_error", "set_error_handler", "restore_error_handler", "exit", "die", "explode", "extract", "fclose", "feof", "file", "file_exists", "file_get_contents", "file_put_contents", "filesize", "floatval", "fopen", "fread", "fseek", "ftell", "func_get_arg", "func_get_args", "func_num_args", "function_exists", "fwrite", "gc_collect_cycles", "get_called_class", "get_class", "get_debug_type", "get_defined_vars", "get_parent_class", "getcwd", "get_include_path", "getdate", "getenv", "gettimeofday", "putenv", "getrandmax", "gettype", "gmdate", "gmmktime", "header", "header_remove", "headers_list", "hrtime", "hex2bin", "htmlspecialchars", "htmlspecialchars_decode", "http_response_code", "idate", "implode", "interface_exists", "trait_exists", "intval", "is_a", "is_array", "is_bool", "is_callable", "is_countable", "is_iterable", "is_dir", "is_double", "is_executable", "is_file", "is_float", "is_int", "is_integer", "is_link", "is_null", "is_numeric", "is_object", "is_readable", "is_real", "is_resource", "is_scalar", "is_string", "is_subclass_of", "is_uploaded_file", "is_writable", "json_decode", "json_encode", "json_last_error", "json_last_error_msg", "json_validate", "lcfirst", "localtime", "ltrim", "method_exists", "microtime", "mktime", "mongo_aggregate", "mongo_begin_transaction", "mongo_commit", "mongo_count_documents", "mongo_delete_many", "mongo_delete_one", "mongo_estimated_document_count", "mongo_find", "mongo_insert_many", "mongo_insert_one", "mongo_replace_one", "mongo_rollback", "mongo_update_many", "mongo_update_one", "move_uploaded_file", "mt_getrandmax", "mt_rand", "nl2br", "number_format", "ord", "pathinfo", "php_sapi_name", "property_exists", "rand", "random_int", "realpath", "rewind", "rtrim", "session_destroy", "session_id", "session_start", "session_status", "session_unset", "set_include_path", "spl_autoload", "spl_autoload_call", "spl_autoload_extensions", "spl_autoload_functions", "spl_autoload_register", "spl_autoload_unregister", "str_contains", "str_decrement", "str_ends_with", "str_increment", "str_ireplace", "str_pad", "str_repeat", "str_replace", "str_shuffle", "str_split", "str_starts_with", "str_word_count", "strcasecmp", "strchr", "strcmp", "strcspn", "stream_get_contents", "stripos", "stripslashes", "stristr", "strlen", "strnatcasecmp", "strnatcmp", "strncasecmp", "strncmp", "strpbrk", "strpos", "strrev", "strripos", "strrpos", "strspn", "strstr", "strtolower", "strtotime", "strtoupper", "strtr", "strval", "substr", "substr_count", "substr_replace", "sys_get_temp_dir", "tempnam", "time", "trim", "ucfirst", "ucwords", "unlink", "var_dump", "wordwrap",
         ];
         for name in names {
             assert!(signature(name).is_some() || custom_binding.contains(&name),
@@ -629,6 +655,18 @@ mod tests {
         ] {
             assert!(signature(method).is_some(), "missing named-argument metadata for {method}");
         }
+    }
+
+    #[test]
+    fn strftime_family_has_php_named_argument_metadata() {
+        for function in ["strftime", "gmstrftime"] {
+            assert!(signature(function).is_some(), "missing named-argument metadata for {function}");
+        }
+    }
+
+    #[test]
+    fn strptime_has_php_named_argument_metadata() {
+        assert!(signature("strptime").is_some());
     }
 
     #[test]

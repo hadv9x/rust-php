@@ -52,7 +52,7 @@
         body: &[u8],
         limits: ExecutionLimits,
     ) -> Result<WebResponse, RequestError> {
-        execute_request_with_context(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, None, false, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
+        execute_request_with_context(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, None, false, DisplayErrors::Off, MAX_BODY_BYTES, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
     }
 
     fn execute_request_with_session(
@@ -69,7 +69,7 @@
         store: SessionStore,
         secure_session_cookie: bool,
     ) -> Result<WebResponse, RequestError> {
-        execute_request_with_session_and_limits(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
+        execute_request_with_session_and_limits(root, url_path, query, method, protocol, content_type, host, request_headers, body, limits, store, secure_session_cookie, DisplayErrors::Off, MAX_BODY_BYTES, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL)
     }
 
     struct Fixture(PathBuf);
@@ -134,7 +134,7 @@
         let execute = |display_errors| execute_request_with_context(
             fixture.path(), "/", "", "GET", "HTTP/1.1", "", "localhost", &[], &[],
             ExecutionLimits::default(), None, false, display_errors, MAX_BODY_BYTES,
-            DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL,
+            true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL,
         ).unwrap();
         let displayed = execute(DisplayErrors::On);
         let output = String::from_utf8(displayed.output).unwrap();
@@ -155,7 +155,7 @@
         let response = execute_request_with_context_and_include_path(
             fixture.path(), "/", "", "GET", "HTTP/1.1", "", "localhost", &[], &[],
             ExecutionLimits::default(), None, false, DisplayErrors::Off, MAX_BODY_BYTES,
-            DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &[include_dir.clone()],
+            true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &[include_dir.clone()],
         ).unwrap();
         assert_eq!(response.output, format!("bootstrapped:{}", include_dir.display()).as_bytes());
     }
@@ -164,10 +164,14 @@
     fn reads_common_php_docker_ini_limits_and_ignores_unmapped_directives() {
         let fixture = Fixture::new();
         let path = fixture.path().join("php-rust.ini");
-        std::fs::write(&path, "[PHP] ; inline section comment\npost_max_size = 8M ; request body cap\nupload_max_filesize = 2M\nmax_input_vars = 250\nmax_execution_time = 30\ndefault_mimetype = application/json\ndefault_charset = UTF-8\ndate.timezone = UTC\napp.path = ${APP_PATH:-/srv/app}\napp.memory = ${APP_MEMORY:-128M}\n[Session]\nsession.cookie_secure = On\n").unwrap();
+        std::fs::write(&path, "[PHP] ; inline section comment\npost_max_size = 8M ; request body cap\nupload_max_filesize = 2M\nfile_uploads = Off\nmax_file_uploads = 3\nmax_multipart_body_parts = -1\nmax_input_vars = 250\nmax_execution_time = 30\ndefault_mimetype = application/json\ndefault_charset = UTF-8\ndate.timezone = UTC\napp.path = ${APP_PATH:-/srv/app}\napp.memory = ${APP_MEMORY:-128M}\n[Session]\nsession.cookie_secure = On\n").unwrap();
         let settings = parse_ini(&path).unwrap();
         assert_eq!(settings.get("PHP_RUST_MAX_BODY_BYTES").map(String::as_str), Some("8388608"));
+        assert_eq!(settings.get("PHP_RUST_FILE_UPLOADS").map(String::as_str), Some("Off"));
+        assert!(!config_bool(&settings, "PHP_RUST_FILE_UPLOADS", true).unwrap());
         assert_eq!(settings.get("PHP_RUST_MAX_UPLOAD_FILE_BYTES").map(String::as_str), Some("2097152"));
+        assert_eq!(settings.get("PHP_RUST_MAX_FILE_UPLOADS").map(String::as_str), Some("3"));
+        assert_eq!(settings.get("PHP_RUST_MAX_MULTIPART_BODY_PARTS").map(String::as_str), Some("-1"));
         assert_eq!(settings.get("PHP_RUST_MAX_INPUT_VARS").map(String::as_str), Some("250"));
         assert_eq!(settings.get("PHP_RUST_COOKIE_SECURE").map(String::as_str), Some("On"));
         assert_eq!(settings.get("PHP_RUST_MAX_EXECUTION_TIME_SECS").map(String::as_str), Some("30"));
@@ -352,6 +356,19 @@
     }
 
     #[test]
+    fn multipart_uploaded_names_keep_only_the_client_filename_basename() {
+        let body = b"--Names\r\nContent-Disposition: form-data; name=\"windows\"; filename=\"C:\\fakepath\\avatar.png\"\r\nContent-Type: image/png\r\n\r\npng\r\n--Names\r\nContent-Disposition: form-data; name=\"unix\"; filename=\"/tmp/avatar.jpg\"\r\nContent-Type: image/jpeg\r\n\r\njpg\r\n--Names--\r\n";
+        let (_, files, temp_files) = parse_post_data("multipart/form-data; boundary=Names", body, 100, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        let upload_name = |field: &str| {
+            let php_runtime::Value::Array(fields) = &files.iter().find(|(name, _)| name == field).unwrap().1 else { panic!("expected upload entry") };
+            fields.iter().find_map(|(key, value)| (key == &php_runtime::ArrayKey::String("name".into())).then_some(value))
+        };
+        assert!(matches!(upload_name("windows"), Some(php_runtime::Value::String(name)) if name == "avatar.png"));
+        assert!(matches!(upload_name("unix"), Some(php_runtime::Value::String(name)) if name == "avatar.jpg"));
+        for path in temp_files { let _ = std::fs::remove_file(path); }
+    }
+
+    #[test]
     fn multipart_names_follow_php_leading_space_and_dot_normalization() {
         let fixture = Fixture::new();
         std::fs::write(fixture.path().join("index.php"), "<?php echo $_POST['profile_name_'] ?? 'missing', ':', $_POST['legacy_name'] ?? 'missing', ':', array_key_exists('', $_POST), ':', $_FILES['upload_file_']['name'] ?? 'missing';").unwrap();
@@ -363,7 +380,7 @@
     #[test]
     fn enforces_php_upload_max_filesize_from_mapped_config() {
         let body = b"--Cap\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"file.txt\"\r\nContent-Type: text/plain\r\n\r\nlarge\r\n--Cap--\r\n";
-        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Cap", body, 4, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Cap", body, 4, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
         assert!(post.is_empty());
         assert!(temp_files.is_empty());
         let php_runtime::Value::Array(fields) = &files[0].1 else { panic!("expected PHP upload fields") };
@@ -376,7 +393,7 @@
     #[test]
     fn max_file_size_form_field_applies_only_to_later_uploads() {
         let body = b"--Limit\r\nContent-Disposition: form-data; name=\"early\"; filename=\"early.txt\"\r\nContent-Type: text/plain\r\n\r\none!\r\n--Limit\r\nContent-Disposition: form-data; name=\"MAX_FILE_SIZE\"\r\n\r\n2\r\n--Limit\r\nContent-Disposition: form-data; name=\"late\"; filename=\"late.txt\"\r\nContent-Type: text/plain\r\n\r\ntwo!\r\n--Limit--\r\n";
-        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
         let form_limit = post.iter().find_map(|(name, value)| (name == "MAX_FILE_SIZE").then_some(value));
         assert!(matches!(form_limit, Some(php_runtime::Value::String(value)) if value == "2"));
         let upload = |name: &str| files.iter().find_map(|(field, value)| {
@@ -398,7 +415,7 @@
     #[test]
     fn upload_ini_limit_takes_precedence_over_max_file_size_form_limit() {
         let body = b"--Limit\r\nContent-Disposition: form-data; name=\"MAX_FILE_SIZE\"\r\n\r\n10\r\n--Limit\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"large.txt\"\r\nContent-Type: text/plain\r\n\r\nlarger\r\n--Limit--\r\n";
-        let (_, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 3, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
+        let (_, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 3, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).unwrap();
         assert!(temp_files.is_empty());
         let php_runtime::Value::Array(fields) = &files[0].1 else { panic!("expected PHP upload fields") };
         let error = fields.iter().find_map(|(key, value)| (key == &php_runtime::ArrayKey::String("error".into())).then_some(value));
@@ -407,7 +424,89 @@
 
     #[test]
     fn caps_urlencoded_input_variables_at_configured_limit() {
-        assert_eq!(parse_urlencoded("a=1&b=2&c=3", 2, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut Vec::new()).len(), 2);
+        let mut diagnostics = Vec::new();
+        let parsed = parse_urlencoded("a=1&&b=2&c=3", 2, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+        assert_eq!(diagnostics[0].message, "Input variables exceeded 2. To increase the limit change max_input_vars in php.ini.");
+    }
+
+    #[test]
+    fn multipart_input_variable_limit_warns_and_keeps_preceding_fields() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"first\"\r\n\r\none\r\n--Limit\r\nContent-Disposition: form-data; name=\"second\"\r\n\r\ntwo\r\n--Limit--\r\n";
+        let mut diagnostics = Vec::new();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, true, DEFAULT_MAX_FILE_UPLOADS, 1 + DEFAULT_MAX_FILE_UPLOADS, 1, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics).unwrap();
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].0, "first");
+        assert!(files.is_empty());
+        assert!(temp_files.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
+        assert_eq!(diagnostics[0].message, "Input variables exceeded 1. To increase the limit change max_input_vars in php.ini.");
+    }
+
+    #[test]
+    fn multipart_limit_counts_fields_not_files_and_keeps_parsing_files() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"first\"\r\n\r\none\r\n--Limit\r\nContent-Disposition: form-data; name=\"second\"\r\n\r\ntwo\r\n--Limit\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile bytes\r\n--Limit--\r\n";
+        let mut diagnostics = Vec::new();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, true, 1, 3, 1, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics).unwrap();
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].0, "first");
+        assert_eq!(files.len(), 1);
+        assert_eq!(temp_files.len(), 1);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "Input variables exceeded 1. To increase the limit change max_input_vars in php.ini.");
+        for path in temp_files { let _ = std::fs::remove_file(path); }
+    }
+
+    #[test]
+    fn multipart_max_file_uploads_skips_excess_nonempty_files() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"empty\"; filename=\"\"\r\nContent-Type: text/plain\r\n\r\n\r\n--Limit\r\nContent-Disposition: form-data; name=\"first\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\na\r\n--Limit\r\nContent-Disposition: form-data; name=\"second\"; filename=\"b.txt\"\r\nContent-Type: text/plain\r\n\r\nb\r\n--Limit--\r\n";
+        let mut diagnostics = Vec::new();
+        let (_, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, true, 1, 3, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|(name, _)| name == "empty"));
+        assert!(files.iter().any(|(name, _)| name == "first"));
+        assert!(!files.iter().any(|(name, _)| name == "second"));
+        assert_eq!(temp_files.len(), 1);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "Maximum number of allowable file uploads has been exceeded");
+        for path in temp_files { let _ = std::fs::remove_file(path); }
+    }
+
+    #[test]
+    fn file_uploads_off_skips_file_parts_but_keeps_form_fields() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nhello\r\n--Limit\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile bytes\r\n--Limit--\r\n";
+        let mut diagnostics = Vec::new();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, false, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics).unwrap();
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].0, "title");
+        assert!(files.is_empty());
+        assert!(temp_files.is_empty());
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn multipart_body_parts_limit_warns_and_stops_after_limit() {
+        let body = b"--Limit\r\nContent-Disposition: form-data; name=\"first\"\r\n\r\none\r\n--Limit\r\nContent-Disposition: form-data; name=\"second\"\r\n\r\ntwo\r\n--Limit--\r\n";
+        let mut diagnostics = Vec::new();
+        let (post, files, temp_files) = parse_post_data("multipart/form-data; boundary=Limit", body, 100, true, DEFAULT_MAX_FILE_UPLOADS, 1, DEFAULT_MAX_INPUT_VARS, DEFAULT_MAX_INPUT_NESTING_LEVEL, &mut diagnostics).unwrap();
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].0, "first");
+        assert!(files.is_empty());
+        assert!(temp_files.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "Multipart body parts limit exceeded 1. To increase the limit change max_multipart_body_parts in php.ini.");
+    }
+
+    #[test]
+    fn multipart_body_parts_limit_defaults_from_input_and_upload_limits() {
+        assert_eq!(parse_multipart_body_limit(None).unwrap(), None);
+        assert_eq!(parse_multipart_body_limit(Some("-1")).unwrap(), None);
+        assert_eq!(parse_multipart_body_limit(Some("0")).unwrap(), Some(0));
+        assert_eq!(parse_multipart_body_limit(Some("17")).unwrap(), Some(17));
+        assert!(parse_multipart_body_limit(Some("-2")).is_err());
     }
 
     #[test]
@@ -437,7 +536,7 @@
         std::fs::write(fixture.path().join("index.php"), "<?php $last = error_get_last(); echo $_GET['root']['a'] ?? 'missing', ':', $last['message'] ?? 'no-warning';").unwrap();
         let request = |query: &str| execute_request_with_context(
             fixture.path(), "/", query, "GET", "HTTP/1.1", "", "localhost", &[], &[],
-            ExecutionLimits::default(), None, false, DisplayErrors::Off, MAX_BODY_BYTES, DEFAULT_MAX_INPUT_VARS, 1,
+            ExecutionLimits::default(), None, false, DisplayErrors::Off, MAX_BODY_BYTES, true, DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS + DEFAULT_MAX_FILE_UPLOADS, DEFAULT_MAX_INPUT_VARS, 1,
         ).unwrap();
         assert_eq!(request("root[a]=leaf").output, b"leaf:no-warning");
         assert_eq!(request("root[a][b]=leaf").output, b"missing:Input variable nesting level exceeded 1. To increase the limit change max_input_nesting_level in php.ini.");

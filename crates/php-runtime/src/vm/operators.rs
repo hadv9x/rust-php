@@ -63,7 +63,7 @@ fn loose_string_equal(left: &str, right: &str) -> bool {
 }
 
 /// PHP 8-style loose equality for the runtime's supported values.
-fn loose_equal(left: &Value, right: &Value) -> bool {
+pub(super) fn loose_equal(left: &Value, right: &Value) -> bool {
     let left = left.dereference();
     let right = right.dereference();
     match (&left, &right) {
@@ -172,7 +172,7 @@ pub(super) fn apply_binary(operation: &Op, left: Value, right: Value) -> Result<
     Ok(value)
 }
 
-fn strict_identical(left: &Value, right: &Value) -> bool {
+pub(super) fn strict_identical(left: &Value, right: &Value) -> bool {
     let left = left.dereference();
     let right = right.dereference();
     match (&left, &right) {
@@ -186,6 +186,8 @@ fn strict_identical(left: &Value, right: &Value) -> bool {
         }),
         (Value::Object(a), Value::Object(b)) => std::rc::Rc::ptr_eq(a, b),
         (Value::Closure(a), Value::Closure(b)) => std::rc::Rc::ptr_eq(a, b),
+        (Value::Generator(a), Value::Generator(b)) => std::rc::Rc::ptr_eq(a, b),
+        (Value::Stream(a), Value::Stream(b)) => std::rc::Rc::ptr_eq(a, b),
         _ => false,
     }
 }

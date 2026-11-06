@@ -284,6 +284,23 @@ fn json_decode_and_validate_accept_only_json_whitespace() {
 }
 
 #[test]
+fn json_decode_and_validate_count_empty_nested_containers_toward_depth() {
+    let source = r#"<?php
+        $oneLevel = json_decode('[[]]', depth: 1);
+        echo ($oneLevel === null), ':', json_last_error(), ':';
+        echo json_decode('[[]]', depth: 2) !== null, ':', json_last_error(), ':';
+        echo json_validate('{"nested":{}}', depth: 1) ? 'valid' : 'invalid', ':', json_last_error(), ':';
+        echo json_validate('{"nested":{}}', depth: 2) ? 'valid' : 'invalid', ':', json_last_error(), "\n";
+        try { json_decode('{"nested":{}}', depth: 1, flags: JSON_THROW_ON_ERROR); }
+        catch (JsonException $error) { echo get_class($error), ':', $error->getCode(), ':', $error->getMessage(), "\n"; }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:0:invalid:1:valid:0\nJsonException:1:Maximum stack depth exceeded\n",
+    );
+}
+
+#[test]
 fn json_mismatched_closing_delimiters_use_state_mismatch_error() {
     let source = r#"<?php
         $inputs = [']', '[}', '{"value":]', '{"value":1]'];
@@ -456,6 +473,25 @@ fn json_decode_preserves_signed_integer_boundaries() {
         echo gettype($min), ':', gettype($below), ':', $belowString, ':', gettype($max), ':', $above, ':', is_string($above), "\n";
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "integer:double:-9223372036854775809:integer:9223372036854775808:1\n");
+}
+
+#[test]
+fn json_decode_classifies_unpaired_utf16_surrogates_and_throw_mode() {
+    let source = r#"<?php
+        $high = json_decode('"\uD800"');
+        echo $high === null, ':', json_last_error(), ':', JSON_ERROR_UTF16, ':', json_last_error_msg(), "\n";
+        $low = json_decode('"\uDC00"');
+        echo $low === null, ':', json_last_error(), "\n";
+        $badPair = json_decode('"\uD800\u0041"');
+        echo $badPair === null, ':', json_last_error(), "\n";
+        echo json_decode('"\uD83D\uDE80"'), ':', json_last_error(), "\n";
+        try { json_decode('"\uD800"', flags: JSON_THROW_ON_ERROR); }
+        catch (JsonException $error) { echo $error->getCode(), ':', $error->getMessage(), "\n"; }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:10:10:Single unpaired UTF-16 surrogate in unicode escape\n1:10\n1:10\n🚀:0\n10:Single unpaired UTF-16 surrogate in unicode escape\n"
+    );
 }
 
 #[test]

@@ -588,20 +588,37 @@ pub(super) fn callback_call(callback: Value, arguments: Value, strict_types: boo
     match callback {
         Value::String(name) => {
             if let Some((class_name, method)) = name.split_once("::") {
-                Ok((
-                    Op::CallStaticMethod(class_name.to_ascii_lowercase(), method.to_ascii_lowercase(), 1,
-                        vec![None], vec![None], vec![true], None, strict_types),
-                    vec![arguments],
-                ))
+                Ok((Op::CallStaticMethod(class_name.to_ascii_lowercase(), method.to_ascii_lowercase(), 1,
+                    vec![None], vec![None], vec![true], None, strict_types), vec![arguments]))
             } else {
                 Ok((Op::Call(name.to_ascii_lowercase(), vec![None], vec![None], vec![true], strict_types), vec![arguments]))
             }
         }
         Value::Closure(closure) => Ok((Op::CallValue(1, vec![None], vec![None], vec![true], strict_types), vec![Value::Closure(closure), arguments])),
         Value::Array(callable) => Ok((Op::CallValue(1, vec![None], vec![None], vec![true], strict_types), vec![Value::Array(callable), arguments])),
+        Value::Object(object) => Ok((Op::CallMethod("__invoke".into(), 1, vec![None], vec![None], vec![true], None, strict_types), vec![Value::Object(object), arguments])),
+        _ => Err("Callback must be callable".into()),
+    }
+}
+
+pub(super) fn callback_call_args(callback: Value, arguments: Vec<Value>, strict_types: bool) -> Result<(Op, Vec<Value>), String> {
+    match callback {
+        Value::String(name) => {
+            if let Some((class_name, method)) = name.split_once("::") {
+                Ok((
+                    Op::CallStaticMethod(class_name.to_ascii_lowercase(), method.to_ascii_lowercase(), arguments.len(),
+                        vec![None; arguments.len()], vec![None; arguments.len()], vec![false; arguments.len()], None, strict_types),
+                    arguments,
+                ))
+            } else {
+                Ok((Op::Call(name.to_ascii_lowercase(), vec![None; arguments.len()], vec![None; arguments.len()], vec![false; arguments.len()], strict_types), arguments))
+            }
+        }
+        Value::Closure(closure) => Ok((Op::CallValue(arguments.len(), vec![None; arguments.len()], vec![None; arguments.len()], vec![false; arguments.len()], strict_types), std::iter::once(Value::Closure(closure)).chain(arguments).collect())),
+        Value::Array(callable) => Ok((Op::CallValue(arguments.len(), vec![None; arguments.len()], vec![None; arguments.len()], vec![false; arguments.len()], strict_types), std::iter::once(Value::Array(callable)).chain(arguments).collect())),
         Value::Object(object) => Ok((
-            Op::CallMethod("__invoke".into(), 1, vec![None], vec![None], vec![true], None, strict_types),
-            vec![Value::Object(object), arguments],
+            Op::CallMethod("__invoke".into(), arguments.len(), vec![None; arguments.len()], vec![None; arguments.len()], vec![false; arguments.len()], None, strict_types),
+            std::iter::once(Value::Object(object)).chain(arguments).collect(),
         )),
         _ => Err("Callback must be callable".into()),
     }
@@ -643,6 +660,17 @@ pub(super) fn execute_instruction(
             } else {
                 // Unqualified names inside a namespace may fall back to a global function or builtin.
                 let fallback_name = name.rsplit('\\').next().unwrap_or(name);
+                if fallback_name.eq_ignore_ascii_case("exit") || fallback_name.eq_ignore_ascii_case("die") {
+                    let status = if arguments.is_empty() {
+                        Value::Integer(0)
+                    } else {
+                        let (arguments, _) = super::builtin_arguments::bind("exit", arguments, &by_reference, &argument_names)?;
+                        arguments.into_iter().next().ok_or("Invalid exit argument binding")?
+                    };
+                    apply_exit_status(status, output, global_variables, *strict_types, functions, classes, static_properties, steps)?;
+                    stack.push(Value::Null);
+                    return Ok(true);
+                }
                 if functions.contains_key(fallback_name) {
                     let result = invoke_with_references(fallback_name, arguments, &by_reference, &argument_names, *strict_types, variables, bindings, global_variables, global_scope, frame_id, functions, classes, static_properties, output, steps)?;
                     stack.push(result);
@@ -759,6 +787,76 @@ pub(super) fn execute_instruction(
                     stack.push(Value::Integer(previous));
                     return Ok(true);
                 }
+                if fallback_name.eq_ignore_ascii_case("set_error_handler") {
+                    if arguments.is_empty() || arguments.len() > 2 {
+                        return Err("ArgumentCountError:set_error_handler() expects 1 or 2 arguments".into());
+                    }
+                    let handler = if matches!(arguments[0].dereference(), Value::Null) {
+                        None
+                    } else {
+                        if !callable_status(&arguments[0], false, functions, classes).0 {
+                            return Err("TypeError:set_error_handler(): Argument #1 ($callback) must be a valid callback".into());
+                        }
+                        Some(arguments[0].clone())
+                    };
+                    let mask = arguments.get(1).map(Value::number).unwrap_or(32767.0) as i64;
+                    let previous = global_variables.error_handler.clone().unwrap_or(Value::Null);
+                    global_variables.error_handler_stack.push((global_variables.error_handler.clone(), global_variables.error_handler_mask));
+                    global_variables.error_handler = handler;
+                    global_variables.error_handler_mask = mask;
+                    stack.push(previous);
+                    return Ok(true);
+                }
+                if fallback_name.eq_ignore_ascii_case("restore_error_handler") {
+                    if !arguments.is_empty() { return Err("ArgumentCountError:restore_error_handler() expects exactly 0 arguments".into()); }
+                    if let Some((previous, previous_mask)) = global_variables.error_handler_stack.pop() {
+                        global_variables.error_handler = previous;
+                        global_variables.error_handler_mask = previous_mask;
+                    }
+                    stack.push(Value::Bool(true));
+                    return Ok(true);
+                }
+                if fallback_name.eq_ignore_ascii_case("trigger_error") || fallback_name.eq_ignore_ascii_case("user_error") {
+                    if arguments.is_empty() || arguments.len() > 2 {
+                        return Err("ArgumentCountError:trigger_error() expects 1 or 2 arguments".into());
+                    }
+                    let message = match arguments[0].dereference() {
+                        Value::String(message) => message,
+                        other => return Err(format!("TypeError:trigger_error(): Argument #1 ($message) must be of type string, {} given", other.type_name())),
+                    };
+                    let error_type = arguments.get(1).map(Value::number).unwrap_or(1024.0) as i64;
+                    let level = match error_type {
+                        512 => crate::DiagnosticLevel::UserWarning,
+                        1024 => crate::DiagnosticLevel::UserNotice,
+                        16384 => crate::DiagnosticLevel::UserDeprecated,
+                        256 => {
+                            global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                level: crate::DiagnosticLevel::Deprecated,
+                                message: "Passing E_USER_ERROR to trigger_error() is deprecated since 8.4, throw an exception or call exit with a string message instead".into(),
+                                source_file: None,
+                                source_line: None,
+                                output_offset: output.len(),
+                            });
+                            global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                level: crate::DiagnosticLevel::Fatal,
+                                message,
+                                source_file: None,
+                                source_line: None,
+                                output_offset: output.len(),
+                            });
+                            global_variables.exit_code = 255;
+                            global_variables.exiting = true;
+                            stack.push(Value::Bool(true));
+                            return Ok(true);
+                        }
+                        _ => return Err("ValueError:trigger_error(): Argument #2 ($error_level) must be one of E_USER_ERROR, E_USER_WARNING, E_USER_NOTICE, or E_USER_DEPRECATED".into()),
+                    };
+                    global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                        level, message, source_file: None, source_line: None, output_offset: output.len(),
+                    });
+                    stack.push(Value::Bool(true));
+                    return Ok(true);
+                }
                 if fallback_name.eq_ignore_ascii_case("error_get_last") {
                     if !arguments.is_empty() { return Err("ArgumentCountError:error_get_last() expects exactly 0 arguments".into()); }
                     let value = global_variables.last_error.as_ref().map_or(Value::Null, |diagnostic| {
@@ -766,6 +864,11 @@ pub(super) fn execute_instruction(
                             (crate::ArrayKey::String("type".into()), Value::Integer(match diagnostic.level {
                                 crate::DiagnosticLevel::Warning => 2,
                                 crate::DiagnosticLevel::Deprecated => 8192,
+                                crate::DiagnosticLevel::Notice => 8,
+                                crate::DiagnosticLevel::UserWarning => 512,
+                                crate::DiagnosticLevel::UserDeprecated => 16384,
+                                crate::DiagnosticLevel::UserNotice => 1024,
+                                crate::DiagnosticLevel::Fatal => 256,
                             })),
                             (crate::ArrayKey::String("message".into()), Value::String(diagnostic.message.clone())),
                             (crate::ArrayKey::String("file".into()), Value::String(diagnostic.source_file.clone().unwrap_or_else(|| "Command line code".into()))),
@@ -1000,7 +1103,7 @@ pub(super) fn execute_instruction(
                         let function_name = if is_subclass { "is_subclass_of" } else { "is_a" };
                         let value = arguments.first().ok_or_else(|| format!("{function_name}() expects at least 2 arguments"))?.dereference();
                         let expected = arguments.get(1).ok_or_else(|| format!("{function_name}() expects at least 2 arguments"))?.show().trim_start_matches('\\').to_ascii_lowercase();
-                        let allow_string = arguments.get(2).is_some_and(Value::truthy);
+                        let allow_string = arguments.get(2).map(Value::truthy).unwrap_or(is_subclass);
                         let actual = match value {
                             Value::Object(object) => Some(object.borrow().class_name.to_ascii_lowercase()),
                             Value::Generator(_) => Some("generator".into()),
@@ -1150,7 +1253,20 @@ pub(super) fn execute_instruction(
                         }).collect();
                         stack.push(Value::from_array_entries(entries));
                     }
-                    "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" => {
+                    "scandir" => {
+                        stack.push(scandir_builtin(&arguments, global_variables)?);
+                    }
+                    "opendir" => stack.push(opendir_builtin(&arguments, global_variables)?),
+                    "readdir" => stack.push(readdir_builtin(&arguments, global_variables)?),
+                    "closedir" => stack.push(closedir_builtin(&arguments, global_variables)?),
+                    "rewinddir" => stack.push(rewinddir_builtin(&arguments, global_variables)?),
+                    "stat" | "lstat" => {
+                        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", fallback_name, arguments.len())); }
+                        let filename = arguments[0].show();
+                        stack.push(file_stat_value(fallback_name, &filename, global_variables));
+                    }
+                    "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "realpath" => {
+                        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", fallback_name, arguments.len())); }
                         let path = arguments.first().ok_or_else(|| format!("{}() expects a filename", fallback_name))?.show();
                         let path_ref = filesystem_path(global_variables, std::path::Path::new(&path), false);
                         let result = match path_ref.as_deref() {
@@ -1165,6 +1281,13 @@ pub(super) fn execute_instruction(
                             "is_executable" => Value::Bool(filesystem_access(path_ref, FilesystemAccess::Execute)),
                             "filesize" => std::fs::metadata(path_ref).ok().and_then(|metadata| i64::try_from(metadata.len()).ok())
                                 .map(Value::Integer).unwrap_or(Value::Bool(false)),
+                            "filemtime" | "fileatime" => file_timestamp_value(fallback_name, &path, Some(path_ref), global_variables),
+                            "filectime" => file_stat_field_value(fallback_name, &path, "ctime", global_variables),
+                            "fileinode" => file_stat_field_value(fallback_name, &path, "ino", global_variables),
+                            "fileowner" => file_stat_field_value(fallback_name, &path, "uid", global_variables),
+                            "filegroup" => file_stat_field_value(fallback_name, &path, "gid", global_variables),
+                            "fileperms" => file_stat_field_value(fallback_name, &path, "mode", global_variables),
+                            "filetype" => filetype_value(fallback_name, &path, global_variables),
                             "realpath" => Value::String(path_ref.to_string_lossy().into_owned()),
                             _ => unreachable!(),
                             },
@@ -1221,6 +1344,36 @@ pub(super) fn execute_instruction(
                             Some(value) => date_timestamp(value)?,
                         };
                         stack.push(Value::String(format_php_date(&format, timestamp, fallback_name.eq_ignore_ascii_case("gmdate"))?));
+                    }
+                    "strftime" | "gmstrftime" => {
+                        if arguments.is_empty() || arguments.len() > 2 { return Err(format!("{fallback_name}() expects 1 or 2 arguments, {} given", arguments.len())); }
+                        let function = fallback_name.to_ascii_lowercase();
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: format!("Function {function}() is deprecated since 8.1, use IntlDateFormatter::format() instead"),
+                            source_file: None,
+                            source_line: None,
+                            output_offset: output.len(),
+                        });
+                        let format = arguments[0].show();
+                        let timestamp = match arguments.get(1) {
+                            None | Some(Value::Null) => unix_time().0 as i64,
+                            Some(value) => date_timestamp(value)?,
+                        };
+                        let utc = function == "gmstrftime";
+                        stack.push(format_strftime(&format, timestamp, utc));
+                    }
+                    #[cfg(unix)]
+                    "strptime" => {
+                        if arguments.len() != 2 { return Err(format!("strptime() expects exactly 2 arguments, {} given", arguments.len())); }
+                        global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                            level: crate::DiagnosticLevel::Deprecated,
+                            message: "Function strptime() is deprecated since 8.2, use date_parse_from_format() (for locale-independent parsing), or IntlDateFormatter::parse() (for locale-dependent parsing) instead".into(),
+                            source_file: None,
+                            source_line: None,
+                            output_offset: output.len(),
+                        });
+                        stack.push(parse_strptime(&arguments[0].show(), &arguments[1].show()));
                     }
                     "getdate" => {
                         if arguments.len() > 1 { return Err(format!("getdate() expects at most 1 argument, {} given", arguments.len())); }
@@ -1368,6 +1521,18 @@ pub(super) fn execute_instruction(
                             stack.push(Value::Bool(false));
                         }
                     }
+                    "copy" => {
+                        stack.push(copy_value(&arguments, global_variables, output)?);
+                    }
+                    "rename" => {
+                        stack.push(rename_value(&arguments, global_variables, output)?);
+                    }
+                    "mkdir" => {
+                        stack.push(mkdir_value(&arguments, global_variables, output)?);
+                    }
+                    "rmdir" => {
+                        stack.push(rmdir_value(&arguments, global_variables, output)?);
+                    }
                     "tempnam" => {
                         let directory = arguments.first().ok_or("tempnam() expects a directory")?.show();
                         let prefix = arguments.get(1).ok_or("tempnam() expects a prefix")?.show();
@@ -1387,6 +1552,15 @@ pub(super) fn execute_instruction(
                         let removed = filesystem_path(global_variables, std::path::Path::new(&path), false)
                             .is_some_and(|path| std::fs::remove_file(path).is_ok());
                         stack.push(Value::Bool(removed));
+                    }
+                    "touch" => {
+                        stack.push(touch_value(&arguments, global_variables, output)?);
+                    }
+                    "chmod" => {
+                        stack.push(chmod_value(&arguments, global_variables, output)?);
+                    }
+                    "disk_free_space" | "diskfreespace" | "disk_total_space" => {
+                        stack.push(disk_space_value(fallback_name, &arguments, global_variables, output)?);
                     }
                     "fopen" => {
                         let path = arguments.first().ok_or("fopen() expects at least 2 arguments")?.show();
@@ -1523,7 +1697,55 @@ pub(super) fn execute_instruction(
                         }
                         stack.push(Value::String(current));
                     }
-                    "basename" | "dirname" | "pathinfo" | "strip_tags" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "count_chars" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" | "str_split" | "strpos" | "stripos" | "strrpos" | "strripos" | "substr_count" | "substr_compare" | "strtok" | "levenshtein" | "substr" | "substr_replace" | "explode" | "implode" | "str_getcsv" | "htmlspecialchars" | "htmlspecialchars_decode" | "nl2br" | "wordwrap" | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr" => {
+                    "parse_str" => {
+                        let (mut arguments, by_reference) = super::builtin_arguments::bind(
+                            fallback_name, arguments, &by_reference, &argument_names,
+                        )?;
+                        if arguments.len() != 2 { return Err(format!("ArgumentCountError:parse_str() expects exactly 2 arguments, {} given", arguments.len())); }
+                        coerce_stringable_builtin_args(fallback_name, &mut arguments, crate::string_builtins::string_argument_positions(fallback_name), functions, classes, static_properties, global_variables, output, steps)?;
+                        let target = by_reference.get(1).and_then(Option::as_ref)
+                            .ok_or("Error:parse_str(): Argument #2 ($result) cannot be passed by reference")?;
+                        let parsed = crate::string_builtins::call(fallback_name, &arguments)?;
+                        write_reference_argument(target, parsed, variables, bindings, global_variables, global_scope)?;
+                        stack.push(Value::Null);
+                    }
+                    "printf" | "vprintf" | "vsprintf" => {
+                        let (arguments, _) = super::builtin_arguments::bind(
+                            fallback_name, arguments, &by_reference, &argument_names,
+                        )?;
+                        let text = if fallback_name.eq_ignore_ascii_case("printf") {
+                            if arguments.is_empty() { return Err("ArgumentCountError:printf() expects at least 1 argument, 0 given".into()); }
+                            crate::string_builtins::format_values(&arguments[0].show(), &arguments[1..])?
+                        } else {
+                            let formatter = if fallback_name.eq_ignore_ascii_case("vprintf") { "vsprintf" } else { fallback_name };
+                            match crate::string_builtins::call(formatter, &arguments)? {
+                                Value::String(text) => text,
+                                _ => unreachable!("formatted string builtin returns a string"),
+                            }
+                        };
+                        if fallback_name.eq_ignore_ascii_case("vsprintf") {
+                            stack.push(Value::String(text));
+                        } else {
+                            let bytes = text.len();
+                            output.push_str(&text);
+                            stack.push(Value::Integer(bytes as i64));
+                        }
+                    }
+                    "fprintf" => {
+                        let (arguments, _) = super::builtin_arguments::bind(
+                            fallback_name, arguments, &by_reference, &argument_names,
+                        )?;
+                        if arguments.len() < 2 { return Err("ArgumentCountError:fprintf() expects at least 2 arguments".into()); }
+                        let Value::Stream(stream) = arguments[0].dereference() else { return Err("fprintf() expects a stream resource".into()); };
+                        let text = crate::string_builtins::format_values(&arguments[1].show(), &arguments[2..])?;
+                        let written = stream.borrow_mut().write(text.as_bytes()).map_err(|error| format!("fprintf(): {error}"))?;
+                        stack.push(Value::Integer(written as i64));
+                    }
+                    "sprintf" => {
+                        coerce_stringable_builtin_args(fallback_name, &mut arguments, crate::string_builtins::string_argument_positions(fallback_name), functions, classes, static_properties, global_variables, output, steps)?;
+                        stack.push(crate::string_builtins::call(fallback_name, &arguments)?);
+                    }
+                    "basename" | "dirname" | "pathinfo" | "strip_tags" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "count_chars" | "ord" | "crc32" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" | "str_split" | "strpos" | "stripos" | "strrpos" | "strripos" | "substr_count" | "substr_compare" | "strtok" | "levenshtein" | "substr" | "substr_replace" | "explode" | "implode" | "str_getcsv" | "htmlspecialchars" | "htmlspecialchars_decode" | "nl2br" | "wordwrap" | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr" => {
                         coerce_stringable_builtin_args(fallback_name, &mut arguments, crate::string_builtins::string_argument_positions(fallback_name), functions, classes, static_properties, global_variables, output, steps)?;
                         let result = match fallback_name.to_ascii_lowercase().as_str() {
                             "hex2bin" => hex2bin_with_diagnostic(&arguments, global_variables)?,
@@ -1612,9 +1834,22 @@ pub(super) fn execute_instruction(
                             value, functions, classes, static_properties, global_variables, output, steps,
                         );
                         crate::array_builtins::call(fallback_name, array_arguments, classes, &mut unused_callback, &mut unused_walk, &mut stringify, &mut array_diagnostics)
+                    } else if matches!(fallback_name, "array_diff" | "array_intersect" | "array_diff_assoc" | "array_intersect_assoc" | "array_diff_key" | "array_intersect_key") {
+                        let mut unused_callback = |_: &Value, _: Vec<Value>| Err("Unexpected positional callback for array diff/intersection".into());
+                        let mut stringify = |value: &Value| super::objects::stringify(
+                            value, functions, classes, static_properties, global_variables, output, steps,
+                        );
+                        crate::array_builtins::call(fallback_name, array_arguments, classes, &mut unused_callback, &mut unused_walk, &mut stringify, &mut array_diagnostics)
                     } else {
                         let mut reference_warning_emitted = false;
+                        let runtime_state = std::cell::RefCell::new((
+                            &mut *static_properties,
+                            &mut *global_variables,
+                            &mut *output,
+                            &mut *steps,
+                        ));
                         let mut callback_invoker = |callback: &Value, callback_args: Vec<Value>| {
+                            let (static_properties, global_variables, output, steps) = &mut *runtime_state.borrow_mut();
                             if !reference_warning_emitted && callable_parameter_references(callback, functions, classes).iter().any(|by_ref| *by_ref) {
                                 global_variables.report_diagnostic(crate::RuntimeDiagnostic {
                                     level: crate::DiagnosticLevel::Warning,
@@ -1628,8 +1863,14 @@ pub(super) fn execute_instruction(
                                 static_properties, global_variables, output, steps,
                             )
                         };
-                        let mut stringify = |value: &Value| Ok(value.show());
-                        crate::array_builtins::call(fallback_name, array_arguments, classes, &mut callback_invoker, &mut unused_walk, &mut stringify, &mut array_diagnostics)
+                        let mut stringify = |value: &Value| {
+                            let (static_properties, global_variables, output, steps) = &mut *runtime_state.borrow_mut();
+                            super::objects::stringify(value, functions, classes, static_properties, global_variables, output, steps)
+                        };
+                        let result = crate::array_builtins::call(fallback_name, array_arguments, classes, &mut callback_invoker, &mut unused_walk, &mut stringify, &mut array_diagnostics);
+                        drop(callback_invoker);
+                        drop(runtime_state);
+                        result
                     }
                 };
                 for diagnostic in array_diagnostics { global_variables.report_diagnostic(diagnostic); }
@@ -3680,6 +3921,212 @@ fn json_error_message(code: i64) -> &'static str {
 #[derive(Clone, Copy)]
 enum FilesystemAccess { Read, Write, Execute }
 
+fn file_timestamp_value(name: &str, filename: &str, path: Option<&std::path::Path>, globals: &mut GlobalVariables) -> Value {
+    let timestamp = path.and_then(|path| std::fs::metadata(path).ok()).and_then(|metadata| {
+        if name.eq_ignore_ascii_case("filemtime") { metadata.modified().ok() } else { metadata.accessed().ok() }
+    }).and_then(|time| match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_secs()).ok(),
+        Err(error) => i64::try_from(error.duration().as_secs()).ok().and_then(i64::checked_neg),
+    });
+    if let Some(timestamp) = timestamp { return Value::Integer(timestamp); }
+    globals.report_diagnostic(crate::RuntimeDiagnostic {
+        level: crate::DiagnosticLevel::Warning,
+        message: format!("{}(): stat failed for {filename}", name),
+        source_file: None,
+        source_line: None,
+        output_offset: 0,
+    });
+    Value::Bool(false)
+}
+
+fn file_stat_value(name: &str, filename: &str, globals: &mut GlobalVariables) -> Value {
+    let input_path = std::path::Path::new(filename);
+    let resolved = if name.eq_ignore_ascii_case("lstat") {
+        filesystem_lstat_path(globals, input_path)
+    } else {
+        filesystem_path(globals, input_path, false)
+    };
+    let Some(resolved) = resolved else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+            message: format!("{}(): stat failed for {filename}", name), source_file: None, source_line: None, output_offset: 0 });
+        return Value::Bool(false);
+    };
+    let metadata = if name.eq_ignore_ascii_case("lstat") { std::fs::symlink_metadata(&resolved) } else { std::fs::metadata(&resolved) };
+    let Ok(metadata) = metadata else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+            message: format!("{}(): stat failed for {filename}", name), source_file: None, source_line: None, output_offset: 0 });
+        return Value::Bool(false);
+    };
+    #[cfg(unix)]
+    let (dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks) = {
+        use std::os::unix::fs::MetadataExt;
+        (metadata.dev() as i64, metadata.ino() as i64, metadata.mode() as i64, metadata.nlink() as i64,
+         metadata.uid() as i64, metadata.gid() as i64, metadata.rdev() as i64, metadata.size() as i64,
+         metadata.atime(), metadata.mtime(), metadata.ctime(), metadata.blksize() as i64, metadata.blocks() as i64)
+    };
+    #[cfg(not(unix))]
+    let (dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks) = {
+        let timestamp = |time: std::io::Result<std::time::SystemTime>| -> i64 {
+            time.ok().and_then(|time| match time.duration_since(std::time::UNIX_EPOCH) {
+                Ok(duration) => i64::try_from(duration.as_secs()).ok(),
+                Err(error) => i64::try_from(error.duration().as_secs()).ok().and_then(i64::checked_neg),
+            }).unwrap_or(0)
+        };
+        let file_type = metadata.file_type();
+        let type_bits = if file_type.is_dir() { 0o040000 } else if file_type.is_symlink() { 0o120000 } else { 0o100000 };
+        let readonly = metadata.permissions().readonly();
+        (0, 0, type_bits | if readonly { 0o444 } else { 0o666 }, 1, 0, 0, 0, metadata.len() as i64,
+         timestamp(metadata.accessed()), timestamp(metadata.modified()), timestamp(metadata.created()), 0, 0)
+    };
+    let values = [dev, ino, mode, nlink, uid, gid, rdev, size, atime, mtime, ctime, blksize, blocks];
+    let names = ["dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize", "blocks"];
+    let mut entries = Vec::with_capacity(26);
+    for (index, value) in values.iter().copied().enumerate() {
+        entries.push((ArrayKey::Integer(index as i64), Value::Integer(value)));
+    }
+    for (field, value) in names.into_iter().zip(values) {
+        entries.push((ArrayKey::String(field.into()), Value::Integer(value)));
+    }
+    Value::from_array_entries(entries)
+}
+
+fn file_stat_field_value(name: &str, filename: &str, field: &str, globals: &mut GlobalVariables) -> Value {
+    file_stat_value(name, filename, globals).array_get(&ArrayKey::String(field.into())).unwrap_or(Value::Bool(false))
+}
+
+fn filetype_value(name: &str, filename: &str, globals: &mut GlobalVariables) -> Value {
+    let mode = file_stat_field_value(name, filename, "mode", globals);
+    let mode = match mode { Value::Integer(mode) => mode, _ => return Value::Bool(false) };
+    let kind = match mode & 0o170000 {
+        0o0100000 => "file", 0o0040000 => "dir", 0o0120000 => "link", 0o0060000 => "block",
+        0o0020000 => "char", 0o0010000 => "fifo", 0o0140000 => "socket", _ => "unknown",
+    };
+    Value::String(kind.into())
+}
+
+fn scandir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.is_empty() { return Err("ArgumentCountError:scandir() expects at least 1 argument, 0 given".into()); }
+    if arguments.len() > 3 { return Err(format!("ArgumentCountError:scandir() expects at most 3 arguments, {} given", arguments.len())); }
+    if let Some(context) = arguments.get(2).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:scandir(): Argument #3 ($context) must be of type ?resource, {} given", context.type_name()));
+    }
+    let directory = arguments[0].show();
+    let sorting_order = arguments.get(1).map_or(0, |value| value.number() as i64);
+    let resolved = filesystem_path(globals, std::path::Path::new(&directory), false);
+    let entries = resolved.and_then(|path| std::fs::read_dir(path).ok());
+    let Some(entries) = entries else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+            message: format!("scandir(): failed to open directory {directory}"), source_file: None, source_line: None, output_offset: 0 });
+        return Ok(Value::Bool(false));
+    };
+    let mut names = vec![".".to_string(), "..".to_string()];
+    for entry in entries {
+        match entry {
+            Ok(entry) => names.push(entry.file_name().to_string_lossy().into_owned()),
+            Err(_) => {
+                globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+                    message: format!("scandir(): failed to read directory {directory}"), source_file: None, source_line: None, output_offset: 0 });
+                return Ok(Value::Bool(false));
+            }
+        }
+    }
+    match sorting_order {
+        0 => names.sort(),
+        1 => names.sort_by(|left, right| right.cmp(left)),
+        _ => {}
+    }
+    Ok(Value::from_array_entries(names.into_iter().enumerate()
+        .map(|(index, name)| (ArrayKey::Integer(index as i64), Value::String(name))).collect()))
+}
+
+fn opendir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.is_empty() { return Err("ArgumentCountError:opendir() expects at least 1 argument, 0 given".into()); }
+    if arguments.len() > 2 { return Err(format!("ArgumentCountError:opendir() expects at most 2 arguments, {} given", arguments.len())); }
+    if let Some(context) = arguments.get(1).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:opendir(): Argument #2 ($context) must be of type ?resource, {} given", context.type_name()));
+    }
+    let directory = arguments[0].show();
+    let Some(path) = filesystem_path(globals, std::path::Path::new(&directory), false) else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+            message: format!("opendir({directory}): failed to open directory"), source_file: None, source_line: None, output_offset: 0 });
+        return Ok(Value::Bool(false));
+    };
+    let Ok(entries) = std::fs::read_dir(&path) else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+            message: format!("opendir({directory}): failed to open directory"), source_file: None, source_line: None, output_offset: 0 });
+        return Ok(Value::Bool(false));
+    };
+    let mut names = vec![".".to_string(), "..".to_string()];
+    for entry in entries {
+        match entry {
+            Ok(entry) => names.push(entry.file_name().to_string_lossy().into_owned()),
+            Err(_) => {
+                globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Warning,
+                    message: format!("opendir({directory}): failed to read directory"), source_file: None, source_line: None, output_offset: 0 });
+                return Ok(Value::Bool(false));
+            }
+        }
+    }
+    let handle = Value::Stream(std::rc::Rc::new(std::cell::RefCell::new(crate::PhpStream::directory(path, names))));
+    globals.last_directory_handle = Some(handle.clone());
+    Ok(handle)
+}
+
+fn directory_handle(arguments: &[Value], globals: &mut GlobalVariables, function: &str) -> Result<Option<std::rc::Rc<std::cell::RefCell<crate::PhpStream>>>, String> {
+    if arguments.first().is_some_and(|value| matches!(value.dereference(), Value::Null)) {
+        globals.report_diagnostic(crate::RuntimeDiagnostic { level: crate::DiagnosticLevel::Deprecated,
+            message: format!("Passing null to {function}() is deprecated, instead the last opened directory stream should be provided"),
+            source_file: None, source_line: None, output_offset: 0 });
+    }
+    let explicit = arguments.first().filter(|value| !matches!(value.dereference(), Value::Null));
+    let handle = explicit.cloned().or_else(|| globals.last_directory_handle.clone());
+    let Some(handle) = handle else { return Ok(None); };
+    let Value::Stream(stream) = handle.dereference() else {
+        return Err(format!("TypeError:{function}(): Argument #1 ($dir_handle) must be of type ?resource, {} given", handle.type_name()));
+    };
+    if !stream.borrow().is_open() || !stream.borrow().is_directory() {
+        return Err(format!("TypeError:{function}(): supplied resource is not a valid directory resource"));
+    }
+    Ok(Some(stream))
+}
+
+fn readdir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() > 1 { return Err(format!("ArgumentCountError:readdir() expects at most 1 argument, {} given", arguments.len())); }
+    let Some(handle) = directory_handle(arguments, globals, "readdir")? else { return Ok(Value::Bool(false)); };
+    let next = handle.borrow_mut().read_directory();
+    match next {
+        Ok(Some(name)) => Ok(Value::String(name)),
+        Ok(None) => Ok(Value::Bool(false)),
+        Err(error) => Err(format!("readdir(): {error}")),
+    }
+}
+
+fn closedir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() > 1 { return Err(format!("ArgumentCountError:closedir() expects at most 1 argument, {} given", arguments.len())); }
+    let Some(handle) = directory_handle(arguments, globals, "closedir")? else {
+        return Err("TypeError:closedir(): Argument #1 ($dir_handle) must be of type ?resource, null given".into());
+    };
+    handle.borrow_mut().close().map_err(|error| format!("closedir(): {error}"))?;
+    if let Some(Value::Stream(last)) = globals.last_directory_handle.as_ref() {
+        if std::rc::Rc::ptr_eq(last, &handle) { globals.last_directory_handle = None; }
+    }
+    Ok(Value::Null)
+}
+
+fn rewinddir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() > 1 { return Err(format!("ArgumentCountError:rewinddir() expects at most 1 argument, {} given", arguments.len())); }
+    let Some(handle) = directory_handle(arguments, globals, "rewinddir")? else {
+        return Err("TypeError:rewinddir(): Argument #1 ($dir_handle) must be of type ?resource, null given".into());
+    };
+    let path = handle.borrow().directory_path().map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "TypeError:rewinddir(): supplied resource is not a valid directory resource".to_string())?;
+    let mut entries = vec![".".to_string(), "..".to_string()];
+    let read_dir = std::fs::read_dir(path).map_err(|error| format!("rewinddir(): {error}"))?;
+    for entry in read_dir { entries.push(entry.map_err(|error| format!("rewinddir(): {error}"))?.file_name().to_string_lossy().into_owned()); }
+    handle.borrow_mut().rewind_directory(entries).map_err(|error| format!("rewinddir(): {error}"))?;
+    Ok(Value::Null)
+}
+
 /// Resolve PHP filesystem paths against the server's application root when
 /// the request installed a sandbox root. CLI executions do not set one.
 fn filesystem_path(global_variables: &GlobalVariables, path: &std::path::Path, allow_create: bool) -> Option<PathBuf> {
@@ -3693,6 +4140,18 @@ fn filesystem_path(global_variables: &GlobalVariables, path: &std::path::Path, a
     let name = candidate.file_name()?;
     let parent = candidate.parent()?.canonicalize().ok()?;
     parent.starts_with(&root).then(|| parent.join(name))
+}
+
+/// Resolve an lstat target without following the final path component, while
+/// still rejecting paths whose parent resolves outside the configured root.
+fn filesystem_lstat_path(global_variables: &GlobalVariables, path: &std::path::Path) -> Option<PathBuf> {
+    let Some(root) = global_variables.get("\0filesystem_root") else { return Some(path.to_path_buf()); };
+    let root = PathBuf::from(root.show()).canonicalize().ok()?;
+    let candidate = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+    let filename = candidate.file_name()?.to_os_string();
+    let parent = candidate.parent()?.canonicalize().ok()?;
+    if !parent.starts_with(&root) { return None; }
+    Some(parent.join(filename))
 }
 
 fn filesystem_lookup_path(
@@ -3835,6 +4294,41 @@ fn date_tm(timestamp: i64, utc: bool) -> Result<libc::tm, String> {
     };
     if result.is_null() { return Err("date/time value is out of range".into()); }
     Ok(unsafe { broken_down.assume_init() })
+}
+
+fn format_strftime(format: &str, timestamp: i64, utc: bool) -> Value {
+    if format.is_empty() { return Value::Bool(false); }
+    let Ok(format) = std::ffi::CString::new(format) else { return Value::Bool(false); };
+    let Ok(mut broken_down) = date_tm(timestamp, utc) else { return Value::Bool(false); };
+    let mut output = [0u8; 4096];
+    let length = unsafe {
+        libc::strftime(output.as_mut_ptr().cast(), output.len(), format.as_ptr(), &mut broken_down)
+    };
+    if length == 0 { Value::Bool(false) }
+    else { Value::String(String::from_utf8_lossy(&output[..length]).into_owned()) }
+}
+
+#[cfg(unix)]
+fn parse_strptime(input: &str, format: &str) -> Value {
+    let (Ok(input_c), Ok(format_c)) = (std::ffi::CString::new(input), std::ffi::CString::new(format)) else {
+        return Value::Bool(false);
+    };
+    let mut parsed = unsafe { std::mem::MaybeUninit::<libc::tm>::zeroed().assume_init() };
+    let remainder = unsafe { libc::strptime(input_c.as_ptr(), format_c.as_ptr(), &mut parsed) };
+    if remainder.is_null() { return Value::Bool(false); }
+    let remaining = unsafe { remainder.offset_from(input_c.as_ptr()) }.max(0) as usize;
+    let unparsed = input.get(remaining..).unwrap_or("");
+    Value::from_array_entries(vec![
+        (ArrayKey::String("tm_sec".into()), Value::Integer(parsed.tm_sec as i64)),
+        (ArrayKey::String("tm_min".into()), Value::Integer(parsed.tm_min as i64)),
+        (ArrayKey::String("tm_hour".into()), Value::Integer(parsed.tm_hour as i64)),
+        (ArrayKey::String("tm_mday".into()), Value::Integer(parsed.tm_mday as i64)),
+        (ArrayKey::String("tm_mon".into()), Value::Integer(parsed.tm_mon as i64)),
+        (ArrayKey::String("tm_year".into()), Value::Integer(parsed.tm_year as i64)),
+        (ArrayKey::String("tm_wday".into()), Value::Integer(parsed.tm_wday as i64)),
+        (ArrayKey::String("tm_yday".into()), Value::Integer(parsed.tm_yday as i64)),
+        (ArrayKey::String("unparsed".into()), Value::String(unparsed.to_string())),
+    ])
 }
 
 fn make_date_timestamp(parts: [i64; 6], utc: bool) -> Option<i64> {
@@ -4115,6 +4609,57 @@ fn coerce_stringable_builtin_args(
     Ok(())
 }
 
+pub(super) fn apply_exit_status(
+    status: Value,
+    output: &mut String,
+    global_variables: &mut GlobalVariables,
+    strict_types: bool,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let mut status = status.dereference();
+    if !strict_types {
+        if let Value::Object(object) = &status {
+            let class_name = object.borrow().class_name.clone();
+            status = match super::objects::stringify(
+                &status, functions, classes, static_properties, global_variables, output, steps,
+            ) {
+                Ok(string) => Value::String(string),
+                Err(error) if error.starts_with("Object of class ") => {
+                    return Err(format!(
+                        "TypeError:exit(): Argument #1 ($status) must be of type string|int, {class_name} given"
+                    ));
+                }
+                Err(error) if error.starts_with(super::THROWN_VALUE_PREFIX) => return Err(error),
+                Err(error) => return Err(format!("exit(): {error}")),
+            };
+        }
+    }
+    let status = match status {
+        Value::Integer(_) | Value::String(_) => status,
+        Value::Bool(value) if !strict_types => Value::Integer(i64::from(value)),
+        Value::Number(value) if !strict_types && value.is_finite() => Value::Integer(value.trunc() as i64),
+        value => {
+            return Err(format!(
+                "TypeError:exit(): Argument #1 ($status) must be of type string|int, {} given",
+                value.type_name()
+            ));
+        }
+    };
+    match status {
+        Value::Integer(code) => global_variables.exit_code = code as i32,
+        Value::String(message) => {
+            output.push_str(&message);
+            global_variables.exit_code = 0;
+        }
+        _ => unreachable!("exit status coercion only returns int|string"),
+    }
+    global_variables.exiting = true;
+    Ok(())
+}
+
 fn format_dump_value(
     value: &Value,
     depth: usize,
@@ -4299,13 +4844,264 @@ fn putenv_value(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Va
     Ok(Value::Bool(true))
 }
 
+fn copy_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.len() < 2 {
+        return Err(format!("copy() expects at least 2 arguments, {} given", arguments.len()));
+    }
+    if arguments.len() > 3 {
+        return Err(format!("copy() expects at most 3 arguments, {} given", arguments.len()));
+    }
+    if let Some(context) = arguments.get(2).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:copy(): Argument #3 ($context) must be of type ?resource, {} given", context.dereference().type_name()));
+    }
+    let from = arguments[0].show();
+    let to = arguments[1].show();
+    let copied = filesystem_lookup_path(globals, std::path::Path::new(&from), false, false)
+        .zip(filesystem_path(globals, std::path::Path::new(&to), true))
+        .is_some_and(|(from_path, to_path)| std::fs::copy(from_path, to_path).is_ok());
+    if !copied {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("copy(): Failed to copy {from} to {to}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(copied))
+}
+
+fn rename_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.len() < 2 {
+        return Err(format!("rename() expects at least 2 arguments, {} given", arguments.len()));
+    }
+    if arguments.len() > 3 {
+        return Err(format!("rename() expects at most 3 arguments, {} given", arguments.len()));
+    }
+    if let Some(context) = arguments.get(2).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:rename(): Argument #3 ($context) must be of type ?resource, {} given", context.dereference().type_name()));
+    }
+    let from = arguments[0].show();
+    let to = arguments[1].show();
+    let renamed = filesystem_lookup_path(globals, std::path::Path::new(&from), false, false)
+        .zip(filesystem_path(globals, std::path::Path::new(&to), true))
+        .is_some_and(|(from_path, to_path)| std::fs::rename(from_path, to_path).is_ok());
+    if !renamed {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("rename(): Failed to rename {from} to {to}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(renamed))
+}
+
+fn mkdir_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.is_empty() {
+        return Err("mkdir() expects at least 1 argument, 0 given".into());
+    }
+    if arguments.len() > 4 {
+        return Err(format!("mkdir() expects at most 4 arguments, {} given", arguments.len()));
+    }
+    if let Some(context) = arguments.get(3).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:mkdir(): Argument #4 ($context) must be of type ?resource, {} given", context.dereference().type_name()));
+    }
+    let directory = arguments[0].show();
+    let mode = arguments.get(1).map(|value| value.number() as i64).unwrap_or(0o777);
+    let recursive = arguments.get(2).is_some_and(Value::truthy);
+    let path = if recursive {
+        filesystem_recursive_create_path(globals, std::path::Path::new(&directory))
+    } else {
+        filesystem_path(globals, std::path::Path::new(&directory), true)
+    };
+    let created = path.is_some_and(|path| !path.exists() && create_directory(&path, (mode & 0o7777) as u32, recursive).is_ok());
+    if !created {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("mkdir(): Failed to create directory {directory}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(created))
+}
+
+fn rmdir_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.is_empty() {
+        return Err("rmdir() expects exactly 1 argument, 0 given".into());
+    }
+    if arguments.len() > 2 {
+        return Err(format!("rmdir() expects at most 2 arguments, {} given", arguments.len()));
+    }
+    if let Some(context) = arguments.get(1).filter(|value| !matches!(value.dereference(), Value::Null | Value::Stream(_))) {
+        return Err(format!("TypeError:rmdir(): Argument #2 ($context) must be of type ?resource, {} given", context.dereference().type_name()));
+    }
+    let directory = arguments[0].show();
+    let removed = filesystem_path(globals, std::path::Path::new(&directory), false)
+        .is_some_and(|path| std::fs::remove_dir(path).is_ok());
+    if !removed {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("rmdir(): Failed to remove directory {directory}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(removed))
+}
+
+fn touch_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.is_empty() { return Err("touch() expects at least 1 argument, 0 given".into()); }
+    if arguments.len() > 3 { return Err(format!("touch() expects at most 3 arguments, {} given", arguments.len())); }
+    let filename = arguments[0].show();
+    let now = std::time::SystemTime::now();
+    let to_time = |value: Option<&Value>, default: std::time::SystemTime| {
+        let Some(value) = value.filter(|value| !matches!(value.dereference(), Value::Null)) else { return Some(default); };
+        let seconds = value.number() as i64;
+        if seconds >= 0 {
+            std::time::SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds as u64))
+        } else {
+            std::time::SystemTime::UNIX_EPOCH.checked_sub(std::time::Duration::from_secs(seconds.unsigned_abs()))
+        }
+    };
+    let modified = to_time(arguments.get(1), now).ok_or_else(|| "touch(): timestamp is out of range".to_string())?;
+    let accessed = to_time(arguments.get(2), modified).ok_or_else(|| "touch(): timestamp is out of range".to_string())?;
+    let touched = filesystem_path(globals, std::path::Path::new(&filename), true).is_some_and(|path| {
+        let file = std::fs::OpenOptions::new().read(true).open(&path).or_else(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                std::fs::OpenOptions::new().write(true).create_new(true).open(path)
+            } else { Err(error) }
+        });
+        file.is_ok_and(|file| file.set_times(std::fs::FileTimes::new().set_modified(modified).set_accessed(accessed)).is_ok())
+    });
+    if !touched {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("touch(): Unable to create file {filename}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(touched))
+}
+
+fn chmod_value(arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.len() != 2 {
+        return Err(format!("chmod() expects exactly 2 arguments, {} given", arguments.len()));
+    }
+    let filename = arguments[0].show();
+    let mode = arguments[1].number() as u32;
+    let changed = filesystem_path(globals, std::path::Path::new(&filename), false).is_some_and(|path| {
+        let Ok(metadata) = std::fs::metadata(&path) else { return false; };
+        let mut permissions = metadata.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(mode & 0o7777);
+        }
+        #[cfg(windows)]
+        permissions.set_readonly(mode & 0o200 == 0);
+        std::fs::set_permissions(path, permissions).is_ok()
+    });
+    if !changed {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("chmod(): Operation not permitted: {filename}"),
+            source_file: None,
+            source_line: None,
+            output_offset: output.len(),
+        });
+    }
+    Ok(Value::Bool(changed))
+}
+
+fn disk_space_value(function: &str, arguments: &[Value], globals: &mut GlobalVariables, output: &str) -> Result<Value, String> {
+    if arguments.len() != 1 {
+        return Err(format!("{function}() expects exactly 1 argument, {} given", arguments.len()));
+    }
+    let directory = arguments[0].show();
+    let bytes = filesystem_path(globals, std::path::Path::new(&directory), false)
+        .and_then(|path| disk_space_bytes(&path, function.eq_ignore_ascii_case("disk_total_space")));
+    match bytes {
+        Some(bytes) => Ok(Value::Number(bytes)),
+        None => {
+            globals.report_diagnostic(crate::RuntimeDiagnostic {
+                level: crate::DiagnosticLevel::Warning,
+                message: format!("{function}(): could not find path {directory}"),
+                source_file: None,
+                source_line: None,
+                output_offset: output.len(),
+            });
+            Ok(Value::Bool(false))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn disk_space_bytes(path: &std::path::Path, total: bool) -> Option<f64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 { return None; }
+    let stats = unsafe { stats.assume_init() };
+    let block_size = if stats.f_frsize != 0 { stats.f_frsize } else { stats.f_bsize } as f64;
+    let block_count = if total { stats.f_blocks } else { stats.f_bavail } as f64;
+    Some(block_size * block_count)
+}
+
+#[cfg(not(unix))]
+fn disk_space_bytes(_path: &std::path::Path, _total: bool) -> Option<f64> { None }
+
+fn create_directory(path: &std::path::Path, mode: u32, recursive: bool) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(recursive).mode(mode);
+        builder.create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        if recursive { std::fs::create_dir_all(path) } else { std::fs::create_dir(path) }
+    }
+}
+
+fn filesystem_recursive_create_path(globals: &GlobalVariables, path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let Some(root) = globals.get("\0filesystem_root") else { return Some(path.to_path_buf()); };
+    let root = std::path::PathBuf::from(root.show()).canonicalize().ok()?;
+    let candidate = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+    let mut normalized = std::path::PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => { normalized.pop(); }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    if !normalized.starts_with(&root) { return None; }
+    let canonical = normalized.canonicalize();
+    if let Ok(canonical) = canonical {
+        return canonical.starts_with(&root).then_some(canonical);
+    }
+    let mut existing = normalized.as_path();
+    while !existing.exists() { existing = existing.parent()?; }
+    let canonical_parent = existing.canonicalize().ok()?;
+    canonical_parent.starts_with(&root).then_some(normalized)
+}
+
 fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunction>) -> bool {
     let name = name.trim_start_matches('\\').to_ascii_lowercase();
     functions.contains_key(&name) || crate::array_builtins::is_supported(&name) || crate::math_builtins::is_supported(&name) || crate::string_builtins::is_supported(&name) || matches!(name.as_str(),
-        "call_user_func" | "call_user_func_array" | "func_get_args" | "func_get_arg" | "func_num_args" | "var_dump" |
+        "call_user_func" | "call_user_func_array" | "exit" | "die" | "func_get_args" | "func_get_arg" | "func_num_args" | "var_dump" |
         "function_exists" | "gc_collect_cycles" | "php_sapi_name" | "error_reporting" | "error_get_last" | "error_clear_last" | "class_exists" | "interface_exists" | "trait_exists" | "method_exists" | "property_exists" | "get_class" | "get_parent_class" | "get_called_class" | "is_a" | "is_subclass_of" | "is_callable" | "getenv" | "putenv" |
         "mongo_find" | "mongo_aggregate" | "mongo_count_documents" | "mongo_estimated_document_count" | "mongo_insert_one" | "mongo_insert_many" | "mongo_replace_one" | "mongo_update_one" | "mongo_update_many" | "mongo_delete_one" | "mongo_delete_many" | "mongo_begin_transaction" | "mongo_commit" | "mongo_rollback" |
-        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "realpath" | "getcwd" | "get_include_path" | "set_include_path" | "sys_get_temp_dir" | "tempnam" | "unlink" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
+        "header" | "http_response_code" | "header_remove" | "headers_list" | "file_exists" | "is_file" | "is_dir" | "is_link" | "is_readable" | "is_writable" | "is_executable" | "filesize" | "filemtime" | "fileatime" | "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms" | "filetype" | "stat" | "lstat" | "scandir" | "opendir" | "readdir" | "closedir" | "rewinddir" | "realpath" | "getcwd" | "get_include_path" | "set_include_path" | "sys_get_temp_dir" | "tempnam" | "unlink" | "touch" | "chmod" | "disk_free_space" | "diskfreespace" | "disk_total_space" | "copy" | "rename" | "mkdir" | "rmdir" | "file_get_contents" | "file_put_contents" | "file" | "fopen" | "fwrite" | "fread" | "stream_get_contents" | "rewind" | "fseek" | "ftell" | "feof" | "fclose" | "time" | "microtime" | "hrtime" | "random_int" | "rand" | "mt_rand" | "getrandmax" | "mt_getrandmax" | "date" | "gmdate" | "strftime" | "gmstrftime" | "getdate" | "gettimeofday" | "idate" | "checkdate" | "mktime" | "gmmktime" | "localtime" | "strtotime" |
         "json_encode" | "json_decode" | "json_validate" | "json_last_error" | "json_last_error_msg" | "is_uploaded_file" | "move_uploaded_file" |
         "session_start" | "session_destroy" | "session_unset" | "session_status" | "session_id" |
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "bin2hex" | "ord" | "number_format" | "str_increment" | "str_decrement" | "strspn" | "strcspn" | "strpbrk" | "str_word_count" | "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" | "strnatcmp" | "strnatcasecmp" | "strtr" | "strstr" | "strchr" | "stristr" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_pad" |
@@ -5363,6 +6159,55 @@ pub(super) fn invoke_callable(
         )?;
         for diagnostic in diagnostics { global_variables.report_diagnostic(diagnostic); }
         return Ok(result);
+    }
+    if normalized_name == "copy" {
+        return copy_value(&arguments, global_variables, output);
+    }
+    if normalized_name == "rename" {
+        return rename_value(&arguments, global_variables, output);
+    }
+    if normalized_name == "mkdir" {
+        return mkdir_value(&arguments, global_variables, output);
+    }
+    if normalized_name == "rmdir" {
+        return rmdir_value(&arguments, global_variables, output);
+    }
+    if normalized_name == "touch" {
+        return touch_value(&arguments, global_variables, output);
+    }
+    if normalized_name == "chmod" {
+        return chmod_value(&arguments, global_variables, output);
+    }
+    if matches!(normalized_name.as_str(), "disk_free_space" | "diskfreespace" | "disk_total_space") {
+        return disk_space_value(name, &arguments, global_variables, output);
+    }
+    if normalized_name == "scandir" {
+        return scandir_builtin(&arguments, global_variables);
+    }
+    if normalized_name == "opendir" { return opendir_builtin(&arguments, global_variables); }
+    if normalized_name == "readdir" { return readdir_builtin(&arguments, global_variables); }
+    if normalized_name == "closedir" { return closedir_builtin(&arguments, global_variables); }
+    if normalized_name == "rewinddir" { return rewinddir_builtin(&arguments, global_variables); }
+    if normalized_name == "filemtime" || normalized_name == "fileatime" {
+        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", name, arguments.len())); }
+        let path = arguments.first().ok_or_else(|| format!("{}() expects exactly 1 argument", name))?.show();
+        let resolved = filesystem_path(global_variables, std::path::Path::new(&path), false);
+        return Ok(file_timestamp_value(name, &path, resolved.as_deref(), global_variables));
+    }
+    if matches!(normalized_name.as_str(), "filectime" | "fileinode" | "fileowner" | "filegroup" | "fileperms") {
+        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", name, arguments.len())); }
+        let filename = arguments[0].show();
+        let field = match normalized_name.as_str() { "filectime" => "ctime", "fileinode" => "ino", "fileowner" => "uid", "filegroup" => "gid", _ => "mode" };
+        return Ok(file_stat_field_value(name, &filename, field, global_variables));
+    }
+    if normalized_name == "filetype" {
+        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", name, arguments.len())); }
+        return Ok(filetype_value(name, &arguments[0].show(), global_variables));
+    }
+    if normalized_name == "stat" || normalized_name == "lstat" {
+        if arguments.len() != 1 { return Err(format!("ArgumentCountError:{}() expects exactly 1 argument, {} given", name, arguments.len())); }
+        let filename = arguments[0].show();
+        return Ok(file_stat_value(name, &filename, global_variables));
     }
     if name.eq_ignore_ascii_case("strval") {
         let value = arguments.first().ok_or("strval() expects exactly 1 argument")?.dereference();

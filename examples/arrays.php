@@ -76,9 +76,18 @@ echo count(range('', '2')), ':', count(range('ab', 'd')), ':', count(range(1, 'x
 echo "non-ascii-byte-range:", count(range('é', 'ê')), "\n";
 $rangeStart = '1.5'; $rangeEnd = '3.5'; $letterStart = 'a'; $letterEnd = 'c';
 echo implode(',', range($rangeStart, $rangeEnd)), '|', implode(',', range($letterStart, $letterEnd)), "\n";
+echo gettype(range(1, 5, 2.0)[0]), ':', gettype(range(1, 5, 1.5)[0]), "\n";
 echo implode(',', range(' 1', 2)), '|', implode(',', range(" \t1\r\n", '3')), "\n";
 $arrayMapRows = [[1, 2], [3, 4]];
 echo implode(',', array_map('array_sum', $arrayMapRows)), '|', implode(',', array_map('array_product', $arrayMapRows)), "\n";
+echo implode(',', array_keys(array_pad([8 => 'first', 'label' => 'named', 15 => 'last'], 5, 'pad'))), '|';
+echo implode(',', array_keys(array_pad([8 => 'first', 'label' => 'named', 15 => 'last'], -5, 'pad'))), "\n";
+echo in_array(0, ['not numeric']), ':', in_array(0, ['0']), '|';
+echo array_search(0, ['not numeric', '0']), ':', implode(',', array_values(array_diff(['not numeric', '0'], [0]))), "\n";
+$orderedMap = ['first' => 'a', 'second' => 'b'];
+echo in_array($orderedMap, [['second' => 'b', 'first' => 'a']], true), ':', in_array($orderedMap, [$orderedMap], true), "\n";
+$identityObject = new stdClass();
+echo in_array($identityObject, [$identityObject], true), ':', in_array($identityObject, [new stdClass()], true), "\n";
 class ArrayMapCountableExample implements Countable { public function count(): int { return 7; } }
 echo implode(',', array_map('count', [[], [1, 2], new ArrayMapCountableExample()])), "\n";
 $arrayMapRecordSets = [[['name' => 'Ada'], ['name' => 'Lin']], [['name' => 'Sam']]];
@@ -294,3 +303,7 @@ foreach ([[], new class {}] as $invalidOffsetKey) {
 }
 $invalidStringOffset = 'text';
 echo 'invalid string isset/empty: ', isset($invalidStringOffset[[]]), ':', empty($invalidStringOffset[[]]), "\n";
+
+$sparseValues = [7 => 'first', 'middle' => 'next', -2 => 'last'];
+next($sparseValues);
+echo 'array edges: ', array_first($sparseValues), ':', array_last($sparseValues), ':', current($sparseValues), "\n";

@@ -1042,6 +1042,19 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 return Err(format!("Class {} must be abstract or implement {}()", class.name, method));
             }
         }
+        for property in &class.properties {
+            let has_override_attribute = property.attributes.iter().any(|attribute| {
+                attribute.name.trim_start_matches('\\').eq_ignore_ascii_case("Override")
+            });
+            if has_override_attribute
+                && class.parent.as_ref().and_then(|parent| find_property(&parent.to_ascii_lowercase(), &property.name, &classes)).is_none()
+            {
+                return Err(format!(
+                    "{}::${} has #[\\Override] attribute, but no matching parent property exists",
+                    class.name, property.name
+                ));
+            }
+        }
         if let Some(parent_name) = &class.parent {
             let parent = classes.get(&parent_name.to_ascii_lowercase()).ok_or_else(|| format!("Class '{parent_name}' not found"))?;
             if parent.is_interface { return Err(format!("Class {} cannot extend interface {}", class.name, parent_name)); }

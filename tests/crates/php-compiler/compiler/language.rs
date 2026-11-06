@@ -632,6 +632,23 @@ fn runtime_diagnostics_report_canonical_file_and_statement_line() {
 }
 
 #[test]
+fn range_warnings_report_canonical_file_and_callsite_line() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!("rust_php_range_diagnostic_{}_{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(&entry, "<?php\nrange('', '2');\nrange('ab', 'd');\n").unwrap();
+    let expected_file = entry.canonicalize().unwrap().to_string_lossy().into_owned();
+    let result = compile_file(&entry).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.diagnostics.len(), 2);
+    for (diagnostic, line) in result.diagnostics.iter().zip([2, 3]) {
+        assert_eq!(diagnostic.source_file.as_deref(), Some(expected_file.as_str()));
+        assert_eq!(diagnostic.source_line, Some(line));
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn undefined_variable_reads_warn_but_coalescing_and_isset_are_silent() {
     let source = r#"<?php
         echo $missing;
@@ -941,6 +958,166 @@ fn php_integer_bases_and_digit_separators_parse() {
 fn elseif_chains_select_one_branch() {
     let source = "<?php if (false) { echo 'first'; } elseif (true) { echo 'second'; } else { echo 'last'; }";
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "second");
+}
+
+#[test]
+fn alternate_if_elseif_chains_select_one_branch() {
+    let source = r#"<?php
+        $value = 3;
+        if ($value === 1): echo 'first';
+        elseif ($value === 2): echo 'second';
+        elseif ($value === 3): echo 'third';
+        else: echo 'last';
+        endif;
+        $value = 0;
+        if ($value): echo 'bad';
+        elseif ($value === 1): echo 'bad';
+        else: echo ':else';
+        endif;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "third:else");
+}
+
+#[test]
+fn alternate_while_and_for_syntax_runs_loop_bodies_and_updates() {
+    let source = r#"<?php
+        $i = 0;
+        while ($i < 2):
+            echo 'w', $i;
+            $i++;
+        endwhile;
+        for ($j = 0; $j < 3; $j++):
+            if ($j > 0) { echo ','; }
+            echo 'f', $j;
+        endfor;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "w0w1f0,f1,f2");
+}
+
+#[test]
+fn heredoc_and_nowdoc_strip_closing_label_indentation() {
+    let source = r#"<?php
+$heredoc = <<<TEXT
+    first
+      second
+    TEXT;
+$nowdoc = <<<'RAW'
+    $literal
+    RAW;
+echo str_replace("\n", '|', $heredoc), ':', str_replace("\n", '|', $nowdoc);
+"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "first|  second:$literal");
+}
+
+#[test]
+fn heredoc_interpolates_variables_and_braced_expressions_but_nowdoc_is_literal() {
+    let source = r#"<?php
+$name = 'Ada';
+$data = ['role' => 'admin'];
+$heredoc = <<<TEXT
+Hello $name: {$data['role']}
+TEXT;
+$double_quoted = <<<"QUOTED"
+{$name}
+QUOTED;
+$nowdoc = <<<'RAW'
+$name {$data['role']}
+RAW;
+echo str_replace("\n", '|', $heredoc), ':', trim($double_quoted), ':', $nowdoc;
+"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Hello Ada: admin:Ada:$name {$data['role']}");
+}
+
+#[test]
+fn heredoc_rejects_body_lines_shorter_than_closing_indentation() {
+    let source = "<?php $text = <<<TEXT\n  short\n    TEXT;";
+    let error = match compile_source(source) { Ok(_) => panic!("invalid heredoc indentation should fail"), Err(error) => error };
+    assert!(error.contains("Invalid body indentation level"), "{error}");
+}
+
+#[test]
+fn exit_and_die_terminate_all_frames_and_report_the_exit_code() {
+    let program = compile_source("<?php function stopNow() { echo 'before:'; die(7); echo 'after'; } stopNow(); echo 'unreachable';").unwrap();
+    let result = program.execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "before:");
+    assert_eq!(result.exit_code, 7);
+    let result = compile_source("<?php exit('bye'); echo 'unreachable';").unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "bye");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[test]
+fn exit_accepts_the_php84_named_status_argument_and_rejects_unknown_names() {
+    let result = compile_source("<?php exit(status: 7); echo 'unreachable';").unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "");
+    assert_eq!(result.exit_code, 7);
+
+    let result = compile_source("<?php try { die(code: 4); } catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "Error:Unknown named parameter $code");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[test]
+fn exit_is_available_as_a_php84_first_class_callable() {
+    let source = "<?php $terminate = exit(...); if (!function_exists('exit')) { echo 'missing'; } $terminate(status: 9); echo 'unreachable';";
+    let result = compile_source(source).unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "");
+    assert_eq!(result.exit_code, 9);
+
+    let source = "<?php $terminate = die(...); $terminate('bye'); echo 'unreachable';";
+    let result = compile_source(source).unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "bye");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[test]
+fn exit_applies_weak_numeric_and_strict_scalar_coercion() {
+    let result = compile_source("<?php exit(7.9);").unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.exit_code, 7);
+
+    let result = compile_source("<?php exit(true);").unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.exit_code, 1);
+
+    let result = compile_source("<?php declare(strict_types=1); try { exit(true); } catch (TypeError $error) { echo 'caught'; }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "caught");
+    assert_eq!(result.exit_code, 0);
+
+    let result = compile_source("<?php class Message { public function __toString(): string { return 'bye'; } } exit(new Message());")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "bye");
+    assert_eq!(result.exit_code, 0);
+
+    let result = compile_source("<?php declare(strict_types=1); class Message { public function __toString(): string { return 'bye'; } } try { exit(new Message()); } catch (TypeError $error) { echo 'caught'; }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "caught");
+
+    let result = compile_source("<?php try { exit(null); } catch (TypeError $error) { echo $error->getMessage(); }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "exit(): Argument #1 ($status) must be of type string|int, null given");
+
+    let result = compile_source("<?php class Plain {} try { exit(new Plain()); } catch (TypeError $error) { echo $error->getMessage(); }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "exit(): Argument #1 ($status) must be of type string|int, Plain given");
+
+    let result = compile_source("<?php class Broken { public function __toString(): string { throw new TypeError('inner'); } } try { exit(new Broken()); } catch (TypeError $error) { echo $error->getMessage(); }")
+        .unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "inner");
+}
+
+#[test]
+fn exit_skips_finally_blocks() {
+    let result = compile_source("<?php try { echo 'exit'; exit; } finally { echo 'finally'; }").unwrap()
+        .execute_with_globals(std::collections::HashMap::new()).unwrap();
+    assert_eq!(result.output, "exit");
+    assert_eq!(result.exit_code, 0);
 }
 
 #[test]

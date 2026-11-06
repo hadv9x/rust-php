@@ -6,8 +6,8 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr",
-        "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "ord", "number_format",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32",
+        "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "str_word_count", "strspn",
         "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
@@ -16,7 +16,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strrpos", "strripos", "substr", "explode", "substr_count", "substr_compare", "strtok", "levenshtein", "similar_text", "implode", "str_getcsv", "nl2br", "wordwrap",
         "substr_replace",
         "basename", "dirname", "pathinfo",
-        "strip_tags",
+        "strip_tags", "sprintf", "parse_str", "printf", "vprintf", "vsprintf", "fprintf",
         "urlencode", "urldecode", "rawurlencode", "rawurldecode",
     ]
 }
@@ -35,7 +35,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "strtok" => &[0, 1],
         "levenshtein" => &[0, 1],
         "similar_text" => &[0, 1],
-        "count_chars" => &[0],
+        "count_chars" | "crc32" | "base64_encode" | "base64_decode" => &[0],
         "str_replace" | "str_ireplace" => &[0, 1, 2],
         "strtr" => &[0, 1, 2],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
@@ -46,7 +46,8 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "dirname" => &[0],
         "pathinfo" => &[0],
         "strip_tags" => &[0, 1],
-        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => &[0],
+        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "sprintf" | "parse_str" | "printf" | "vprintf" | "vsprintf" => &[0],
+        "fprintf" => &[1],
         "addcslashes" => &[0, 1],
         "str_pad" => &[0, 2],
         "htmlspecialchars" => &[0, 2],
@@ -733,6 +734,15 @@ pub(crate) fn similar_text_with_percent(arguments: &[Value]) -> Result<(Value, f
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
+    if function == "base64_encode" { return base64_encode(arguments); }
+    if function == "base64_decode" { return base64_decode(arguments); }
+    if function == "sprintf" { return sprintf(arguments); }
+    if function == "vsprintf" {
+        if arguments.len() != 2 { return Err(format!("vsprintf() expects exactly 2 arguments, {} given", arguments.len())); }
+        let values = unpack_values(&arguments[1])?;
+        return Ok(Value::String(format_values(&arguments[0].show(), &values)?));
+    }
+    if function == "parse_str" { return parse_str(arguments); }
     if function == "substr_replace" { return substr_replace(arguments); }
     if function == "substr_compare" { return substr_compare(arguments); }
     if function == "levenshtein" { return levenshtein(arguments); }
@@ -770,7 +780,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         return Ok(Value::String(strip_tags(&arguments[0].show(), &allowed)));
     }
     let required = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -787,7 +797,8 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported string function: {name}")),
     };
     let maximum = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "chr" | "ord" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "base64_decode" => 2,
         "addcslashes" => 2,
         "number_format" => 4,
         "strspn" | "strcspn" => 4,
@@ -838,6 +849,14 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
 
     let string = arguments.first().ok_or_else(|| format!("{function}() expects a string"))?.show();
     let value = match function.as_str() {
+        "crc32" => {
+            let mut crc = !0u32;
+            for byte in string.as_bytes() {
+                crc ^= *byte as u32;
+                for _ in 0..8 { crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1))); }
+            }
+            Value::Integer((!crc) as i64)
+        }
         "strtolower" => Value::String(string.to_ascii_lowercase()),
         "urlencode" => Value::String(url_encode(&string, true)),
         "rawurlencode" => Value::String(url_encode(&string, false)),
@@ -1237,6 +1256,225 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => unreachable!(),
     };
     Ok(value)
+}
+
+fn base64_encode(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() != 1 { return Err(format!("base64_encode() expects exactly 1 argument, {} given", arguments.len())); }
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = arguments[0].show();
+    let bytes = bytes.as_bytes();
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = chunk.get(1).copied().unwrap_or(0);
+        let c = chunk.get(2).copied().unwrap_or(0);
+        output.push(TABLE[(a >> 2) as usize] as char);
+        output.push(TABLE[(((a & 0x03) << 4) | (b >> 4)) as usize] as char);
+        output.push(if chunk.len() > 1 { TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char } else { '=' });
+        output.push(if chunk.len() > 2 { TABLE[(c & 0x3f) as usize] as char } else { '=' });
+    }
+    Ok(Value::String(output))
+}
+
+fn base64_decode(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 { return Err(format!("base64_decode() expects 1 or 2 arguments, {} given", arguments.len())); }
+    let input = arguments[0].show();
+    let strict = arguments.get(1).is_some_and(Value::truthy);
+    let mut output = Vec::with_capacity(input.len() * 3 / 4);
+    let mut accumulator = 0u32;
+    let mut bits = 0u8;
+    let mut padded = false;
+    for byte in input.bytes() {
+        if byte.is_ascii_whitespace() { continue; }
+        let sextet = match byte {
+            b'A'..=b'Z' => Some(byte - b'A'),
+            b'a'..=b'z' => Some(byte - b'a' + 26),
+            b'0'..=b'9' => Some(byte - b'0' + 52),
+            b'+' => Some(62), b'/' => Some(63),
+            b'=' => { padded = true; continue; }
+            _ => {
+                if strict { return Ok(Value::Bool(false)); }
+                continue;
+            }
+        };
+        if padded {
+            if strict { return Ok(Value::Bool(false)); }
+            continue;
+        }
+        accumulator = (accumulator << 6) | sextet.unwrap() as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((accumulator >> bits) as u8);
+            accumulator &= (1u32 << bits).wrapping_sub(1);
+        }
+    }
+    Ok(Value::String(String::from_utf8_lossy(&output).into_owned()))
+}
+
+pub(crate) fn format_values(format: &str, values: &[Value]) -> Result<String, String> {
+    let arguments = std::iter::once(Value::String(format.to_string())).chain(values.iter().cloned()).collect::<Vec<_>>();
+    if arguments.is_empty() { return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into()); }
+    let values = &arguments[1..];
+    let bytes = format.as_bytes();
+    let mut output = Vec::new();
+    let (mut cursor, mut next_value) = (0usize, 0usize);
+    while cursor < bytes.len() {
+        if bytes[cursor] != b'%' { output.push(bytes[cursor]); cursor += 1; continue; }
+        cursor += 1;
+        if bytes.get(cursor) == Some(&b'%') { output.push(b'%'); cursor += 1; continue; }
+        let digits_start = cursor;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
+        let explicit = if bytes.get(cursor) == Some(&b'$') && cursor > digits_start {
+            let position = std::str::from_utf8(&bytes[digits_start..cursor]).unwrap_or("0").parse::<usize>().unwrap_or(0);
+            cursor += 1;
+            Some(position.saturating_sub(1))
+        } else { cursor = digits_start; None };
+        let mut flags = Vec::new();
+        let mut custom_pad = None;
+        loop {
+            match bytes.get(cursor) {
+                Some(byte) if b"-+ 0#".contains(byte) => { flags.push(*byte); cursor += 1; }
+                Some(b'\'') => {
+                    cursor += 1;
+                    custom_pad = Some(*bytes.get(cursor).ok_or_else(|| "ValueError:sprintf(): Unterminated padding flag".to_string())?);
+                    cursor += 1;
+                }
+                _ => break,
+            }
+        }
+        let width = if bytes.get(cursor) == Some(&b'*') {
+            cursor += 1;
+            let width_value = values.get(next_value).ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
+            next_value += 1;
+            let raw_width = width_value.dereference().number() as i64;
+            if raw_width < 0 { flags.push(b'-'); raw_width.unsigned_abs().min(1_000_000) as usize }
+            else { (raw_width as u64).min(1_000_000) as usize }
+        } else {
+            let width_start = cursor;
+            while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
+            std::str::from_utf8(&bytes[width_start..cursor]).ok().and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(1_000_000)
+        };
+        let precision = if bytes.get(cursor) == Some(&b'.') {
+            cursor += 1;
+            if bytes.get(cursor) == Some(&b'*') {
+                cursor += 1;
+                let precision_value = values.get(next_value).ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
+                next_value += 1;
+                let raw_precision = precision_value.dereference().number() as i64;
+                (raw_precision >= 0).then_some((raw_precision as u64).min(1_000_000) as usize)
+            } else {
+                let precision_start = cursor;
+                while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
+                Some(std::str::from_utf8(&bytes[precision_start..cursor]).ok().and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(1_000_000))
+            }
+        } else { None };
+        let conversion = *bytes.get(cursor).ok_or_else(|| "ValueError:sprintf(): Unterminated format specifier".to_string())?;
+        cursor += 1;
+        let index = explicit.unwrap_or_else(|| { let index = next_value; next_value += 1; index });
+        let value = values.get(index).ok_or_else(|| format!("ArgumentCountError:sprintf(): Too few arguments"))?;
+        let dereferenced = value.dereference();
+        let mut rendered = match conversion {
+            b's' => { let text = dereferenced.show(); precision.map_or(text.clone(), |limit| String::from_utf8_lossy(&text.as_bytes()[..text.len().min(limit)]).into_owned()) }
+            b'd' | b'i' => (dereferenced.number() as i64).to_string(),
+            b'u' => (dereferenced.number() as i64 as u64).to_string(),
+            b'x' => format!("{:x}", dereferenced.number() as i64 as u64),
+            b'X' => format!("{:X}", dereferenced.number() as i64 as u64),
+            b'o' => format!("{:o}", dereferenced.number() as i64 as u64),
+            b'b' => format!("{:b}", dereferenced.number() as i64 as u64),
+            b'c' => String::from_utf8_lossy(&[(dereferenced.number() as i64) as u8]).into_owned(),
+            b'f' | b'F' => format!("{:.*}", precision.unwrap_or(6), dereferenced.number()),
+            b'e' | b'E' => {
+                let text = format!("{:.*e}", precision.unwrap_or(6), dereferenced.number());
+                if conversion == b'E' { text.to_ascii_uppercase() } else { text }
+            }
+            b'g' | b'G' => format!("{:.*}", precision.unwrap_or(6), dereferenced.number()),
+            _ => return Err(format!("ValueError:sprintf(): Unknown format specifier \"{}\"", conversion as char)),
+        };
+        if matches!(conversion, b'd' | b'i' | b'f' | b'F' | b'e' | b'E' | b'g' | b'G') && !rendered.starts_with('-') {
+            if flags.contains(&b'+') { rendered.insert(0, '+'); }
+            else if flags.contains(&b' ') { rendered.insert(0, ' '); }
+        }
+        if flags.contains(&b'#') && !rendered.starts_with("0x") && matches!(conversion, b'x' | b'X') {
+            rendered.insert_str(0, if conversion == b'X' { "0X" } else { "0x" });
+        }
+        let padding = if conversion == b'c' { 0 } else { width.saturating_sub(rendered.len()) };
+        let pad_byte = custom_pad.unwrap_or(if flags.contains(&b'0') && precision.is_none() { b'0' } else { b' ' });
+        if flags.contains(&b'-') { output.extend_from_slice(rendered.as_bytes()); output.extend(std::iter::repeat_n(pad_byte, padding)); }
+        else if pad_byte == b'0' {
+            let prefix_len = if rendered.starts_with("0x") || rendered.starts_with("0X") { 2 }
+                else if matches!(rendered.as_bytes().first(), Some(b'+' | b'-' | b' ')) { 1 } else { 0 };
+            output.extend_from_slice(&rendered.as_bytes()[..prefix_len]);
+            output.extend(std::iter::repeat_n(b'0', padding));
+            output.extend_from_slice(&rendered.as_bytes()[prefix_len..]);
+        }
+        else { output.extend(std::iter::repeat_n(pad_byte, padding)); output.extend_from_slice(rendered.as_bytes()); }
+    }
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+fn sprintf(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.is_empty() { return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into()); }
+    Ok(Value::String(format_values(&arguments[0].show(), &arguments[1..])?))
+}
+
+fn unpack_values(value: &Value) -> Result<Vec<Value>, String> {
+    let Value::Array(array) = value.dereference() else { return Err(format!("TypeError:values must be of type array, {} given", value.type_name())); };
+    Ok(array.iter().map(|(_, value)| value.clone()).collect())
+}
+
+fn parse_str(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() != 2 { return Err(format!("ArgumentCountError:parse_str() expects exactly 2 arguments, {} given", arguments.len())); }
+    let input = arguments[0].show();
+    let mut result = Value::Null;
+    for field in input.split('&') {
+        if field.is_empty() { continue; }
+        let (raw_key, raw_value) = field.split_once('=').unwrap_or((field, ""));
+        let decoded_key = url_decode(raw_key, true);
+        let value = Value::String(url_decode(raw_value, true));
+        let (root, mut path) = match decoded_key.find('[') {
+            Some(index) => (&decoded_key[..index], parse_query_path(&decoded_key[index..])),
+            None => (decoded_key.as_str(), Vec::new()),
+        };
+        let root = root.trim_start().replace(['.', ' '], "_");
+        if root.is_empty() { continue; }
+        let root_key = Value::String(root).array_key()?;
+        path.insert(0, Some(root_key));
+        result = set_query_path(result, &path, value)?;
+    }
+    Ok(result)
+}
+
+fn parse_query_path(suffix: &str) -> Vec<Option<crate::ArrayKey>> {
+    let mut path = Vec::new();
+    let mut rest = suffix;
+    while let Some(after_open) = rest.strip_prefix('[') {
+        let Some(close) = after_open.find(']') else { return Vec::new(); };
+        let key = &after_open[..close];
+        path.push(if key.is_empty() { None } else { Value::String(key.to_string()).array_key().ok() });
+        rest = &after_open[close + 1..];
+    }
+    if !rest.is_empty() { Vec::new() } else { path }
+}
+
+fn set_query_path(root: Value, path: &[Option<crate::ArrayKey>], value: Value) -> Result<Value, String> {
+    let Some((segment, rest)) = path.split_first() else { return Ok(value); };
+    let root = match root.dereference() { Value::Array(_) | Value::Null => root, _ => Value::Null };
+    match segment {
+        Some(key) if rest.is_empty() => root.array_set(key.clone(), value),
+        Some(key) => {
+            let child = root.array_get(key).unwrap_or(Value::Null);
+            root.array_set(key.clone(), set_query_path(child, rest, value)?)
+        }
+        None if rest.is_empty() => root.array_append(value),
+        None => {
+            let appended = root.array_append(Value::Null)?;
+            let Value::Array(array) = appended.dereference() else { return Err("parse_str(): failed to append query value".into()); };
+            let key = array.iter().last().map(|(key, _)| key.clone()).ok_or("parse_str(): failed to resolve appended key")?;
+            let child = set_query_path(Value::Null, rest, value)?;
+            appended.array_set(key, child)
+        }
+    }
 }
 
 fn random_index(random: &mut impl std::io::Read, upper_exclusive: usize) -> Result<usize, String> {

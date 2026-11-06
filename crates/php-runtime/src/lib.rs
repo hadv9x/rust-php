@@ -8,7 +8,7 @@ mod pdo;
 mod mongo_php;
 mod string_builtins;
 mod values;
-mod vm;
+pub(crate) mod vm;
 pub mod bytecode;
 
 pub use vm::PhpGenerator;
@@ -328,6 +328,8 @@ impl BytecodeProgram {
 #[derive(Clone, Debug)]
 pub struct ExecutionResult {
     pub output: String,
+    /// Status selected by PHP `exit`/`die`, or zero when the script completed normally.
+    pub exit_code: i32,
     pub diagnostics: Vec<RuntimeDiagnostic>,
     pub status_code: Option<u16>,
     pub headers: Vec<(String, String)>,
@@ -339,7 +341,7 @@ pub struct ExecutionResult {
 
 /// Severity of a non-fatal PHP runtime diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiagnosticLevel { Warning, Deprecated }
+pub enum DiagnosticLevel { Warning, Deprecated, Notice, UserWarning, UserDeprecated, UserNotice, Fatal }
 
 /// A warning or deprecation emitted during one program execution.
 #[derive(Clone, Debug, PartialEq, Eq)]

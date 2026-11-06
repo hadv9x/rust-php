@@ -5,6 +5,8 @@ try {
 } catch (ValueError $error) {
     echo get_class($error), ':', $error->getMessage(), "\n";
 }
+$empty_nested_depth = json_decode('[[]]', associative: true, depth: 1);
+echo 'empty-nested-depth:', $empty_nested_depth === null, ':', json_last_error(), "\n";
 $source = ["name" => "Ada 🚀", "scores" => [3, 5], "active" => true];
 $encoded = json_encode($source);
 $decoded = json_decode($encoded, true);

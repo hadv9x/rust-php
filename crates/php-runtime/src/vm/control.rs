@@ -245,6 +245,14 @@ pub(super) fn execute_instruction(
                 ForeachIterator::Array(entries, index) if *index < entries.len() => {
                     let (key, value) = entries[*index].clone();
                     *index += 1;
+                    let value = if *by_reference {
+                        if let Value::Reference(_) = value { value }
+                        else {
+                            let reference = Rc::new(RefCell::new(value));
+                            entries[*index - 1].1 = Value::Reference(reference.clone());
+                            Value::Reference(reference)
+                        }
+                    } else { value };
                     Some((array_key_value(key), value))
                 }
                 ForeachIterator::Array(_, _) => None,

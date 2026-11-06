@@ -5,10 +5,14 @@ Control-flow syntax is split by feature. Loop parsing is in [`php-syntax/src/par
 ## Supported constructs
 
 - `if` / `else`
-- `while`
+- `while`, including alternate `: ... endwhile;` syntax
 - `do...while`
-- `for`, including comma-separated initializer and update clauses
+- `for`, including comma-separated initializer and update clauses and alternate `: ... endfor;` syntax
 - `foreach` over arrays, generators, PDO statements, and user `Iterator`/`IteratorAggregate` objects, with optional keys and by-reference array value binding (`&$value`)
+- By-reference generators can delegate reference-backed array entries with `yield from`; delegated by-reference generators preserve their yielded references as well. Non-reference values still cannot be iterated by reference.
+- `yield from` also delegates user `Iterator` and nested `IteratorAggregate` chains; in a by-reference generator it preserves references returned by `Iterator::current()`.
+- By-reference generators emit PHP's `Only variable references should be yielded by reference` notice for expression yields and values delegated from non-reference-backed arrays.
+- `foreach (... as &$value)` preserves by-reference iteration for generator calls and other temporary iterable expressions; yielded scalar locals remain connected when the generator resumes.
 - `switch` with `case`, one `default` arm, fall-through, and `break`, using braces or `: ... endswitch;`
 - `match` expressions with strict comparison, multiple condition values, one default arm, and catchable `UnhandledMatchError` when nothing matches
 - `goto` labels within one compiled context, including loop/switch exits; jumps into loop/switch regions and jumps across sibling regions are rejected. Leaving `try` with `goto` executes its `finally` block.
@@ -17,7 +21,7 @@ Control-flow syntax is split by feature. Loop parsing is in [`php-syntax/src/par
 - Prefix/postfix increment on ASCII alphanumeric strings, including carry across digits and letter ranges (`z` to `aa`, `9` to `10`); numeric strings use numeric arithmetic, empty strings increment to `"1"`, and non-ASCII strings remain unchanged as nonnumeric strings
 - Braced and single-statement loop bodies
 
-Run [`examples/loops.php`](../examples/loops.php) for loops and numeric loop targets. See [`examples/foreach-reference.php`](../examples/foreach-reference.php) for by-reference iteration and [`examples/string-increment.php`](../examples/string-increment.php) for alphanumeric string increments. Run [`examples/switch.php`](../examples/switch.php) for brace syntax, [`examples/switch-alternate.php`](../examples/switch-alternate.php) for alternate syntax, and [`examples/goto.php`](../examples/goto.php) for labels and finally behavior.
+Run [`examples/loops.php`](../examples/loops.php) for loops and numeric loop targets, and [`examples/loops-alternate.php`](../examples/loops-alternate.php) for alternate `while`/`for` syntax. See [`examples/foreach-reference.php`](../examples/foreach-reference.php) for by-reference iteration and [`examples/string-increment.php`](../examples/string-increment.php) for alphanumeric string increments. Run [`examples/switch.php`](../examples/switch.php) for brace syntax, [`examples/switch-alternate.php`](../examples/switch-alternate.php) for alternate syntax, and [`examples/goto.php`](../examples/goto.php) for labels and finally behavior.
 
 ```php
 for ($i = 0; $i < 4; $i++) {
@@ -29,6 +33,8 @@ for ($i = 0; $i < 4; $i++) {
 ```
 
 `break 2` and `continue 2` target the second active breakable construct outward. Levels may be expressions evaluated at runtime; they must produce a positive integer no greater than the active loop/switch depth. A computed invalid level produces a runtime error. Literal invalid levels are rejected during compilation. `continue` inside a switch exits that switch, matching PHP's behavior for `continue 1`.
+
+`exit` and its `die` alias terminate execution across function frames. An integer argument sets `ExecutionResult.exit_code`; a string argument is appended to output and leaves the code at zero. Both statement and parenthesized forms are supported, and PHP 8.4's named `status` argument is accepted; unknown names raise catchable `Error`. PHP 8.4 first-class callable syntax works for both names, including named `status` calls. In weak mode, booleans and finite floats coerce to integers, and `Stringable` objects coerce to strings; strict mode rejects those mismatched scalar/object types. Null and non-Stringable objects raise catchable `TypeError`, as do invalid arrays/resources. As in PHP, active `finally` blocks are skipped. See [`examples/exit.php`](../examples/exit.php). This follows the [PHP exit manual](https://www.php.net/manual/en/exit) and [PHP 8.4 migration notes](https://www.php.net/manual/en/migration84.incompatible.php).
 
 ## Current limits
 

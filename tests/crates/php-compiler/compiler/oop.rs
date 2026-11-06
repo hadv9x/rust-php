@@ -1951,6 +1951,14 @@ fn tostring_weakly_coerces_scalar_results_and_rejects_arrays() {
         catch (Error $error) { echo get_class($error), ':', $error->getMessage(), "\n"; }
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42\ntext:text\nError:ArrayStringifier::__toString() must return a string\n");
+
+    let strict = r#"<?php
+        declare(strict_types=1);
+        class StrictScalarStringifier { public function __toString() { return 42; } }
+        try { echo new StrictScalarStringifier(); }
+        catch (TypeError $error) { echo 'caught'; }
+    "#;
+    assert_eq!(compile_source(strict).unwrap().execute().unwrap(), "caught");
 }
 
 #[test]
@@ -2669,10 +2677,10 @@ fn is_subclass_of_excludes_same_type_and_honors_allow_string() {
         class Entity {}
         class UserEntity extends Entity implements Savable {}
         $user = new UserEntity();
-        echo is_subclass_of($user, 'UserEntity'), ':', is_subclass_of($user, 'Entity'), ':', is_subclass_of($user, 'Savable'), ':', is_subclass_of('UserEntity', 'Entity'), ':', is_subclass_of('UserEntity', 'Entity', true), ':', is_subclass_of(object_or_class: $user, class: 'Entity'), "\n";
+        echo is_subclass_of($user, 'UserEntity'), ':', is_subclass_of($user, 'Entity'), ':', is_subclass_of($user, 'Savable'), ':', is_subclass_of('UserEntity', 'Entity'), ':', is_subclass_of('UserEntity', 'Entity', true), ':', is_subclass_of(object_or_class: $user, class: 'Entity'), ':', is_subclass_of(object_or_class: 'UserEntity', class: 'Entity'), ':', is_subclass_of(object_or_class: 'UserEntity', class: 'Entity', allow_string: false), "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, ":1:1::1:1\n");
+    assert_eq!(output, ":1:1:1:1:1:1:\n");
 }
 
 #[test]
@@ -3393,4 +3401,21 @@ fn reflection_function_parameters_keep_parameter_attributes() {
         echo $parameter->getName(), ':', $parameter->getAttributes()[0]->newInstance()->label;
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "argument:function");
+}
+
+#[test]
+fn override_attribute_on_properties_requires_a_parent_property() {
+    let source = r#"<?php
+        class OverridePropertyBase { public string $label = ''; }
+        class OverridePropertyChild extends OverridePropertyBase {
+            #[\Override]
+            public string $label = 'child';
+        }
+        echo (new OverridePropertyChild())->label;
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "child");
+
+    let invalid = r#"<?php class MissingOverrideProperty { #[\Override] public $label; }"#;
+    let error = compile_source(invalid).err().expect("unmatched Override property must fail compilation");
+    assert!(error.contains("MissingOverrideProperty::$label has #[\\Override] attribute, but no matching parent property exists"), "{error}");
 }

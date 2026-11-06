@@ -1,6 +1,6 @@
 //! PHP runtime values and common conversions.
 
-use std::{cell::RefCell, fs::{File, OpenOptions}, io::{self, Read, Seek, SeekFrom, Write}, path::PathBuf, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
+use std::{cell::RefCell, collections::VecDeque, fs::{File, OpenOptions}, io::{self, Read, Seek, SeekFrom, Write}, path::PathBuf, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 
 use crate::{ArrayKey, BytecodeFunction, PhpArray, PhpObject, PhpGenerator};
 
@@ -24,7 +24,7 @@ pub enum Value {
 }
 
 #[derive(Debug)]
-pub struct PhpStream { file: Option<File>, path: PathBuf, readable: bool, writable: bool, delete_on_close: bool }
+pub struct PhpStream { file: Option<File>, directory: Option<VecDeque<String>>, directory_snapshot: Option<Vec<String>>, path: PathBuf, readable: bool, writable: bool, delete_on_close: bool }
 
 impl PhpStream {
     pub fn temporary(readable: bool, writable: bool) -> io::Result<Self> {
@@ -34,7 +34,7 @@ impl PhpStream {
             let id = NEXT_STREAM.fetch_add(1, Ordering::Relaxed);
             let path = directory.join(format!("php-rust-stream-{}-{id}.tmp", std::process::id()));
             match OpenOptions::new().read(true).write(true).create_new(true).open(&path) {
-                Ok(file) => return Ok(Self { file: Some(file), path, readable, writable, delete_on_close: true }),
+                Ok(file) => return Ok(Self { file: Some(file), directory: None, directory_snapshot: None, path, readable, writable, delete_on_close: true }),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
             }
@@ -57,8 +57,23 @@ impl PhpStream {
             _ => {}
         }
         let file = options.open(&path)?;
-        Ok(Self { file: Some(file), path, readable: first == 'r' || plus, writable: first != 'r' || plus, delete_on_close: false })
+        Ok(Self { file: Some(file), directory: None, directory_snapshot: None, path, readable: first == 'r' || plus, writable: first != 'r' || plus, delete_on_close: false })
     }
+    pub fn directory(path: PathBuf, entries: Vec<String>) -> Self {
+        Self { file: None, directory: Some(entries.clone().into()), directory_snapshot: Some(entries), path, readable: true, writable: false, delete_on_close: false }
+    }
+    pub fn read_directory(&mut self) -> io::Result<Option<String>> {
+        self.directory.as_mut().map(|entries| entries.pop_front())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "resource is not an open directory"))
+    }
+    pub fn rewind_directory(&mut self, entries: Vec<String>) -> io::Result<()> {
+        if self.directory_snapshot.is_none() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "resource is not an open directory")); }
+        self.directory_snapshot = Some(entries.clone());
+        self.directory = Some(entries.into());
+        Ok(())
+    }
+    pub fn is_directory(&self) -> bool { self.directory.is_some() }
+    pub fn directory_path(&self) -> Option<&std::path::Path> { self.is_directory().then_some(self.path.as_path()) }
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if !self.writable { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "stream is not writable")); }
         self.file.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stream is closed"))?.write(bytes)
@@ -72,9 +87,11 @@ impl PhpStream {
         }
     }
     pub fn seek(&mut self, position: SeekFrom) -> io::Result<u64> { self.file.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stream is closed"))?.seek(position) }
-    pub fn is_open(&self) -> bool { self.file.is_some() }
+    pub fn is_open(&self) -> bool { self.file.is_some() || self.directory.is_some() }
     pub fn close(&mut self) -> io::Result<()> {
         self.file.take();
+        self.directory.take();
+        self.directory_snapshot.take();
         if !self.delete_on_close { return Ok(()); }
         match std::fs::remove_file(&self.path) { Ok(()) => Ok(()), Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()), Err(error) => Err(error) }
     }

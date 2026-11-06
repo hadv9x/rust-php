@@ -1,6 +1,175 @@
 use php_compiler::compile_source;
 
 #[test]
+fn double_quoted_strings_interpolate_simple_and_braced_variables() {
+    let source = r#"<?php
+        $name = 'PHP';
+        $suffix = '!';
+        echo "hello $name$suffix", '|';
+        echo "hello {$name}!", '|';
+        echo 'literal $name', '|';
+        echo "escaped \\$name";
+        $render = function () use ($name) { return "inside $name"; };
+        echo '|', $render();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hello PHP!|hello PHP!|literal $name|escaped $name|inside PHP");
+}
+
+#[test]
+fn dollar_brace_interpolation_evaluates_and_reports_php_deprecation() {
+    let source = r#"<?php
+        $name = 'Ada';
+        echo "${name}";
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "Ada");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(result.diagnostics[0].message, "Using ${name} in strings is deprecated, use {$name} instead");
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+
+    let suppressed = compile_source(r#"<?php error_reporting(0); $name = 'Ada'; echo "${name}";"#)
+        .unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(suppressed.output, "Ada");
+    assert!(suppressed.diagnostics.is_empty());
+}
+
+#[test]
+fn dollar_brace_variable_variable_interpolation_reports_php_deprecation() {
+    let source = r#"<?php
+        $selected = 'answer';
+        $answer = '42';
+        echo "${$selected}";
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "42");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(result.diagnostics[0].message, "Using ${expr} (variable variables) in strings is deprecated, use {${expr}} instead");
+    assert_eq!(result.diagnostics[0].source_line, Some(4));
+}
+
+#[test]
+fn heredoc_supports_legacy_deprecated_interpolation() {
+    let source = r#"<?php
+        $name = 'Ada';
+        echo <<<TEXT
+${name}
+TEXT;
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "Ada");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(result.diagnostics[0].source_line, Some(3));
+}
+
+#[test]
+fn double_quoted_strings_interpolate_braced_property_and_array_offsets() {
+    let source = r#"<?php
+        $object = new stdClass();
+        $object->name = 'Ada';
+        $values = ['key' => 'value'];
+        echo "{$object->name}|{$values['key']}";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Ada|value");
+}
+
+#[test]
+fn double_quoted_strings_interpolate_dynamic_property_names() {
+    let source = r#"<?php
+        $object = new stdClass();
+        $object->label = 'dynamic';
+        $property = 'label';
+        echo "{$object->$property}|{$object->{$property}}";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "dynamic|dynamic");
+}
+
+#[test]
+fn double_quoted_strings_interpolate_variable_variables_and_dynamic_offsets() {
+    let source = r#"<?php
+        $selected = 'answer';
+        $answer = '42';
+        $offset = 'key';
+        $values = ['key' => 'value'];
+        echo "{$$selected}|{$values[$offset]}";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42|value");
+}
+
+#[test]
+fn sprintf_supports_common_format_conversions_positions_named_args_and_callbacks() {
+    let source = r#"<?php
+        echo sprintf('%2$s:%1$04d:%3$.2f:%%', 7, 'value', 1.25), '|';
+        echo sprintf(format: '%s-%d', item: 'named', number: 12), '|';
+        echo sprintf('%+#06x:%05d', 31, -7), '|';
+        echo implode(',', array_map('sprintf', ['%02d', '%02d'], [3, 9])), '|';
+        echo function_exists('sprintf');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value:0007:1.25:%|named-12|0x001f:-0007|03,09|1");
+}
+
+#[test]
+fn sprintf_rejects_unknown_conversion_and_missing_value() {
+    let unknown = compile_source("<?php try { sprintf('%q', 1); } catch (ValueError $error) { echo 'specifier'; }").unwrap().execute().unwrap();
+    assert_eq!(unknown, "specifier");
+    let missing = compile_source("<?php sprintf('%s');").unwrap().execute().unwrap_err();
+    assert!(missing.contains("Too few arguments"), "{missing}");
+}
+
+#[test]
+fn sprintf_supports_custom_padding_and_dynamic_width_precision() {
+    let source = r#"<?php
+        echo sprintf("%'_8s", 'fox'), '|';
+        echo sprintf('%*s', 8, 'fox'), '|';
+        echo sprintf('%*s', -8, 'fox'), '|';
+        echo sprintf('%.*s', 2, 'fox'), '|';
+        echo sprintf('%*.*f', 8, 2, 1.5), '|';
+        echo sprintf('%8c', 65);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "_____fox|     fox|fox     |fo|    1.50|A");
+}
+
+#[test]
+fn parse_str_decodes_query_values_and_builds_nested_arrays_by_reference() {
+    let source = r#"<?php
+        $result = ['old' => true];
+        parse_str('first=one+two&user[name]=Ada&user[roles][]=admin&user[roles][]=editor&item[]=x&item[]=y&a.b=old&a+b=new&empty', result: $result);
+        echo $result['first'], '|', $result['user']['name'], '|';
+        echo implode(',', $result['user']['roles']), '|', implode(',', $result['item']), '|';
+        echo $result['a_b'], '|', $result['empty'], '|', isset($result['old']) ? 'old' : 'cleared', '|';
+        echo function_exists('parse_str');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "one two|Ada|admin,editor|x,y|new||cleared|1");
+}
+
+#[test]
+fn parse_str_requires_a_writable_output_variable() {
+    let error = compile_source("<?php parse_str('a=1', []);").unwrap().execute().unwrap_err();
+    assert!(error.contains("cannot be passed by reference"), "{error}");
+}
+
+#[test]
+fn printf_family_formats_arrays_writes_output_and_streams() {
+    let source = r#"<?php
+        echo sprintf('%s:%02d', 'direct', 4), '|';
+        echo vsprintf('%2$s:%1$02d', [5, 'array']), '|';
+        $printed = printf('%s:%02d', 'printf', 6);
+        echo '|', $printed, '|';
+        $printed = vprintf('%s:%02d', ['vprintf', 7]);
+        echo '|', $printed, '|';
+        $stream = fopen('php://temp', 'w+');
+        $written = fprintf($stream, '%s:%02d', 'stream', 8);
+        rewind($stream);
+        echo stream_get_contents($stream), '|', $written, '|';
+        echo implode('', array_map('vsprintf', ['%02d', '%02d'], [[9], [10]])), '|';
+        echo function_exists('printf'), function_exists('vprintf'), function_exists('vsprintf'), function_exists('fprintf');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "direct:04|array:05|printf:06|9|vprintf:07|10|stream:08|9|0910|1111");
+}
+
+#[test]
 fn url_encoding_helpers_match_form_and_rfc3986_rules_and_dispatch_by_name() {
     let source = r#"<?php
         $text = 'a b+c/é~';
@@ -344,6 +513,30 @@ fn strstr_and_chr_alias_support_named_calls_and_callbacks() {
         echo implode(',', array_map('strstr', ['a-b', 'c-d'], ['-', '-'])), "\n";
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "@example.test:name:-b,-d\n");
+}
+
+#[test]
+fn crc32_returns_php_integer_checksum_and_dispatches_as_callback() {
+    let source = r#"<?php
+        $checksum = crc32(string: 'The quick brown fox jumps over the lazy dog');
+        $callbacks = array_map('crc32', ['', '123456789']);
+        echo $checksum, ':', $callbacks[0], ':', $callbacks[1], ':', function_exists('crc32');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1095738169:0:3421780262:1");
+}
+
+#[test]
+fn base64_functions_encode_decode_tolerant_and_strict_inputs() {
+    let source = r#"<?php
+        $encoded = array_map('base64_encode', ['PHP', 'Rust']);
+        $tolerant = base64_decode('SGVsbG8h!');
+        $strict = base64_decode('SGVsbG8h!', strict: true);
+        $whitespace = base64_decode("SGVs\nbG8=", true);
+        echo base64_encode(string: 'PHP'), ':', $encoded[0], ':', $encoded[1], ':';
+        echo $tolerant, ':', $strict === false, ':', $whitespace, ':';
+        echo function_exists('base64_encode'), ':', function_exists('base64_decode');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "UEhQ:UEhQ:UnVzdA==:Hello!:1:Hello:1:1");
 }
 
 #[test]

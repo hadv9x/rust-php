@@ -84,6 +84,8 @@ pub enum Stmt {
     TryFinally { try_body: Vec<Stmt>, finally_body: Vec<Stmt> },
     /// Raise a PHP value that can be caught by a surrounding try statement.
     Throw { value: Expr, line: usize },
+    /// Terminate the script, optionally with a PHP exit status or message.
+    Exit(Option<Expr>),
     While { condition: Expr, body: Vec<Stmt> },
     DoWhile { condition: Expr, body: Vec<Stmt> },
     For { initializers: Vec<Stmt>, condition: Option<Expr>, updates: Vec<Stmt>, body: Vec<Stmt> },

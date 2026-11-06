@@ -4,6 +4,17 @@ use crate::{ast::Stmt, lexer::token::TokenKind};
 use super::Parser;
 
 impl Parser<'_> {
+    fn alternative_loop_body(&mut self, terminator: &str) -> Result<Vec<Stmt>, String> {
+        let mut body = Vec::new();
+        while !matches!(self.peek(), TokenKind::Word(word) if word == terminator) {
+            if self.peek() == &TokenKind::Eof { return Err(self.error(&format!("Unterminated alternative {terminator} body"))); }
+            body.push(self.statement()?);
+        }
+        self.take();
+        self.expect(TokenKind::Semi, &format!("Expected ; after {terminator}"))?;
+        Ok(body)
+    }
+
     /// Parse a while or foreach statement after its keyword has been consumed.
     pub(in crate::parser) fn loop_statement(&mut self, keyword: &str) -> Result<Stmt, String> {
         match keyword {
@@ -11,7 +22,12 @@ impl Parser<'_> {
                 self.expect(TokenKind::Lp, "Expected ( after while")?;
                 let condition = self.expression(0)?;
                 self.expect(TokenKind::Rp, "Expected ) after while condition")?;
-                Ok(Stmt::While { condition, body: self.loop_body()? })
+                let body = if self.eat(&TokenKind::Colon) {
+                    self.alternative_loop_body("endwhile")?
+                } else {
+                    self.loop_body()?
+                };
+                Ok(Stmt::While { condition, body })
             }
             "foreach" => {
                 self.expect(TokenKind::Lp, "Expected ( after foreach")?;
@@ -44,7 +60,7 @@ impl Parser<'_> {
                         (format!("\0foreach_key_property_{}", self.cursor), Some((name, self.source_word(offset))))
                     } else { (name, None) }
                 };
-                let (key_name, key_property, value_name, value_property, mut value_by_reference, value_destructured) = if self.eat(&TokenKind::Arrow) {
+                let (key_name, key_property, value_name, value_property, value_by_reference, value_destructured) = if self.eat(&TokenKind::Arrow) {
                     if first_by_reference { return Err(self.error("The foreach key cannot be a reference")); }
                     let value_by_reference = self.eat(&TokenKind::Ampersand);
                     let value_destructured = parse_destructure(self)?;
@@ -62,17 +78,6 @@ impl Parser<'_> {
                 } else {
                     (None, None, first_name, first_property, first_by_reference, None)
                 };
-                fn has_variable_root(expression: &crate::ast::Expr) -> bool {
-                    match expression {
-                        crate::ast::Expr::Variable(_) | crate::ast::Expr::DynamicVariable(_) | crate::ast::Expr::DynamicVariableExpr(_) | crate::ast::Expr::Property(_, _) | crate::ast::Expr::StaticProperty(_, _) => true,
-                        crate::ast::Expr::Index(array, _) => has_variable_root(array),
-                        _ => false,
-                    }
-                }
-                if value_by_reference && !has_variable_root(&iterable) {
-                    // Expressions without an addressable root produce a temporary iterable.
-                    value_by_reference = false;
-                }
                 if value_by_reference && value_property.is_some() { return Err(self.error("A foreach property target cannot be passed by reference")); }
                 self.expect(TokenKind::Rp, "Expected ) after foreach")?;
                 let mut body = if self.eat(&TokenKind::Colon) {
@@ -117,7 +122,11 @@ impl Parser<'_> {
                 self.expect(TokenKind::Semi, "Expected ; after for condition")?;
                 let updates = self.for_clauses(TokenKind::Rp)?;
                 self.expect(TokenKind::Rp, "Expected ) after for clauses")?;
-                let body = self.loop_body()?;
+                let body = if self.eat(&TokenKind::Colon) {
+                    self.alternative_loop_body("endfor")?
+                } else {
+                    self.loop_body()?
+                };
                 Ok(Stmt::For { initializers, condition, updates, body })
             }
             _ => unreachable!("loop_statement only receives loop keywords"),

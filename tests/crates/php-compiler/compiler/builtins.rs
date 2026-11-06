@@ -1,6 +1,43 @@
 use php_compiler::compile_source;
 
 #[test]
+fn strftime_family_uses_named_arguments_and_emits_php_deprecations() {
+    let source = r#"<?php
+        echo gmstrftime(format: '%Y-%m-%d', timestamp: 0), ':';
+        echo call_user_func('gmstrftime', '%H:%M:%S', 0), ':';
+        echo strftime(format: '', timestamp: 0) === false, ':';
+        echo function_exists('strftime'), function_exists('gmstrftime');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1970-01-01:00:00:00:1:11");
+    assert_eq!(result.diagnostics.len(), 3);
+    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), vec![
+        "Function gmstrftime() is deprecated since 8.1, use IntlDateFormatter::format() instead",
+        "Function gmstrftime() is deprecated since 8.1, use IntlDateFormatter::format() instead",
+        "Function strftime() is deprecated since 8.1, use IntlDateFormatter::format() instead",
+    ]);
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(2), Some(3), Some(4)]);
+}
+
+#[test]
+fn strptime_uses_php_array_shape_named_arguments_and_deprecation() {
+    let source = r#"<?php
+        $parsed = strptime(timestamp: '1970-01-02tail', format: '%Y-%m-%d');
+        echo $parsed['tm_year'], ':', $parsed['tm_mon'], ':', $parsed['tm_mday'], ':', $parsed['unparsed'], '|';
+        echo call_user_func('strptime', 'invalid', '%Y') === false, ':', function_exists('strptime');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "70:0:2:tail|1:1");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result.diagnostics.iter().all(|diagnostic| {
+        diagnostic.level == php_runtime::DiagnosticLevel::Deprecated
+            && diagnostic.message == "Function strptime() is deprecated since 8.2, use date_parse_from_format() (for locale-independent parsing), or IntlDateFormatter::parse() (for locale-dependent parsing) instead"
+    }));
+    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(2), Some(4)]);
+}
+
+#[test]
 fn scalar_conversion_builtins_support_direct_named_and_callback_calls() {
     let source = r#"<?php
         echo intval(value: 'ff', base: 16), ':', intval('12.8'), ':';
@@ -306,4 +343,137 @@ fn error_get_last_keeps_filtered_warning_location_and_can_be_cleared() {
     let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
     assert_eq!(result.output, "2:Undefined variable $missingForLastError:Command line code:3:1:1:1");
     assert!(result.diagnostics.is_empty());
+}
+
+#[test]
+fn trigger_error_records_user_notice_warning_and_deprecation_types() {
+    let source = r#"<?php
+        trigger_error(message: 'notice');
+        $notice = error_get_last();
+        error_reporting(0);
+        trigger_error('warning', E_USER_WARNING);
+        $warning = error_get_last();
+        trigger_error('deprecated', E_USER_DEPRECATED);
+        $deprecated = error_get_last();
+        echo $notice['type'], ':', $notice['message'], '|';
+        echo $warning['type'], ':', $warning['message'], '|';
+        echo $deprecated['type'], ':', $deprecated['message'], '|';
+        echo function_exists('trigger_error');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1024:notice|512:warning|16384:deprecated|1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::UserNotice);
+    assert_eq!(result.diagnostics[0].message, "notice");
+}
+
+#[test]
+fn user_error_aliases_trigger_error_with_named_parameters() {
+    let source = r#"<?php
+        user_error(message: 'alias warning', error_level: E_USER_WARNING);
+        $last = error_get_last();
+        echo $last['type'], ':', $last['message'], ':', function_exists('user_error');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "512:alias warning:1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::UserWarning);
+}
+
+#[test]
+fn custom_error_handler_receives_diagnostics_and_can_suppress_default_reporting() {
+    let source = r#"<?php
+        $seen = [];
+        $old = set_error_handler(function ($severity, $message, $file, $line) use (&$seen) {
+            $seen[] = [$severity, $message, basename($file), $line];
+            return true;
+        }, error_levels: E_USER_WARNING);
+        error_reporting(0);
+        trigger_error('captured', E_USER_WARNING);
+        $captured = $seen[0];
+        restore_error_handler();
+        trigger_error('default', E_USER_WARNING);
+        echo $old === null, ':', $captured[0], ':', $captured[1], ':', $captured[2], ':', $captured[3], ':', count($seen), ':', function_exists('set_error_handler'), function_exists('restore_error_handler');
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1:512:captured:Command line code:8:1:11");
+    assert!(result.diagnostics.is_empty());
+}
+
+#[test]
+fn custom_error_handler_returning_false_preserves_default_diagnostic() {
+    let source = r#"<?php
+        error_reporting(E_USER_NOTICE);
+        set_error_handler(function ($severity, $message) { return false; });
+        trigger_error('fall through', E_USER_NOTICE);
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::UserNotice);
+    assert_eq!(result.diagnostics[0].message, "fall through");
+}
+
+#[test]
+fn custom_error_handler_exceptions_are_catchable_and_user_error_is_fatal() {
+    let caught = r#"<?php
+        try {
+            set_error_handler(function ($severity, $message) { throw new RuntimeException('from handler'); });
+            trigger_error('warning', E_USER_WARNING);
+        } catch (RuntimeException $error) {
+            echo $error->getMessage();
+        }
+    "#;
+    assert_eq!(compile_source(caught).unwrap().execute().unwrap(), "from handler");
+
+    let fatal = compile_source("<?php error_reporting(0); trigger_error('stop', E_USER_ERROR); echo 'unreachable';").unwrap()
+        .execute_with_globals(Default::default()).unwrap();
+    assert_eq!(fatal.output, "");
+    assert_eq!(fatal.exit_code, 255);
+    assert_eq!(fatal.diagnostics.len(), 1);
+    assert_eq!(fatal.diagnostics[0].level, php_runtime::DiagnosticLevel::Fatal);
+    assert_eq!(fatal.diagnostics[0].message, "stop");
+
+    let deprecated = compile_source("<?php trigger_error('deprecated', E_USER_ERROR);").unwrap()
+        .execute_with_globals(Default::default()).unwrap();
+    assert_eq!(deprecated.exit_code, 255);
+    assert_eq!(deprecated.diagnostics.iter().map(|diagnostic| diagnostic.level).collect::<Vec<_>>(), vec![
+        php_runtime::DiagnosticLevel::Deprecated,
+        php_runtime::DiagnosticLevel::Fatal,
+    ]);
+    assert!(deprecated.diagnostics[0].message.contains("Passing E_USER_ERROR to trigger_error() is deprecated since 8.4"));
+}
+
+#[test]
+fn custom_error_handlers_restore_in_nested_order() {
+    let source = r#"<?php
+        $seen = [];
+        set_error_handler(function () use (&$seen) { $seen[] = 'outer'; return true; }, E_USER_NOTICE);
+        set_error_handler(function () use (&$seen) { $seen[] = 'inner'; return true; }, E_USER_NOTICE);
+        trigger_error('one');
+        restore_error_handler();
+        trigger_error('two');
+        restore_error_handler();
+        echo implode(',', $seen);
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "inner,outer");
+    assert!(result.diagnostics.is_empty());
+}
+
+#[test]
+fn errors_raised_inside_a_handler_fall_back_without_recursive_handler_calls() {
+    let source = r#"<?php
+        $calls = 0;
+        set_error_handler(function ($severity, $message) use (&$calls) {
+            $calls++;
+            if ($message === 'outer') { trigger_error('inner', E_USER_NOTICE); }
+            return true;
+        });
+        trigger_error('outer', E_USER_NOTICE);
+        echo $calls;
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "1");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].message, "inner");
 }
