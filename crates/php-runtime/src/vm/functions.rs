@@ -1271,6 +1271,9 @@ pub(super) fn execute_instruction(
                     "sha1_file" => {
                         stack.push(sha1_file_builtin(&arguments, global_variables)?);
                     }
+                    "hash_file" => {
+                        stack.push(hash_file_builtin(&arguments, global_variables)?);
+                    }
                     "hash_hmac_file" => {
                         stack.push(hash_hmac_file_builtin(&arguments, global_variables)?);
                     }
@@ -4030,6 +4033,33 @@ fn hash_hmac_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) ->
     }
 }
 
+fn hash_file_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.len() < 2 || arguments.len() > 3 {
+        return Err(format!("ArgumentCountError:hash_file() expects 2 or 3 arguments, {} given", arguments.len()));
+    }
+    let algorithm = arguments[0].show().to_ascii_lowercase();
+    let filename = arguments[1].show();
+    let binary = arguments.get(2).is_some_and(Value::truthy);
+    if !matches!(algorithm.as_str(), "md5" | "sha1" | "crc32b") {
+        return Err(format!("ValueError:hash_file(): Argument #1 ($algo) must be a valid hashing algorithm, {algorithm} given"));
+    }
+    let Some(contents) = filesystem_path(globals, std::path::Path::new(&filename), false)
+        .and_then(|path| std::fs::read(path).ok()) else {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: format!("hash_file(): Failed to open stream: {filename}"),
+            source_file: None,
+            source_line: None,
+            output_offset: 0,
+        });
+        return Ok(Value::Bool(false));
+    };
+    let digest = crate::string_builtins::hash_digest(&algorithm, &contents).expect("algorithm checked above");
+    let output = if binary { String::from_utf8_lossy(&digest).into_owned() }
+        else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+    Ok(Value::String(output))
+}
+
 fn file_stat_value(name: &str, filename: &str, globals: &mut GlobalVariables) -> Value {
     let input_path = std::path::Path::new(filename);
     let resolved = if name.eq_ignore_ascii_case("lstat") {
@@ -6241,6 +6271,9 @@ pub(super) fn invoke_callable(
     }
     if normalized_name == "hash_hmac_file" {
         return hash_hmac_file_builtin(&arguments, global_variables);
+    }
+    if normalized_name == "hash_file" {
+        return hash_file_builtin(&arguments, global_variables);
     }
     if normalized_name == "count" {
         let mut callback_variables = HashMap::new();

@@ -8,4 +8,5 @@ file_put_contents($file, "hash me");
 echo md5_file(filename: $file), ':', function_exists('md5_file'), "\n";
 echo sha1_file(filename: $file), ':', function_exists('sha1_file'), "\n";
 echo hash_hmac_file(algo: 'sha1', filename: $file, key: 'demo key'), ':', function_exists('hash_hmac_file'), "\n";
+echo hash_file(algo: 'sha1', filename: $file), ':', function_exists('hash_file'), "\n";
 unlink($file);
