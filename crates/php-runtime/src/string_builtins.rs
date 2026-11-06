@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
@@ -40,6 +40,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "strtr" => &[0, 1, 2],
         "hash_equals" => &[0, 1],
         "hash_hmac" => &[0, 1, 2],
+        "hash" => &[0, 1],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
         "ucwords" | "str_word_count" => &[0, 2],
         "wordwrap" => &[0, 2],
@@ -1162,6 +1163,18 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
 
+    if function == "hash" {
+        if arguments.len() < 2 || arguments.len() > 3 {
+            return Err(format!("ArgumentCountError:hash() expects 2 or 3 arguments, {} given", arguments.len()));
+        }
+        let algorithm = arguments[0].show().to_ascii_lowercase();
+        let data = arguments[1].show();
+        let binary = arguments.get(2).is_some_and(Value::truthy);
+        let digest = hash_digest(&algorithm, data.as_bytes()).ok_or_else(|| format!("ValueError:hash(): Argument #1 ($algo) must be a valid hashing algorithm, {algorithm} given"))?;
+        let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        return Ok(Value::String(output));
+    }
+
     if function == "hash_hmac" {
         if arguments.len() < 3 || arguments.len() > 4 {
             return Err(format!("ArgumentCountError:hash_hmac() expects 3 or 4 arguments, {} given", arguments.len()));
@@ -1773,6 +1786,22 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => unreachable!(),
     };
     Ok(value)
+}
+
+pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
+    match algorithm.to_ascii_lowercase().as_str() {
+        "md5" => Some(md5_digest(data)),
+        "sha1" => Some(sha1_digest(data)),
+        "crc32b" => {
+            let mut crc = !0u32;
+            for byte in data {
+                crc ^= *byte as u32;
+                for _ in 0..8 { crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1))); }
+            }
+            Some((!crc).to_be_bytes().to_vec())
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {

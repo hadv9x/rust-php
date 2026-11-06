@@ -108,6 +108,22 @@ fn hash_hmac_supports_md5_sha1_named_arguments_and_callbacks() {
 }
 
 #[test]
+fn hash_supports_md5_sha1_crc32b_and_php_named_arguments() {
+    let source = r#"<?php
+        echo hash('md5', 'abc'), '|';
+        echo hash(algo: 'sha1', data: 'abc'), '|';
+        echo hash('crc32b', '123456789'), '|';
+        echo implode(',', array_map('hash', ['md5', 'sha1'], ['abc', 'abc'])), '|';
+        echo hash('md5', 'abc', binary: true) !== hash('md5', 'abc'), '|';
+        echo function_exists('hash');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "900150983cd24fb0d6963f7d28e17f72|a9993e364706816aba3e25717850c26c9cd0d89d|cbf43926|900150983cd24fb0d6963f7d28e17f72,a9993e364706816aba3e25717850c26c9cd0d89d|1|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';
