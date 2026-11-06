@@ -152,6 +152,22 @@ fn hash_pbkdf2_derives_sha1_keys_with_hex_lengths_and_callbacks() {
 }
 
 #[test]
+fn hash_hkdf_derives_deterministic_sha1_output_with_php_arguments() {
+    let source = r#"<?php
+        $derived = hash_hkdf('sha1', 'input key material', 42, 'context', 'pepper');
+        echo $derived, '|';
+        echo (hash_equals($derived, hash_hkdf(algo: 'sha1', key: 'input key material', length: 42, info: 'context', salt: 'pepper'))), '|';
+        echo hash_hkdf('sha1', 'key', 8, 'context') !== hash_hkdf('sha1', 'key', 8, 'other'), '|';
+        echo count(array_map('hash_hkdf', ['sha1'], ['key'])), '|';
+        try { hash_hkdf('sha1', '', 8); } catch (ValueError $error) { echo 'value-error|'; }
+        echo function_exists('hash_hkdf');
+    "#;
+    let expected_bytes = [0x65, 0x5b, 0xb6, 0x71, 0xa0, 0x8a, 0xfe, 0x86, 0xf6, 0x85, 0x0a, 0xc8, 0x9b, 0xa4, 0x95, 0xf0, 0x47, 0xd3, 0xf8, 0x7e, 0xf5, 0x5d, 0x0f, 0xc6, 0x13, 0x1d, 0xe1, 0xc7, 0x25, 0x5a, 0x94, 0x85, 0x45, 0xb9, 0xd7, 0xb0, 0x98, 0x86, 0x3a, 0xda, 0x1f, 0x20];
+    let expected = format!("{}|1|1|1|value-error|1", String::from_utf8_lossy(&expected_bytes));
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), expected);
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

@@ -6,7 +6,7 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos", "hash_hmac_algos", "hash_pbkdf2",
+        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos", "hash_hmac_algos", "hash_pbkdf2", "hash_hkdf",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
         "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
@@ -42,6 +42,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "hash_hmac" => &[0, 1, 2],
         "hash" => &[0, 1],
         "hash_pbkdf2" => &[0, 1, 2],
+        "hash_hkdf" => &[0, 1, 3, 4],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
         "ucwords" | "str_word_count" => &[0, 2],
         "wordwrap" => &[0, 2],
@@ -1250,6 +1251,40 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         return Ok(Value::String(hex));
     }
 
+    if function == "hash_hkdf" {
+        if arguments.len() < 2 || arguments.len() > 5 {
+            return Err(format!("ArgumentCountError:hash_hkdf() expects between 2 and 5 arguments, {} given", arguments.len()));
+        }
+        let algorithm = arguments[0].show().to_ascii_lowercase();
+        let key = arguments[1].show();
+        let length = arguments.get(2).map_or(0, |value| value.number() as i64);
+        let info = arguments.get(3).map(Value::show).unwrap_or_default();
+        let salt = arguments.get(4).map(Value::show).unwrap_or_default();
+        if key.is_empty() { return Err("ValueError:hash_hkdf(): Argument #2 ($key) cannot be empty".into()); }
+        if length < 0 { return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be greater than or equal to 0".into()); }
+        let digest = match algorithm.as_str() {
+            "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
+            "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
+            _ => return Err(format!("ValueError:hash_hkdf(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
+        };
+        let hash_length = digest(&[]).len();
+        let output_length = if length == 0 { hash_length } else { length as usize };
+        if output_length > 255 * hash_length { return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be less than or equal to 255 times the hash length".into()); }
+        let effective_salt = if salt.is_empty() { String::from_utf8(vec![0; hash_length]).unwrap() } else { salt };
+        let prk = hmac_digest_bytes(effective_salt.as_bytes(), key.as_bytes(), digest);
+        let mut output = Vec::with_capacity(output_length);
+        let mut previous = Vec::new();
+        for counter in 1..=output_length.div_ceil(hash_length) {
+            let mut message = previous;
+            message.extend_from_slice(info.as_bytes());
+            message.push(counter as u8);
+            previous = hmac_digest_bytes(&prk, &message, digest);
+            output.extend_from_slice(&previous);
+        }
+        output.truncate(output_length);
+        return Ok(Value::String(String::from_utf8_lossy(&output).into_owned()));
+    }
+
     if function == "hash_equals" {
         if arguments.len() != 2 {
             return Err(format!("ArgumentCountError:hash_equals() expects exactly 2 arguments, {} given", arguments.len()));
@@ -1863,8 +1898,12 @@ pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub(crate) fn hmac_digest(key: &str, data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
+    hmac_digest_bytes(key.as_bytes(), data, digest)
+}
+
+pub(crate) fn hmac_digest_bytes(key: &[u8], data: &[u8], digest: fn(&[u8]) -> Vec<u8>) -> Vec<u8> {
     const BLOCK_SIZE: usize = 64;
-    let mut normalized_key = key.as_bytes().to_vec();
+    let mut normalized_key = key.to_vec();
     if normalized_key.len() > BLOCK_SIZE { normalized_key = digest(&normalized_key); }
     normalized_key.resize(BLOCK_SIZE, 0);
     let mut inner = normalized_key.iter().map(|byte| byte ^ 0x36).collect::<Vec<_>>();
