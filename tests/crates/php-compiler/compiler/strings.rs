@@ -79,6 +79,19 @@ fn html_entity_decode_decodes_html4_and_numeric_entities_with_quote_flags() {
 }
 
 #[test]
+fn hash_equals_compares_strings_with_php_named_arguments_and_callbacks() {
+    let source = r#"<?php
+        echo hash_equals('same', 'same'), hash_equals(known_string: 'secret', user_string: 'secRet'), '|';
+        echo implode(',', array_map('hash_equals', ['a', 'long'], ['a', 'short'])), '|';
+        echo hash_equals('different length', 'x') === false, '|', function_exists('hash_equals');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1|1,|1|1"
+    );
+}
+
+#[test]
 fn double_quoted_strings_interpolate_simple_and_braced_variables() {
     let source = r#"<?php
         $name = 'PHP';

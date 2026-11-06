@@ -9,7 +9,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1",
         "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
         "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
-        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "str_word_count", "strspn",
+        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "str_word_count", "strspn",
         "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
         "str_starts_with", "str_ends_with", "strstr", "strchr", "stristr", "strcmp", "strcasecmp",
         "strnatcmp", "strnatcasecmp", "strncmp", "strncasecmp", "strtr", "strpos", "stripos",
@@ -38,6 +38,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "count_chars" | "crc32" | "md5" | "sha1" | "base64_encode" | "base64_decode" => &[0],
         "str_replace" | "str_ireplace" => &[0, 1, 2],
         "strtr" => &[0, 1, 2],
+        "hash_equals" => &[0, 1],
         "trim" | "ltrim" | "rtrim" => &[0, 1],
         "ucwords" | "str_word_count" => &[0, 2],
         "wordwrap" => &[0, 2],
@@ -1159,6 +1160,17 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
+
+    if function == "hash_equals" {
+        if arguments.len() != 2 {
+            return Err(format!("ArgumentCountError:hash_equals() expects exactly 2 arguments, {} given", arguments.len()));
+        }
+        let known = arguments[0].show();
+        let user = arguments[1].show();
+        if known.len() != user.len() { return Ok(Value::Bool(false)); }
+        let difference = known.as_bytes().iter().zip(user.as_bytes()).fold(0u8, |difference, (left, right)| difference | (left ^ right));
+        return Ok(Value::Bool(difference == 0));
+    }
 
     if function == "get_html_translation_table" {
         if arguments.len() > 3 {
