@@ -27,6 +27,30 @@ fn json_numeric_check_trims_ascii_whitespace_but_not_unicode_whitespace() {
 }
 
 #[test]
+fn json_numeric_check_rejects_non_numeric_float_spellings_but_keeps_numeric_overflow() {
+    let source = r#"<?php
+        echo json_encode(['NAN', 'INF', '-INF', 'Infinity', '+12', '.5', '1.', '1e400'], JSON_NUMERIC_CHECK | JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "[\"NAN\",\"INF\",\"-INF\",\"Infinity\",12,0.5,1,0]:7\n"
+    );
+}
+
+#[test]
+fn json_numeric_check_preserves_zero_fraction_when_requested() {
+    let source = r#"<?php
+        $values = ['1.0', '1e2', '1.25'];
+        echo json_encode($values, JSON_NUMERIC_CHECK), ':';
+        echo json_encode($values, JSON_NUMERIC_CHECK | JSON_PRESERVE_ZERO_FRACTION), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "[1,100,1.25]:[1.0,100.0,1.25]\n"
+    );
+}
+
+#[test]
 fn json_encode_escapes_unicode_by_default_and_supports_unescaped_flag() {
     let source = r#"<?php
         echo json_encode('café 🚀'), "\n";
@@ -41,6 +65,23 @@ fn json_encode_escapes_unicode_by_default_and_supports_unescaped_flag() {
 fn json_encode_force_object_uses_named_flag() {
     let source = r#"<?php echo json_encode([7, 8], JSON_FORCE_OBJECT), "\n";"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"0\":7,\"1\":8}\n");
+}
+
+#[test]
+fn json_encodes_closures_and_generators_as_empty_objects_but_resources_are_unsupported() {
+    let source = r#"<?php
+        function jsonGenerator() { yield 1; }
+        $closure = function () { return 'hidden'; };
+        $generator = jsonGenerator();
+        echo json_encode($closure), ':', json_encode($generator), ':';
+        $stream = fopen('php://memory', 'w+');
+        echo json_encode($stream), ':', json_last_error(), ':', JSON_ERROR_UNSUPPORTED_TYPE, ':';
+        echo json_encode($stream, JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{}:{}::8:8:null:8\n"
+    );
 }
 
 #[test]
@@ -441,7 +482,7 @@ fn json_encode_depth_range_error_reports_php_positive_range() {
 }
 
 #[test]
-fn json_partial_output_substitutes_nan_unsupported_values_and_recursion() {
+fn json_partial_output_substitutes_nan_and_recursion_but_encodes_closures_as_objects() {
     let source = r#"<?php
         echo json_encode(fdiv(1, 0), JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), ':';
         echo json_encode(function () { return 1; }, flags: JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), ':';
@@ -449,7 +490,7 @@ fn json_partial_output_substitutes_nan_unsupported_values_and_recursion() {
         $cycle = new JsonCycle(); $cycle->self = $cycle;
         echo json_encode($cycle, JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:7:null:8:{\"self\":null}:6\n");
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:7:{}:0:{\"self\":null}:6\n");
 }
 
 #[test]

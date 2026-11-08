@@ -246,8 +246,6 @@ $filterReferenceResult = array_filter($filterReferenceSource, function (&$value,
 }, ARRAY_FILTER_USE_BOTH);
 echo 'filter reference callback: ', array_key_first($filterReferenceResult), ':', $filterReferenceResult['original'], ':',
     array_key_first($filterReferenceSource), ':', $filterReferenceSource['original'], "\n";
-?>
-
 class CountableExample implements Countable { public function count(): int { return 3; } }
 class ChildCountableExample extends CountableExample {}
 echo 'Countable: ', interface_exists('Countable'), ':', count(new CountableExample()), ':', count(new ChildCountableExample()), ':', count([[1, 2], 3], COUNT_RECURSIVE), "\n";
@@ -277,6 +275,12 @@ array_shift($shiftReferenceArray);
 $shiftReferenceArray[0] = 5;
 $shiftReferenceArray[1] = 6;
 echo 'array_shift keeps remaining references: ', $shiftSharedValue, ':', $shiftRemainingValue, ':', implode(',', array_keys($shiftReferenceArray)), "\n";
+$shuffleSharedValue = 7;
+$shuffleSource = ['linked' => &$shuffleSharedValue, 'plain' => 2];
+$shuffleCopy = $shuffleSource;
+shuffle($shuffleCopy);
+if ($shuffleCopy[0] === 7) { $shuffleCopy[0] = 9; } else { $shuffleCopy[1] = 9; }
+echo 'shuffle copied references: ', implode(',', array_keys($shuffleSource)), ':', $shuffleSource['plain'], ':', $shuffleSource['linked'], ':', array_key_first($shuffleCopy), "\n";
 try {
     array_fill(9223372036854775807, 2, 'overflow');
 } catch (Error $error) {

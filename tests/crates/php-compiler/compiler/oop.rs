@@ -1801,6 +1801,18 @@ fn inactive_anonymous_class_defers_missing_trait_resolution() {
 }
 
 #[test]
+fn trait_exists_guard_defers_namespaced_missing_trait_in_anonymous_class() {
+    let source = r#"<?php
+        namespace Tests;
+        if (trait_exists(\Tests\CreatesApplication::class)) {
+            $application = new class { use CreatesApplication; };
+        }
+        echo "guarded\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "guarded\n");
+}
+
+#[test]
 fn instantiated_anonymous_class_reports_missing_trait() {
     let source = r#"<?php $value = new class { use MissingTrait; };"#;
     let error = compile_source(source).unwrap().execute().unwrap_err();

@@ -18,4 +18,31 @@ try {
 } catch (Throwable $caught) {
     echo get_class($caught), ":", $caught->getMessage(), "\n";
 }
+
+try {
+    missing_runtime_function();
+} catch (Error $error) {
+    echo get_class($error), ":", $error->getMessage(), "\n";
+}
+
+class MissingMethodExample {}
+try {
+    (new MissingMethodExample())->missingMethod();
+} catch (Error $error) {
+    echo get_class($error), ":", $error->getMessage(), "\n";
+}
+
+$nonObject = null;
+try {
+    $nonObject->missingMethod();
+} catch (Error $error) {
+    echo get_class($error), ":", $error->getMessage(), "\n";
+}
+
+class NoStringConversionExample {}
+try {
+    (string) new NoStringConversionExample();
+} catch (Error $error) {
+    echo get_class($error), ":", $error->getMessage(), "\n";
+}
 ?>

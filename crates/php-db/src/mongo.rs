@@ -17,6 +17,7 @@ type PoolPush = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type GetCollection = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
 type CollectionDestroy = unsafe extern "C" fn(*mut c_void);
 type BsonFromJson = unsafe extern "C" fn(*const u8, isize, *mut c_void) -> *mut c_void;
+type BsonNew = unsafe extern "C" fn() -> *mut c_void;
 type BsonDestroy = unsafe extern "C" fn(*mut c_void);
 type BsonAsJson = unsafe extern "C" fn(*const c_void, *mut usize) -> *mut c_char;
 type BsonFree = unsafe extern "C" fn(*mut c_void);
@@ -59,7 +60,7 @@ struct Api {
     uri_set_username: UriSetString, uri_set_password: UriSetString, uri_destroy: UriDestroy,
     pool_new: PoolNew, pool_destroy: PoolDestroy, pool_pop: PoolPop, pool_push: PoolPush,
     get_collection: GetCollection, collection_destroy: CollectionDestroy,
-    bson_from_json: BsonFromJson, bson_destroy: BsonDestroy, bson_as_json: BsonAsJson, bson_free: BsonFree,
+    bson_from_json: BsonFromJson, bson_new: BsonNew, bson_destroy: BsonDestroy, bson_as_json: BsonAsJson, bson_free: BsonFree,
     find: Find, count_documents: CountDocuments, estimated_document_count: EstimatedDocumentCount, aggregate: Aggregate, cursor_next: CursorNext, cursor_error: CursorError, cursor_destroy: CursorDestroy,
     insert_one: InsertOne, insert_many: InsertMany, replace_one: Update, update_one: Update, update_many: Update, delete_one: Delete, delete_many: Delete, command_simple: CommandSimple,
     client_start_session: ClientStartSession, session_start_transaction: SessionStartTransaction,
@@ -96,6 +97,7 @@ impl Api {
             pool_destroy: sym!("mongoc_client_pool_destroy", PoolDestroy), pool_pop: sym!("mongoc_client_pool_pop", PoolPop),
             pool_push: sym!("mongoc_client_pool_push", PoolPush), get_collection: sym!("mongoc_client_get_collection", GetCollection),
             collection_destroy: sym!("mongoc_collection_destroy", CollectionDestroy), bson_from_json: sym!("bson_new_from_json", BsonFromJson),
+            bson_new: sym!("bson_new", BsonNew),
             bson_destroy: sym!("bson_destroy", BsonDestroy), bson_as_json: sym!("bson_as_canonical_extended_json", BsonAsJson),
             bson_free: sym!("bson_free", BsonFree), find: sym!("mongoc_collection_find_with_opts", Find),
             count_documents: sym!("mongoc_collection_count_documents", CountDocuments), estimated_document_count: sym!("mongoc_collection_estimated_document_count", EstimatedDocumentCount),
@@ -314,8 +316,7 @@ fn execute_action(api: &Api, client: *mut c_void, database: *const c_char, colle
             let pointers = documents.iter().map(BsonOwner::as_ptr).map(|pointer| pointer.cast_const()).collect::<Vec<_>>();
             let options = bson(api, options)?;
             append_session(api, session, options.as_ptr())?;
-            let mut reply_storage = [0u64; 64];
-            let reply = BsonOwner { raw: NonNull::new(reply_storage.as_mut_ptr().cast()).expect("stack reply pointer is non-null"), destroy: api.bson_destroy };
+            let reply = empty_bson(api)?;
             let mut error = BsonError::new();
             let ok = unsafe { (api.insert_many)(collection.as_ptr(), pointers.as_ptr(), pointers.len(), options.as_ptr(), reply.as_ptr(), (&mut error as *mut BsonError).cast()) };
             if ok != 0 { Ok(DbResult { affected_rows: reply_count(api, reply.as_ptr(), &["insertedCount", "n"]), ..DbResult::default() }) }
@@ -326,8 +327,7 @@ fn execute_action(api: &Api, client: *mut c_void, database: *const c_char, colle
             let filter = bson(api, filter)?; let update = bson(api, update)?;
             let options = bson(api, options)?;
             append_session(api, session, options.as_ptr())?;
-            let mut reply_storage = [0u64; 64];
-            let reply = BsonOwner { raw: NonNull::new(reply_storage.as_mut_ptr().cast()).expect("stack reply pointer is non-null"), destroy: api.bson_destroy };
+            let reply = empty_bson(api)?;
             let mut error = BsonError::new();
             let ok = unsafe { update_function(collection.as_ptr(), filter.as_ptr(), update.as_ptr(), options.as_ptr(), reply.as_ptr(), (&mut error as *mut BsonError).cast()) };
             if ok != 0 {
@@ -340,8 +340,7 @@ fn execute_action(api: &Api, client: *mut c_void, database: *const c_char, colle
             let filter = bson(api, filter)?; let replacement = bson(api, replacement)?;
             let options = bson(api, options)?;
             append_session(api, session, options.as_ptr())?;
-            let mut reply_storage = [0u64; 64];
-            let reply = BsonOwner { raw: NonNull::new(reply_storage.as_mut_ptr().cast()).expect("stack reply pointer is non-null"), destroy: api.bson_destroy };
+            let reply = empty_bson(api)?;
             let mut error = BsonError::new();
             let ok = unsafe { (api.replace_one)(collection.as_ptr(), filter.as_ptr(), replacement.as_ptr(), options.as_ptr(), reply.as_ptr(), (&mut error as *mut BsonError).cast()) };
             if ok != 0 {
@@ -355,8 +354,7 @@ fn execute_action(api: &Api, client: *mut c_void, database: *const c_char, colle
             let filter = bson(api, filter)?;
             let options = bson(api, options)?;
             append_session(api, session, options.as_ptr())?;
-            let mut reply_storage = [0u64; 64];
-            let reply = BsonOwner { raw: NonNull::new(reply_storage.as_mut_ptr().cast()).expect("stack reply pointer is non-null"), destroy: api.bson_destroy };
+            let reply = empty_bson(api)?;
             let mut error = BsonError::new();
             let ok = unsafe { delete_function(collection.as_ptr(), filter.as_ptr(), options.as_ptr(), reply.as_ptr(), (&mut error as *mut BsonError).cast()) };
             if ok != 0 { Ok(DbResult { affected_rows: reply_count(api, reply.as_ptr(), &["deletedCount", "n"]), ..DbResult::default() }) } else { Err(format!("MongoDB deleteMany failed: {}", error.message())) }
@@ -399,6 +397,11 @@ fn bson(api: &Api, value: &DbValue) -> Result<BsonOwner, String> {
     Ok(BsonOwner { raw, destroy: api.bson_destroy })
 }
 
+fn empty_bson(api: &Api) -> Result<BsonOwner, String> {
+    let raw = NonNull::new(unsafe { (api.bson_new)() }).ok_or("cannot allocate MongoDB reply document")?;
+    Ok(BsonOwner { raw, destroy: api.bson_destroy })
+}
+
 fn lease_client(pool: Arc<MongoClientPool>) -> Result<MongoClientLease, String> {
     let raw = NonNull::new(unsafe { (pool.api.pool_pop)(pool.raw.as_ptr()) }).ok_or("MongoDB client pool is closed")?;
     Ok(MongoClientLease { pool, raw })
@@ -414,10 +417,15 @@ fn bson_json(api: &Api, bson: *const c_void) -> Result<String, String> {
 
 fn reply_count(api: &Api, reply: *const c_void, fields: &[&str]) -> u64 {
     bson_json(api, reply).ok().and_then(|json| json_to_value(&json).ok()).and_then(|value| match value {
-        DbValue::Document(document) => fields.iter().find_map(|field| document.iter().find(|(key, _)| key == field).map(|(_, value)| match value {
-            DbValue::Integer(value) => (*value).max(0) as u64,
-            DbValue::Float(value) => value.max(0.0) as u64,
-            _ => 0,
+        DbValue::Document(document) => fields.iter().find_map(|field| document.iter().find(|(key, _)| key == field).and_then(|(_, value)| match value {
+            DbValue::Integer(value) => u64::try_from(*value).ok(),
+            DbValue::Float(value) if *value >= 0.0 => Some(*value as u64),
+            DbValue::Document(number) => number.iter().find_map(|(kind, value)| {
+                if matches!(kind.as_str(), "$numberInt" | "$numberLong") {
+                    match value { DbValue::String(value) => value.parse().ok(), DbValue::Integer(value) => u64::try_from(*value).ok(), _ => None }
+                } else { None }
+            }),
+            _ => None,
         })),
         _ => None,
     }).unwrap_or(0)

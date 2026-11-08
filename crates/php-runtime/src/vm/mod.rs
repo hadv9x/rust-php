@@ -1361,6 +1361,9 @@ fn exception_matches(value: &Value, catch_types: &[String], classes: &HashMap<St
 }
 
 fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
+    if message == "Cannot rewind a generator that was already run" {
+        return Some(("Exception", message));
+    }
     if let Some(message) = message.strip_prefix("ReflectionException:") {
         return Some(("ReflectionException", message.trim()));
     }
@@ -1375,6 +1378,12 @@ fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
     }
     if let Some(message) = message.strip_prefix("ArithmeticError:") {
         return Some(("ArithmeticError", message.trim()));
+    }
+    if message.starts_with("Call to undefined function ")
+        || message.starts_with("Call to undefined method ")
+        || message.starts_with("Object of class ") && message.ends_with(" could not be converted to string")
+    {
+        return Some(("Error", message));
     }
     if message.to_ascii_lowercase().starts_with("cannot access private member ")
         || message.to_ascii_lowercase().starts_with("cannot access protected member ")

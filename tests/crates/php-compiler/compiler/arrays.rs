@@ -821,6 +821,22 @@ fn sorting_a_copied_array_separates_keys_but_keeps_element_references() {
 }
 
 #[test]
+fn shuffle_detaches_copied_array_keys_and_preserves_embedded_reference_cells() {
+    let source = r#"<?php
+        $shared = 7;
+        $source = ['linked' => &$shared, 'plain' => 2];
+        $copy = $source;
+        shuffle($copy);
+        if ($copy[0] === 7) { $copy[0] = 9; } else { $copy[1] = 9; }
+        echo implode(',', array_keys($source)), ':', $source['plain'], ':', $source['linked'], ':', $shared, ':', array_key_first($copy);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "linked,plain:2:9:9:0"
+    );
+}
+
+#[test]
 fn array_mutators_reject_literal_array_arguments_with_php_diagnostics() {
     for (source, expected) in [
         ("<?php array_push([], 1);", "array_push(): Argument #1 ($array) cannot be passed by reference"),

@@ -201,6 +201,37 @@ fn by_reference_yield_from_preserves_user_iterator_current_references() {
 }
 
 #[test]
+fn by_reference_yield_from_warns_for_value_returning_iterator_current() {
+    let source = r#"<?php
+        class ValueYieldFromIterator implements Iterator {
+            public $position = 0;
+            public $values = [3, 5];
+            public function rewind() { $this->position = 0; }
+            public function valid() { return $this->position < count($this->values); }
+            public function current() { return $this->values[$this->position]; }
+            public function key() { return $this->position; }
+            public function next() { $this->position++; }
+        }
+        class ValueYieldFromAggregate implements IteratorAggregate {
+            public $iterator;
+            public function __construct($iterator) { $this->iterator = $iterator; }
+            public function getIterator() { return $this->iterator; }
+        }
+        function &delegateValueIterator($iterator) { yield from $iterator; }
+        $iterator = new ValueYieldFromIterator();
+        $aggregate = new ValueYieldFromAggregate(new ValueYieldFromAggregate($iterator));
+        foreach (delegateValueIterator($aggregate) as $value) { echo $value, ','; }
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "3,5,");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result.diagnostics.iter().all(|diagnostic| {
+        diagnostic.level == php_runtime::DiagnosticLevel::Notice
+            && diagnostic.message == "Only variable references should be yielded by reference"
+    }));
+}
+
+#[test]
 fn generators_suspend_lazily_resume_loops_and_run_finally() {
     let source = r#"<?php
         function sequence() {
@@ -261,6 +292,14 @@ fn generators_suspend_lazily_resume_loops_and_run_finally() {
     let rewind_error = compile_source("<?php function values() { yield 1; yield 2; } $g = values(); $g->next(); $g->rewind();")
         .unwrap().execute().unwrap_err();
     assert!(rewind_error.contains("Cannot rewind a generator that was already run"));
+    let caught_rewind = compile_source(r#"<?php
+        function rewindValues() { yield 1; yield 2; }
+        $generator = rewindValues();
+        $generator->next();
+        try { $generator->rewind(); }
+        catch (Exception $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#).unwrap().execute().unwrap();
+    assert_eq!(caught_rewind, "Exception:Cannot rewind a generator that was already run");
 }
 
 #[test]

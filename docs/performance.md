@@ -20,6 +20,18 @@ One release-mode sample on Linux x86_64 (2026-11-04), using `examples/classes.ph
 
 This is one local sample, not a performance guarantee or a cross-platform result. Repeat the run on representative application workloads before using it for capacity planning.
 
+## HTTP server sample
+
+The concurrent HTTP harness in [`scripts/benchmark_http.py`](../scripts/benchmark_http.py) measures end-to-end requests against a running server. On the same Linux x86_64 development host, the server was started with `--root public --bind 127.0.0.1:38081 --max-in-flight 32`; `public/index.php` returns the fixed two-byte body `ok`. Three runs used 1,000 measured requests, concurrency 32, and 30 warmups:
+
+| Run | Throughput | p50 | p95 | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 1,011.1 req/s | 28.293 ms | 50.481 ms | 30.019 ms |
+| 2 | 872.6 req/s | 32.906 ms | 60.357 ms | 34.763 ms |
+| 3 | 887.3 req/s | 32.422 ms | 61.924 ms | 34.602 ms |
+
+All requests returned HTTP 200 with a nonempty body. The spread across runs shows this tiny route and shared development host are useful as a smoke baseline, not as representative application capacity data. Use a real application workload, include its database and filesystem dependencies, and repeat under controlled host load before drawing capacity conclusions. Run the harness with `python3 scripts/benchmark_http.py URL --requests 1000 --concurrency 32 --warmup 30`.
+
 ## Content-fingerprint cache sample
 
 After cache validation was strengthened to hash source contents and Composer scan-directory entries, a release run on the same Linux x86_64 host measured 300 requests per mode after 10 warmups for each of these scripts:

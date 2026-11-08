@@ -8,6 +8,7 @@ try {
 $empty_nested_depth = json_decode('[[]]', associative: true, depth: 1);
 echo 'empty-nested-depth:', $empty_nested_depth === null, ':', json_last_error(), "\n";
 $source = ["name" => "Ada 🚀", "scores" => [3, 5], "active" => true];
+function jsonExampleGenerator() { yield 1; }
 $encoded = json_encode($source);
 $decoded = json_decode($encoded, true);
 $object = json_decode($encoded);
@@ -68,9 +69,14 @@ echo json_encode("line separator", JSON_UNESCAPED_UNICODE), "\n";
 echo json_encode("line separator", JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_LINE_TERMINATORS), "\n";
 echo json_encode([7, 8], JSON_FORCE_OBJECT), "\n";
 echo json_encode([1e16, 1e17, 1e-4, 1e-5]), "\n";
+echo json_encode(['NAN', 'INF', '+12', '.5', '1.', '1e400'], JSON_NUMERIC_CHECK | JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), "\n";
+echo json_encode(['1.0', '1e2'], JSON_NUMERIC_CHECK), ':', json_encode(['1.0', '1e2'], JSON_NUMERIC_CHECK | JSON_PRESERVE_ZERO_FRACTION), "\n";
 echo json_encode([1e17, 1e16], JSON_PRESERVE_ZERO_FRACTION), "\n";
 echo $as_array["nested"]["value"], ":", is_string($big_integer), ":", json_last_error(), ":", json_last_error_msg(), "\n";
 echo json_encode([fdiv(1, 0), function () {}], JSON_PARTIAL_OUTPUT_ON_ERROR), ":", json_last_error(), "\n";
+echo json_encode(function () {}), ":", json_encode(jsonExampleGenerator()), "\n";
+$jsonStream = fopen('php://memory', 'w+');
+echo json_encode($jsonStream), ":", json_last_error(), ":", json_encode($jsonStream, JSON_PARTIAL_OUTPUT_ON_ERROR), ":", json_last_error(), "\n";
 echo json_encode('valid UTF-8 🚀', flags: JSON_INVALID_UTF8_SUBSTITUTE), "\n";
 echo json_decode('"valid"', flags: JSON_INVALID_UTF8_IGNORE), ':', json_decode('"valid"', flags: JSON_INVALID_UTF8_SUBSTITUTE), "\n";
 echo json_encode(JsonStatus::Ready), ':', json_encode(JsonMode::Ready, JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), ':', JSON_ERROR_NON_BACKED_ENUM, "\n";

@@ -1973,9 +1973,10 @@ pub(super) fn execute_instruction(
         }
         Op::CallMethod(method, _argument_count, reference_names, argument_names, unpack, access_scope, strict_types) => {
             let (mut arguments, mut reference_names, argument_names) = take_call_arguments(stack, reference_names, argument_names, unpack, classes)?;
-            let method = if method == "\0dynamic" {
-                stack.pop().ok_or("Missing dynamic method name")?.show().to_ascii_lowercase()
+            let method_display = if method == "\0dynamic" {
+                stack.pop().ok_or("Missing dynamic method name")?.show()
             } else { method.clone() };
+            let method = method_display.to_ascii_lowercase();
             if stack.is_empty() { return Err("Invalid bytecode stack".into()); }
             let object = stack.pop().ok_or("Invalid bytecode stack")?;
             if let Value::Generator(generator) = &object {
@@ -1989,7 +1990,13 @@ pub(super) fn execute_instruction(
                 )?);
                 return Ok(true);
             }
-            let Value::Object(object) = object else { return Err("Call to method on non-object".into()); };
+            let Value::Object(object) = object else {
+                let value = object.dereference();
+                return Err(format!(
+                    "Error:Call to a member function {method_display}() on {}",
+                    value.type_name(),
+                ));
+            };
             let class_name = object.borrow().class_name.clone();
             if class_name.eq_ignore_ascii_case("ReflectionClass") || class_name.eq_ignore_ascii_case("ReflectionObject") || class_name.eq_ignore_ascii_case("ReflectionClassConstant") || class_name.eq_ignore_ascii_case("ReflectionConstant") || class_name.eq_ignore_ascii_case("ReflectionEnum") || class_name.eq_ignore_ascii_case("ReflectionEnumUnitCase") || class_name.eq_ignore_ascii_case("ReflectionEnumBackedCase") || class_name.eq_ignore_ascii_case("ReflectionNamedType") || class_name.eq_ignore_ascii_case("ReflectionUnionType") || class_name.eq_ignore_ascii_case("ReflectionIntersectionType") || class_name.eq_ignore_ascii_case("ReflectionMethod") || class_name.eq_ignore_ascii_case("ReflectionProperty") || class_name.eq_ignore_ascii_case("ReflectionAttribute") || class_name.eq_ignore_ascii_case("ReflectionParameter") || class_name.eq_ignore_ascii_case("ReflectionFunction") {
                 let reflection_kind = if class_name.eq_ignore_ascii_case("ReflectionObject") { "reflectionclass".to_string() } else { class_name.to_ascii_lowercase() };
@@ -3289,7 +3296,7 @@ pub(super) fn execute_instruction(
                         &internal, variables, bindings, global_variables, global_scope, frame_id,
                         functions, classes, static_properties, output, steps,
                     )?,
-                    _ => return Err(format!("Call to undefined method {class_name}::{method}()")),
+                    _ => return Err(format!("Call to undefined method {class_name}::{method_display}()")),
                 };
                 stack.push(result);
                 return Ok(true);
@@ -3339,7 +3346,7 @@ pub(super) fn execute_instruction(
             let function = match find_method(&class_name, &method, classes) {
                 Some(function) if ensure_access(function.visibility, function.declaring_class.as_deref(), access_scope.as_deref(), classes, &method).is_ok() => function,
                 _ => {
-                    let magic = find_method(&class_name, "__call", classes).ok_or_else(|| format!("Call to undefined method {class_name}::{method}()"))?;
+                    let magic = find_method(&class_name, "__call", classes).ok_or_else(|| format!("Call to undefined method {class_name}::{method_display}()"))?;
                     let result = invoke_magic_method(&Value::Object(object.clone()), magic, &method, arguments, &argument_names, functions, classes, static_properties, global_variables, output, steps)?;
                     stack.push(result);
                     return Ok(true);
@@ -3894,7 +3901,7 @@ fn json_error_code(message: &str) -> i64 {
     else if message.contains("Inf and NaN") { 7 }
     else if message.contains("Non-backed enums") { 11 }
     else if message.contains("Invalid property name") || message.contains("decoded property name is invalid") { 9 }
-    else if message.contains("Closures") || message.contains("Generators") { 8 }
+    else if message.contains("Resources") { 8 }
     else { 4 }
 }
 

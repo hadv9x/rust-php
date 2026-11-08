@@ -26,6 +26,15 @@ echo $manual->send(42), "\n";
 $manual->next();
 echo $manual->valid() ? 'open' : 'closed', ':', $manual->getReturn(), "\n";
 
+function rewindableUntilAdvanced() { yield 1; yield 2; }
+$rewindable = rewindableUntilAdvanced();
+$rewindable->next();
+try {
+    $rewindable->rewind();
+} catch (Exception $error) {
+    echo get_class($error), ':', $error->getMessage(), "\n";
+}
+
 class GeneratorStop extends Exception {}
 function recoverFromInjectedException() {
     try {
@@ -114,6 +123,19 @@ class ExampleAggregate implements IteratorAggregate {
 function delegatedIteratorValues(iterable $values) { yield from $values; }
 foreach (delegatedIteratorValues($exampleIterator) as $key => $value) { echo 'yield-from iterator: ', $key, ':', $value, "\n"; }
 foreach (delegatedIteratorValues(new ExampleAggregate()) as $key => $value) { echo 'yield-from aggregate: ', $key, ':', $value, "\n"; }
+
+class ByValueYieldFromIterator implements Iterator {
+    private $position = 0;
+    public function rewind() { $this->position = 0; }
+    public function valid() { return $this->position < 2; }
+    public function current() { return [3, 5][$this->position]; }
+    public function key() { return $this->position; }
+    public function next() { $this->position++; }
+}
+function &byReferenceYieldFromValues($iterator) { yield from $iterator; }
+foreach (byReferenceYieldFromValues(new ByValueYieldFromIterator()) as $value) {
+    echo 'by-value iterator yield: ', $value, "\n";
+}
 
 class ExampleObjectKey {}
 function arbitraryGeneratorKeys() {

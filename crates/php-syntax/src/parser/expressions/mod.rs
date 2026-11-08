@@ -882,7 +882,7 @@ impl Parser<'_> {
                             if self.eat(&TokenKind::Rp) { break; }
                         }
                     }
-                    left = Expr::MethodCall(Box::new(left), member, arguments);
+                    left = Expr::MethodCall(Box::new(left), self.source_word(member_offset), arguments);
                 } else {
                     left = Expr::Property(Box::new(left), self.source_word(member_offset));
                 }

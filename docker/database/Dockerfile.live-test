@@ -37,5 +37,6 @@ RUN apt-get update \
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY tests ./tests
 
 ENTRYPOINT ["cargo", "test", "--locked", "-p", "php-db", "--test", "live_databases", "--", "--nocapture"]

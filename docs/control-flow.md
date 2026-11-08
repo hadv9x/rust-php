@@ -12,7 +12,10 @@ Control-flow syntax is split by feature. Loop parsing is in [`php-syntax/src/par
 - By-reference generators can delegate reference-backed array entries with `yield from`; delegated by-reference generators preserve their yielded references as well. Non-reference values still cannot be iterated by reference.
 - `yield from` also delegates user `Iterator` and nested `IteratorAggregate` chains; in a by-reference generator it preserves references returned by `Iterator::current()`.
 - By-reference generators emit PHP's `Only variable references should be yielded by reference` notice for expression yields and values delegated from non-reference-backed arrays.
+- A by-reference `yield from` over a user `Iterator` whose `current()` returns by value preserves the yielded values and emits one by-reference yield notice per item; nested `IteratorAggregate` wrappers are covered. See [`examples/generators.php`](../examples/generators.php).
+- A by-reference `yield from` over a `PDOStatement` preserves fetched rows and emits one by-reference yield notice per row; this is covered by a fake-driver integration regression. See [database compatibility](database.md).
 - `foreach (... as &$value)` preserves by-reference iteration for generator calls and other temporary iterable expressions; yielded scalar locals remain connected when the generator resumes.
+- Rewinding a generator after it has advanced beyond its first yield throws a catchable `Exception`; see the repeated-iteration example in [`examples/generators.php`](../examples/generators.php).
 - `switch` with `case`, one `default` arm, fall-through, and `break`, using braces or `: ... endswitch;`
 - `match` expressions with strict comparison, multiple condition values, one default arm, and catchable `UnhandledMatchError` when nothing matches
 - `goto` labels within one compiled context, including loop/switch exits; jumps into loop/switch regions and jumps across sibling regions are rejected. Leaving `try` with `goto` executes its `finally` block.

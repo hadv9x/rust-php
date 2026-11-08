@@ -80,16 +80,18 @@ fn encode_value(value: &Value, max_depth: usize, depth: usize, options: EncodeOp
         }
         Value::String(value) if options.numeric_check => {
             let trimmed = value.trim_matches(|character: char| matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{000b}' | '\u{000c}'));
-            if let Ok(integer) = trimmed.parse::<i64>() {
-                output.push_str(&integer.to_string());
-            } else if let Some(number) = trimmed.parse::<f64>().ok() {
-                if number.is_finite() {
-                    output.push_str(&format_json_float(number, false));
-                } else if options.partial_output {
-                    *error_code = 7;
-                    output.push('0');
-                } else {
-                    return Err("Inf and NaN cannot be JSON encoded".into());
+            if let Some((integer, number)) = parse_numeric_string(trimmed) {
+                if let Some(integer) = integer {
+                    output.push_str(&integer.to_string());
+                } else if let Some(number) = number {
+                    if number.is_finite() {
+                        output.push_str(&format_json_float(number, options.preserve_zero_fraction));
+                    } else if options.partial_output {
+                        *error_code = 7;
+                        output.push('0');
+                    } else {
+                        return Err("Inf and NaN cannot be JSON encoded".into());
+                    }
                 }
             } else {
                 encode_string(value, options, output);
@@ -123,14 +125,42 @@ fn encode_value(value: &Value, max_depth: usize, depth: usize, options: EncodeOp
             }
         }
         Value::Object(_) => unreachable!("objects are encoded with identity tracking"),
-        Value::Closure(_) | Value::Generator(_) | Value::Stream(_) => {
-            let error = match value { Value::Closure(_) => 8, Value::Generator(_) | Value::Stream(_) => 8, _ => unreachable!() };
-            if options.partial_output { *error_code = error; output.push_str("null"); }
-            else { return Err(match value { Value::Closure(_) => "Closures cannot be JSON encoded", Value::Generator(_) => "Generators cannot be JSON encoded", _ => "Resources cannot be JSON encoded" }.into()); }
+        // PHP closures and generators are objects. Like other internal objects
+        // without public properties, they encode as empty JSON objects.
+        Value::Closure(_) | Value::Generator(_) => output.push_str("{}"),
+        Value::Stream(_) => {
+            if options.partial_output { *error_code = 8; output.push_str("null"); }
+            else { return Err("Resources cannot be JSON encoded".into()); }
         }
         Value::Reference(_) => unreachable!("references are encoded with identity tracking"),
     }
     Ok(())
+}
+
+fn parse_numeric_string(value: &str) -> Option<(Option<i64>, Option<f64>)> {
+    if value.is_empty() { return None; }
+    let unsigned = value.strip_prefix(['+', '-']).unwrap_or(value);
+    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
+        Some(index) => {
+            if unsigned[index + 1..].contains(['e', 'E']) { return None; }
+            let exponent = &unsigned[index + 1..];
+            let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+            if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) { return None; }
+            (&unsigned[..index], true)
+        }
+        None => (unsigned, false),
+    };
+    let mut decimal_parts = mantissa.split('.');
+    let whole = decimal_parts.next().unwrap_or_default();
+    let fraction = decimal_parts.next();
+    if decimal_parts.next().is_some() { return None; }
+    let whole_is_digits = !whole.is_empty() && whole.bytes().all(|byte| byte.is_ascii_digit());
+    let fraction_is_digits = fraction.is_some_and(|part| part.bytes().all(|byte| byte.is_ascii_digit()));
+    if !whole_is_digits && !fraction_is_digits { return None; }
+    if !exponent && fraction.is_none() {
+        if let Ok(integer) = value.parse::<i64>() { return Some((Some(integer), None)); }
+    }
+    value.parse::<f64>().ok().map(|number| (None, Some(number)))
 }
 
 // Match zend_gcvt's shortest-roundtrip output layout: fixed notation for

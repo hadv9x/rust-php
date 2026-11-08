@@ -1366,6 +1366,27 @@ fn runtime_value_type_and_arithmetic_errors_are_catchable() {
 }
 
 #[test]
+fn calls_to_undefined_functions_and_methods_are_catchable_errors() {
+    let source = r#"<?php
+        try { missing_runtime_function(); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(), ':', $error->getLine(), "\n"; }
+        class MissingMethodTarget {}
+        try { (new MissingMethodTarget())->missingMethod(); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(), ':', $error->getLine(), "\n"; }
+        $nonObject = null;
+        try { $nonObject->missingMethod(); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(), ':', $error->getLine(), "\n"; }
+        class MissingStringConversion {}
+        try { (string) new MissingStringConversion(); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(), ':', $error->getLine(), "\n"; }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:Call to undefined function missing_runtime_function():2\nError:Call to undefined method MissingMethodTarget::missingMethod():5\nError:Call to a member function missingMethod() on null:8\nError:Object of class MissingStringConversion could not be converted to string:11\n",
+    );
+}
+
+#[test]
 fn json_throw_on_error_uses_json_exception_and_partial_output_takes_precedence() {
     let source = r#"<?php
         json_decode('{invalid');

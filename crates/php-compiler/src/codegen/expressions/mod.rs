@@ -639,7 +639,7 @@ impl CodeGenerator<'_> {
                 self.expression(object);
                 let (references, argument_names, unpack) = argument_metadata(arguments, self.current_class.clone());
                 self.call_arguments(arguments);
-                self.instructions.push(Op::CallMethod(method.to_ascii_lowercase(), arguments.len(), references, argument_names, unpack, self.current_class.clone(), self.strict_types));
+                self.instructions.push(Op::CallMethod(method.clone(), arguments.len(), references, argument_names, unpack, self.current_class.clone(), self.strict_types));
             }
             Expr::DynamicMethodCall(object, method, arguments) => {
                 let class = statically_known_receiver_class(object, self.current_class.as_deref(), &self.variable_types);

@@ -95,6 +95,26 @@ fn pdo_construct_prepare_execute_fetch_and_query_use_registered_driver() {
 }
 
 #[test]
+fn by_reference_yield_from_pdo_statement_warns_for_each_row() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
+    let registry = DatabaseRegistry::default();
+    let config = ConnectionConfig::new("yield-from", "pgsql:host=yield-from;dbname=test").unwrap();
+    registry.register(&config, Arc::new(FakePostgres)).unwrap();
+    php_runtime::set_database_registry(registry);
+    let source = r#"<?php
+        function &delegateStatement($statement) { yield from $statement; }
+        $pdo = new PDO('pgsql:host=yield-from;dbname=test');
+        $statement = $pdo->query('SELECT id, name');
+        foreach (delegateStatement($statement) as $row) { echo $row['name'], ','; }
+    "#;
+    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    assert_eq!(result.output, "Ada,");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Notice);
+    assert_eq!(result.diagnostics[0].message, "Only variable references should be yielded by reference");
+}
+
+#[test]
 fn pdo_fetch_modes_and_common_attributes_are_applied() {
     let _lock = DB_TEST_LOCK.lock().unwrap();
     let registry = DatabaseRegistry::default();
