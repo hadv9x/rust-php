@@ -401,6 +401,9 @@ fn reflection_interface_names(
     let mut current = Some(target);
     while let Some(name) = current {
         let Some(class) = classes.get(&name.to_ascii_lowercase()) else {
+            if crate::exception_builtins::is_class(name) {
+                chain.push(crate::exception_builtins::canonical_name(name).unwrap_or(name).into());
+            }
             break;
         };
         chain.push(class.name.clone());
@@ -409,7 +412,20 @@ fn reflection_interface_names(
     let mut names = Vec::new();
     let mut seen = HashSet::new();
     for name in chain.iter().rev() {
-        collect(name, classes, &mut names, &mut seen);
+        if crate::exception_builtins::is_class(name) {
+            for interface in ["Throwable", "Stringable"] {
+                if seen.insert(interface.to_ascii_lowercase()) {
+                    names.push(interface.into());
+                }
+            }
+        } else {
+            collect(name, classes, &mut names, &mut seen);
+        }
+    }
+    if target.eq_ignore_ascii_case("Throwable")
+        && seen.insert("stringable".into())
+    {
+        names.push("Stringable".into());
     }
     names
 }
@@ -6611,14 +6627,19 @@ pub(super) fn execute_instruction(
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionClass target")?
                             .show();
-                        match classes
+                        let parent_name = classes
                             .get(&target.to_ascii_lowercase())
                             .and_then(|class| class.parent.as_ref())
                             .and_then(|parent| {
                                 classes
                                     .get(&parent.to_ascii_lowercase())
                                     .map(|class| class.name.clone())
-                            }) {
+                            })
+                            .or_else(|| {
+                                crate::exception_builtins::parent_class(&target)
+                                    .map(str::to_string)
+                            });
+                        match parent_name {
                             Some(parent) => {
                                 Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
                                     class_name: "ReflectionClass".into(),

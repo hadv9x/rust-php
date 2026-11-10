@@ -95,10 +95,13 @@ fn reflection_class_recognizes_builtin_interfaces() {
                 (int) $reflection->isInterface(), (int) $reflection->isInstantiable(),
                 (int) $reflection->isAbstract(), ':';
         }
+        foreach (['Throwable', 'UnitEnum', 'BackedEnum'] as $name) {
+            echo (new ReflectionClass(strtolower($name)))->getName(), ':';
+        }
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "10101:10101:10101:10100:10101:10101:10101:10101:10101:"
+        "10101:10101:10101:10100:10101:10101:10101:10101:10101:Throwable:UnitEnum:BackedEnum:"
     );
 }
 
@@ -3270,10 +3273,17 @@ fn builtin_exception_objects_expose_core_fields_and_throwable_hierarchy() {
 #[test]
 fn standard_exception_families_have_php_parent_classes_and_catch_behavior() {
     let source = r#"<?php
+        class ReflectedRuntimeChild extends RuntimeException {}
         $logic = new BadMethodCallException('bad call');
         $runtime = new OutOfBoundsException('missing');
         echo get_parent_class($logic), ':', get_parent_class('BadMethodCallException'), ':', $logic instanceof LogicException, ':', $logic instanceof Exception, "\n";
         echo get_parent_class($runtime), ':', $runtime instanceof RuntimeException, ':', class_exists('UnexpectedValueException'), "\n";
+        $reflection = new ReflectionClass('BadMethodCallException');
+        echo $reflection->getParentClass()->getName(), ':', $reflection->getParentClass()->getParentClass()->getName(), ':',
+            (int) $reflection->isSubclassOf('LogicException'), ':', (int) $reflection->isSubclassOf('Throwable'), "\n";
+        echo implode(',', $reflection->getInterfaceNames()), ':', implode(',', array_keys($reflection->getInterfaces())), "\n";
+        echo implode(',', (new ReflectionClass('Throwable'))->getInterfaceNames()), "\n";
+        echo implode(',', (new ReflectionClass(ReflectedRuntimeChild::class))->getInterfaceNames()), "\n";
         try { throw $runtime; }
         catch (LogicException $wrong) { echo "wrong\n"; }
         catch (RuntimeException $caught) { echo $caught->getMessage(), "\n"; }
@@ -3281,7 +3291,7 @@ fn standard_exception_families_have_php_parent_classes_and_catch_behavior() {
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(
         output,
-        "BadFunctionCallException:BadFunctionCallException:1:1\nRuntimeException:1:1\nmissing\n"
+        "BadFunctionCallException:BadFunctionCallException:1:1\nRuntimeException:1:1\nBadFunctionCallException:LogicException:1:1\nThrowable,Stringable:Throwable,Stringable\nStringable\nThrowable,Stringable\nmissing\n"
     );
 }
 

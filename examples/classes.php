@@ -19,6 +19,8 @@ $internalReflection = new ReflectionClass('stdClass');
 echo 'reflection-origin:', (int) $userReflection->isUserDefined(), ':', (int) $internalReflection->isInternal(), "\n";
 $countableReflection = new ReflectionClass('Countable');
 echo 'reflection-interface:', (int) $countableReflection->isInterface(), ':', (int) $countableReflection->isInstantiable(), ':', (int) $countableReflection->isAbstract(), "\n";
+$throwableReflection = new ReflectionClass('throwable');
+echo 'reflection-interface-name:', $throwableReflection->getName(), "\n";
 $reflectionTypeBase = new ReflectionClass('ReflectionType');
 echo 'reflection-abstract-base:', (int) $reflectionTypeBase->isAbstract(), ':', (int) $reflectionTypeBase->isInstantiable(), "\n";
 $stdClassReflection = new ReflectionClass('stdClass');

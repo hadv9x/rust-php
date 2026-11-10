@@ -78,6 +78,10 @@ Unit enums implement the built-in `UnitEnum` interface, and backed enums impleme
 
 `ReflectionClass::getProperties(?int $filter = null)` returns `ReflectionProperty` objects for declared and inherited non-private properties; private properties declared on the reflected class are included, but ancestor-private properties are omitted. A filter returns properties with any matching visibility, static, or readonly modifier.
 
+`ReflectionClass::getParentClass()` also follows the built-in exception hierarchy, returning a reflection object for parents such as `BadMethodCallException` → `BadFunctionCallException` → `LogicException`; root classes and interfaces without parents return `false`.
+
+`ReflectionClass::getInterfaceNames()` and `getInterfaces()` include the native `Throwable` and inherited `Stringable` interfaces for built-in exception classes, while `Throwable` itself reports `Stringable`. Names use PHP's canonical casing.
+
 `ReflectionClass::newInstanceWithoutConstructor()` creates an instance with the declared property defaults while skipping `__construct()`. Uninitialized typed properties remain uninitialized and raise the normal error on read. Abstract classes, interfaces, traits, and enums cannot be instantiated this way. The internal `stdClass` can be created through this method as well.
 
 `ReflectionClass::newInstance(...$args)` and `newInstanceArgs(array $args = [])` invoke the reflected class constructor, forwarding positional and named arguments; array entries that contain references are preserved for by-reference constructor parameters. Constructor argument-count and type failures use the same catchable errors as ordinary construction. A non-public constructor, a non-instantiable class, or arguments supplied to a class without a constructor raises `ReflectionException`. `stdClass` is constructible with no arguments.

@@ -3,6 +3,8 @@ $cause = new Exception("root cause");
 $error = new TypeError("expected integer", 0, $cause);
 echo $error->getMessage(), ":", $error->getCode(), ":", $error->getPrevious()->getMessage(), "\n";
 echo get_class($error), ":", get_parent_class($error), ":", ($error instanceof Throwable), "\n";
+$exceptionReflection = new ReflectionClass(BadMethodCallException::class);
+echo "reflected exception parents:", $exceptionReflection->getParentClass()->getName(), ":", $exceptionReflection->getParentClass()->getParentClass()->getName(), "\n";
 echo "throwable-stringable:", ($error instanceof Stringable), ":", (new ReflectionClass(Throwable::class))->implementsInterface(Stringable::class), ":", method_exists(Throwable::class, "__toString"), "\n";
 echo $error;
 $warning = new ErrorException("warning", 0, E_WARNING, "app.php", 21);

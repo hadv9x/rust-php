@@ -475,6 +475,9 @@ pub(super) fn execute_instruction(
                         "traversable" => "Traversable".into(),
                         "stringable" => "Stringable".into(),
                         "jsonserializable" => "JsonSerializable".into(),
+                        "throwable" => "Throwable".into(),
+                        "unitenum" => "UnitEnum".into(),
+                        "backedenum" => "BackedEnum".into(),
                         other => other.to_string(),
                     }
                 } else {

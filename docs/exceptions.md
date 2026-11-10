@@ -17,6 +17,8 @@ Catch types are matched against the thrown object's class and known parent-class
 
 See [`examples/builtin-exceptions.php`](../examples/builtin-exceptions.php) for built-in construction, inheritance checks, previous exceptions, and catch matching.
 
+`ReflectionClass::getParentClass()` follows built-in exception parents, and `getInterfaceNames()`/`getInterfaces()` expose `Throwable` and inherited `Stringable` for exception classes.
+
 A catch clause may list multiple class types with `|`, for example `catch (NetworkError|StorageError $error)`. A `try` body may also have several ordered `catch` clauses; the first matching clause handles the exception, and later clauses are skipped. Since PHP 8, the catch variable may be omitted when it is not needed. See [`examples/exception-union-catch.php`](../examples/exception-union-catch.php).
 
 Trace frames for user methods preserve the declared class and method spelling in both `getTrace()` and `getTraceAsString()`, while internal lookup remains case-insensitive. See the trace example in [`examples/exceptions.php`](../examples/exceptions.php).
