@@ -176,6 +176,28 @@ fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_
 }
 
 #[test]
+fn reflection_property_is_virtual_when_hooks_do_not_access_backing_storage() {
+    let source = r#"<?php
+        class VirtualPropertySubject {
+            public string $name { get { return 'virtual'; } }
+            public int $age {
+                set { if ($value > 0) { $this->age = $value; } }
+            }
+            public string $job;
+        }
+        $reflection = new ReflectionClass(VirtualPropertySubject::class);
+        foreach (['name', 'age', 'job'] as $name) {
+            echo (int) $reflection->getProperty($name)->isVirtual(), ':';
+        }
+        echo method_exists('ReflectionProperty', 'isVirtual');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:0:0:1"
+    );
+}
+
+#[test]
 fn invalid_object_and_array_keys_raise_catchable_type_errors() {
     let source = r#"<?php
         class InvalidArrayKeyObject {}
@@ -3904,6 +3926,34 @@ fn reflection_class_reads_class_attributes_and_arguments() {
             "{method}: {error}"
         );
     }
+}
+
+#[test]
+fn reflection_class_missing_class_throws_catchable_reflection_exception() {
+    let source = r#"<?php
+        try { new ReflectionClass('MissingReflectionClass'); }
+        catch (ReflectionException $error) {
+            echo get_class($error), ':', $error->getMessage();
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionException:Class \"MissingReflectionClass\" does not exist"
+    );
+}
+
+#[test]
+fn reflection_function_missing_function_throws_catchable_reflection_exception() {
+    let source = r#"<?php
+        try { new ReflectionFunction('missing_reflected_function'); }
+        catch (ReflectionException $error) {
+            echo get_class($error), ':', $error->getMessage();
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionException:Function missing_reflected_function() does not exist"
+    );
 }
 
 #[test]

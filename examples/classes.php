@@ -717,6 +717,13 @@ class PropertyHookLifetimeExample {
     public int $computed { get { $temporary = new PropertyHookTemporaryExample(); return $this->value; } }
 }
 echo "property-hook-lifetime:", (new PropertyHookLifetimeExample())->computed, "\n";
+class VirtualPropertyExample {
+    public string $name { get { return "virtual"; } }
+    public int $age { set { if ($value > 0) { $this->age = $value; } } }
+    public string $job;
+}
+$virtualPropertyReflection = new ReflectionClass(VirtualPropertyExample::class);
+echo "reflection-property-virtual:", (int) $virtualPropertyReflection->getProperty("name")->isVirtual(), ":", (int) $virtualPropertyReflection->getProperty("age")->isVirtual(), ":", (int) $virtualPropertyReflection->getProperty("job")->isVirtual(), "\n";
 echo "reflection-relations:", $reflectionLeaf->implementsInterface("ReflectionMarker"), ":", $reflectionLeaf->isSubclassOf("ReflectionMarker"), "\n";
 class ReflectionCtorParentExample { public function __construct() {} }
 class ReflectionCtorChildExample extends ReflectionCtorParentExample {}

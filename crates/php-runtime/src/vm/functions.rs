@@ -323,6 +323,35 @@ fn reflection_method_modifiers(function: &BytecodeFunction) -> i64 {
         | if function.is_abstract { 64 } else { 0 }
 }
 
+fn reflection_property_is_virtual(property: &crate::BytecodeProperty, name: &str) -> bool {
+    let has_hook = property.get_hook.is_some() || property.set_hook.is_some();
+    has_hook
+        && !property
+            .get_hook
+            .iter()
+            .chain(property.set_hook.iter())
+            .flat_map(|hook| hook.instructions.iter())
+            .any(|instruction| match instruction {
+                Op::GetProperty(property, _)
+                | Op::GetPropertyCoalesce(property, _)
+                | Op::SetProperty(property, _, _)
+                | Op::AssignPropertyExpr(property, _, _)
+                | Op::CompoundAssignProperty(property, _, _, _)
+                | Op::CoalescePropertyJump(_, property, _)
+                | Op::CoalesceAssignProperty(property, _, _)
+                | Op::CoalescePropertyArrayJump(_, property, _, _)
+                | Op::CoalesceAssignPropertyArray(property, _, _, _)
+                | Op::AssignPropertyArray(property, _, _, _)
+                | Op::CompoundAssignPropertyArray(property, _, _, _, _)
+                | Op::AppendProperty(property, _, _)
+                | Op::AppendPropertyArray(property, _, _, _)
+                | Op::IssetProperty(property, _)
+                | Op::IssetPropertyArray(property, _, _)
+                | Op::UnsetProperty(property, _) => property.eq_ignore_ascii_case(name),
+                _ => false,
+            })
+}
+
 fn reflection_optional_int_argument(
     arguments: &[Value],
     class_name: &str,
@@ -2930,6 +2959,7 @@ pub(super) fn execute_instruction(
                                     | "getdefaultvalue"
                                     | "isdefault"
                                     | "isdynamic"
+                                    | "isvirtual"
                             ),
                             "reflectionattribute" => matches!(
                                 method.as_str(),
@@ -8466,7 +8496,7 @@ pub(super) fn execute_instruction(
                         "reflectionproperty",
                         "hastype" | "gettype" | "getmodifiers" | "ispublic" | "isprotected"
                         | "isprivate" | "isstatic" | "isreadonly" | "isprivateset"
-                        | "isprotectedset" | "ispromoted",
+                        | "isprotectedset" | "ispromoted" | "isvirtual",
                     ) => {
                         if internal
                             .get("\0dynamic_property")
@@ -8478,7 +8508,8 @@ pub(super) fn execute_instruction(
                                 "getmodifiers" => Value::Integer(1),
                                 "ispublic" => Value::Bool(true),
                                 "isprotected" | "isprivate" | "isstatic" | "isreadonly"
-                                | "isprivateset" | "isprotectedset" | "ispromoted" => {
+                                | "isprivateset" | "isprotectedset" | "ispromoted"
+                                | "isvirtual" => {
                                     Value::Bool(false)
                                 }
                                 _ => unreachable!(),
@@ -8553,6 +8584,7 @@ pub(super) fn execute_instruction(
                                         == Some(crate::MemberVisibility::Protected),
                                 ),
                                 "ispromoted" => Value::Bool(metadata.is_promoted),
+                                "isvirtual" => Value::Bool(reflection_property_is_virtual(metadata, &property)),
                                 _ => unreachable!(),
                             }
                         }

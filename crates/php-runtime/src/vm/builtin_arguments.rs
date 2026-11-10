@@ -390,6 +390,7 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionproperty::isprotectedset"
         | "reflectionproperty::ispromoted"
         | "reflectionproperty::isdynamic"
+        | "reflectionproperty::isvirtual"
         | "reflectionproperty::hasdefaultvalue"
         | "reflectionproperty::getdefaultvalue" => (&[], &[], false),
         "reflectionproperty::getvalue" => (&["object"], &[(0, N)], false),
@@ -1813,6 +1814,7 @@ mod tests {
             "reflectionproperty::isProtectedSet",
             "reflectionproperty::isPromoted",
             "reflectionproperty::isDynamic",
+            "reflectionproperty::isVirtual",
             "reflectionparameter::getName",
             "reflectionparameter::getPosition",
             "reflectionparameter::getAttributes",
