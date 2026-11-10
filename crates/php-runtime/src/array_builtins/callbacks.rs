@@ -1,8 +1,8 @@
 //! Array builtins that invoke user-provided callbacks.
 
+use super::common::*;
 use crate::{ArrayKey, BytecodeClass, RuntimeDiagnostic, Value};
 use std::collections::HashMap;
-use super::common::*;
 
 /// Visit array values and write callback modifications back through the first argument.
 pub(super) fn array_walk(
@@ -31,7 +31,15 @@ pub(super) fn array_walk_recursive(
     let mut result = entries(&args[0], "array_walk_recursive")?.to_vec();
     let mut active_references = std::collections::HashSet::new();
     let mut recursion_warned = false;
-    walk_recursive_entries(&mut result, callback, user_data, invoke, &mut active_references, &mut recursion_warned, diagnostics)?;
+    walk_recursive_entries(
+        &mut result,
+        callback,
+        user_data,
+        invoke,
+        &mut active_references,
+        &mut recursion_warned,
+        diagnostics,
+    )?;
     Ok((Value::Bool(true), Some((0, array_value(result)))))
 }
 
@@ -47,7 +55,15 @@ fn walk_recursive_entries(
     for (key, value) in entries {
         match value {
             Value::Array(nested) => {
-                walk_recursive_entries(nested, callback, user_data.clone(), invoke, active_references, recursion_warned, diagnostics)?;
+                walk_recursive_entries(
+                    nested,
+                    callback,
+                    user_data.clone(),
+                    invoke,
+                    active_references,
+                    recursion_warned,
+                    diagnostics,
+                )?;
             }
             Value::Reference(reference) => {
                 let identity = std::rc::Rc::as_ptr(reference) as usize;
@@ -66,7 +82,15 @@ fn walk_recursive_entries(
                 }
                 let current = reference.borrow().clone();
                 if let Value::Array(mut nested) = current {
-                    walk_recursive_entries(&mut nested, callback, user_data.clone(), invoke, active_references, recursion_warned, diagnostics)?;
+                    walk_recursive_entries(
+                        &mut nested,
+                        callback,
+                        user_data.clone(),
+                        invoke,
+                        active_references,
+                        recursion_warned,
+                        diagnostics,
+                    )?;
                     *reference.borrow_mut() = Value::Array(nested);
                 } else {
                     let updated = invoke(callback, current, key_value(key), user_data.clone())?;
@@ -94,7 +118,9 @@ pub(super) fn call_callback_builtin(
     match normalized_name.as_str() {
         "array_is_list" => return super::query::array_is_list(&arguments),
         "array_column" => return super::construct::array_column(&arguments, classes, diagnostics),
-        "array_count_values" => return super::construct::array_count_values(&arguments, diagnostics),
+        "array_count_values" => {
+            return super::construct::array_count_values(&arguments, diagnostics)
+        }
         "array_combine" => return super::construct::array_combine(&arguments, diagnostics),
         "array_flip" => return super::construct::array_flip(&arguments, diagnostics),
         "array_fill" => return super::construct::array_fill(&arguments),
@@ -102,7 +128,9 @@ pub(super) fn call_callback_builtin(
         "array_change_key_case" => return super::construct::array_change_key_case(&arguments),
         "array_chunk" => return super::transform::array_chunk(&arguments),
         "array_keys" => return super::query::array_keys(&arguments),
-        "array_key_exists" | "key_exists" => return super::query::key_exists(&arguments, diagnostics),
+        "array_key_exists" | "key_exists" => {
+            return super::query::key_exists(&arguments, diagnostics)
+        }
         "array_key_first" => return super::query::array_edge_key(&arguments, false),
         "array_key_last" => return super::query::array_edge_key(&arguments, true),
         "array_first" => return super::query::array_edge_value(&arguments, false),
@@ -116,12 +144,54 @@ pub(super) fn call_callback_builtin(
         "array_merge_recursive" => return super::transform::array_merge_recursive(&arguments),
         "array_replace" => return super::transform::array_replace(&arguments),
         "array_replace_recursive" => return super::transform::array_replace_recursive(&arguments),
-        "array_diff" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Values, false, stringify),
-        "array_intersect" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Values, true, stringify),
-        "array_diff_assoc" => return super::transform::array_diff(&arguments, super::transform::DiffMode::ValuesAndKeys, false, stringify),
-        "array_intersect_assoc" => return super::transform::array_diff(&arguments, super::transform::DiffMode::ValuesAndKeys, true, stringify),
-        "array_diff_key" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Keys, false, stringify),
-        "array_intersect_key" => return super::transform::array_diff(&arguments, super::transform::DiffMode::Keys, true, stringify),
+        "array_diff" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::Values,
+                false,
+                stringify,
+            )
+        }
+        "array_intersect" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::Values,
+                true,
+                stringify,
+            )
+        }
+        "array_diff_assoc" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::ValuesAndKeys,
+                false,
+                stringify,
+            )
+        }
+        "array_intersect_assoc" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::ValuesAndKeys,
+                true,
+                stringify,
+            )
+        }
+        "array_diff_key" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::Keys,
+                false,
+                stringify,
+            )
+        }
+        "array_intersect_key" => {
+            return super::transform::array_diff(
+                &arguments,
+                super::transform::DiffMode::Keys,
+                true,
+                stringify,
+            )
+        }
         "array_unique" => return super::transform::array_unique(&arguments, stringify),
         "array_reverse" => return super::transform::array_reverse(&arguments),
         "array_pad" => return super::transform::array_pad(&arguments),
@@ -145,7 +215,9 @@ pub(super) fn call_callback_builtin(
         "intval" => {
             let base = arguments.get(1).map_or(10, |value| value.number() as u32);
             if base != 0 && !(2..=36).contains(&base) {
-                return Err("ValueError:intval(): Argument #2 ($base) must be between 2 and 36".into());
+                return Err(
+                    "ValueError:intval(): Argument #2 ($base) must be between 2 and 36".into(),
+                );
             }
             let integer = match &value {
                 Value::String(text) => crate::vm::intval_string(text, base),
@@ -156,17 +228,20 @@ pub(super) fn call_callback_builtin(
         "floatval" => Value::Number(value.number()),
         "strval" => Value::String(value.show()),
         "boolval" => Value::Bool(value.truthy()),
-        "gettype" => Value::String(match value {
-            Value::Null => "NULL",
-            Value::Bool(_) => "boolean",
-            Value::Integer(_) => "integer",
-            Value::Number(_) => "double",
-            Value::String(_) => "string",
-            Value::Array(_) => "array",
-            Value::Stream(_) => "resource",
-            Value::Object(_) | Value::Closure(_) | Value::Generator(_) => "object",
-            Value::Reference(_) => unreachable!(),
-        }.into()),
+        "gettype" => Value::String(
+            match value {
+                Value::Null => "NULL",
+                Value::Bool(_) => "boolean",
+                Value::Integer(_) => "integer",
+                Value::Number(_) => "double",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Stream(_) => "resource",
+                Value::Object(_) | Value::Closure(_) | Value::Generator(_) => "object",
+                Value::Reference(_) => unreachable!(),
+            }
+            .into(),
+        ),
         "get_debug_type" => Value::String(match &value {
             Value::Null => "null".into(),
             Value::Bool(_) => "bool".into(),
@@ -187,31 +262,67 @@ pub(super) fn call_callback_builtin(
         "is_array" => Value::Bool(matches!(value, Value::Array(_))),
         "is_bool" => Value::Bool(matches!(value, Value::Bool(_))),
         "is_null" => Value::Bool(matches!(value, Value::Null)),
-        "is_object" => Value::Bool(matches!(value, Value::Object(_) | Value::Closure(_) | Value::Generator(_))),
-        "is_resource" => Value::Bool(matches!(&value, Value::Stream(stream) if stream.borrow().is_open())),
-        "is_scalar" => Value::Bool(matches!(value, Value::Bool(_) | Value::Integer(_) | Value::Number(_) | Value::String(_))),
-        "is_numeric" => Value::Bool(matches!(value, Value::Integer(_) | Value::Number(_)) || matches!(value, Value::String(s) if {
-            let text = s.trim();
-            !text.is_empty() && !matches!(text.to_ascii_lowercase().as_str(), "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf" | "infinity" | "+infinity" | "-infinity") && text.parse::<f64>().is_ok()
-        })),
-        "sum" | "add" => Value::Number(value.number() + arguments.get(1).cloned().unwrap_or(Value::Null).number()),
-        "multiply" => Value::Number(value.number() * arguments.get(1).cloned().unwrap_or(Value::Null).number()),
-        "concat" => Value::String(value.show() + &arguments.get(1).cloned().unwrap_or(Value::Null).show()),
-        "min" => { let other = arguments.get(1).cloned().unwrap_or(Value::Null); if value.number() <= other.number() { value } else { other } },
-        "max" => { let other = arguments.get(1).cloned().unwrap_or(Value::Null); if value.number() >= other.number() { value } else { other } },
+        "is_object" => Value::Bool(matches!(
+            value,
+            Value::Object(_) | Value::Closure(_) | Value::Generator(_)
+        )),
+        "is_resource" => {
+            Value::Bool(matches!(&value, Value::Stream(stream) if stream.borrow().is_open()))
+        }
+        "is_scalar" => Value::Bool(matches!(
+            value,
+            Value::Bool(_) | Value::Integer(_) | Value::Number(_) | Value::String(_)
+        )),
+        "is_numeric" => Value::Bool(
+            matches!(value, Value::Integer(_) | Value::Number(_))
+                || matches!(value, Value::String(s) if {
+                    let text = s.trim();
+                    !text.is_empty() && !matches!(text.to_ascii_lowercase().as_str(), "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf" | "infinity" | "+infinity" | "-infinity") && text.parse::<f64>().is_ok()
+                }),
+        ),
+        "sum" | "add" => Value::Number(
+            value.number() + arguments.get(1).cloned().unwrap_or(Value::Null).number(),
+        ),
+        "multiply" => Value::Number(
+            value.number() * arguments.get(1).cloned().unwrap_or(Value::Null).number(),
+        ),
+        "concat" => {
+            Value::String(value.show() + &arguments.get(1).cloned().unwrap_or(Value::Null).show())
+        }
+        "min" => {
+            let other = arguments.get(1).cloned().unwrap_or(Value::Null);
+            if value.number() <= other.number() {
+                value
+            } else {
+                other
+            }
+        }
+        "max" => {
+            let other = arguments.get(1).cloned().unwrap_or(Value::Null);
+            if value.number() >= other.number() {
+                value
+            } else {
+                other
+            }
+        }
         _ => return Err(format!("Unsupported array callback: {name}")),
     };
     Ok(result)
 }
 
 /// Keep entries for which the callback returns a truthy value.
-pub(super) fn array_filter(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>) -> Result<Value, String> {
+pub(super) fn array_filter(
+    args: &[Value],
+    invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+) -> Result<Value, String> {
     // Filtering preserves original keys; a missing callback uses PHP-like truthiness.
     require_count("array_filter", args, 1, 3)?;
     let items = entries(&args[0], "array_filter")?;
     let callback = match args.get(1) {
         None | Some(Value::Null) => None,
-        Some(Value::String(_) | Value::Closure(_) | Value::Array(_) | Value::Object(_)) => args.get(1),
+        Some(Value::String(_) | Value::Closure(_) | Value::Array(_) | Value::Object(_)) => {
+            args.get(1)
+        }
         _ => return Err("array_filter(): callback must be a valid callback or null".into()),
     };
     let mode = args.get(2).map(integer).unwrap_or(0);
@@ -231,13 +342,18 @@ pub(super) fn array_filter(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Va
                 invoke(callback, params)?.truthy()
             }
         };
-        if keep { insert(&mut result, key.clone(), value.clone()); }
+        if keep {
+            insert(&mut result, key.clone(), value.clone());
+        }
     }
     Ok(array_value(result))
 }
 
 /// Apply a callback to each corresponding value from the input arrays.
-pub(super) fn array_map(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>) -> Result<Value, String> {
+pub(super) fn array_map(
+    args: &[Value],
+    invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+) -> Result<Value, String> {
     // The callback receives corresponding values from each input array at each numeric position.
     require_count("array_map", args, 2, usize::MAX)?;
     let callback = match &args[0] {
@@ -245,16 +361,35 @@ pub(super) fn array_map(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Value
         Value::String(_) | Value::Closure(_) | Value::Array(_) | Value::Object(_) => Some(&args[0]),
         _ => return Err("array_map(): callback must be a valid callback or null".into()),
     };
-    let inputs = args[1..].iter().map(|value| entries(value, "array_map")).collect::<Result<Vec<_>, _>>()?;
+    let inputs = args[1..]
+        .iter()
+        .map(|value| entries(value, "array_map"))
+        .collect::<Result<Vec<_>, _>>()?;
     let length = inputs.iter().map(|array| array.len()).max().unwrap_or(0);
-    if callback.is_none() && inputs.len() == 1 { return Ok(args[1].clone()); }
+    if callback.is_none() && inputs.len() == 1 {
+        return Ok(args[1].clone());
+    }
 
     let mut result: Vec<(ArrayKey, Value)> = Vec::new();
     for index in 0..length {
-        let values = inputs.iter().map(|array| array.get(index).map(|(_, value)| value.clone()).unwrap_or(Value::Null)).collect::<Vec<_>>();
+        let values = inputs
+            .iter()
+            .map(|array| {
+                array
+                    .get(index)
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or(Value::Null)
+            })
+            .collect::<Vec<_>>();
         let output = match callback {
             Some(callback) => invoke(callback, values)?,
-            None => Value::array(values.into_iter().enumerate().map(|(i, value)| (ArrayKey::Integer(i as i64), value)).collect()),
+            None => Value::array(
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, value)| (ArrayKey::Integer(i as i64), value))
+                    .collect(),
+            ),
         };
         if inputs.len() == 1 {
             if let Some((key, _)) = inputs[0].get(index) {
@@ -268,7 +403,10 @@ pub(super) fn array_map(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Value
 }
 
 /// Fold the entries into one accumulator by repeatedly invoking the callback.
-pub(super) fn array_reduce(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>) -> Result<Value, String> {
+pub(super) fn array_reduce(
+    args: &[Value],
+    invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+) -> Result<Value, String> {
     // Fold in insertion order, passing the accumulator before the current item to the callback.
     require_count("array_reduce", args, 2, 3)?;
     let callback = callback_name(&args[1], "array_reduce")?;
@@ -280,7 +418,10 @@ pub(super) fn array_reduce(args: &[Value], invoke: &mut dyn FnMut(&Value, Vec<Va
 }
 
 /// The all/any reduction performed by callback array functions.
-pub(super) enum Predicate { All, Any }
+pub(super) enum Predicate {
+    All,
+    Any,
+}
 
 /// Validate and extract the supported string callback name.
 pub(super) fn callback_name<'a>(value: &'a Value, function: &str) -> Result<&'a Value, String> {
@@ -291,30 +432,52 @@ pub(super) fn callback_name<'a>(value: &'a Value, function: &str) -> Result<&'a 
 }
 
 /// Evaluate array_all or array_any, stopping when its result is known.
-pub(super) fn array_predicate(args: &[Value], predicate: Predicate, invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>) -> Result<Value, String> {
+pub(super) fn array_predicate(
+    args: &[Value],
+    predicate: Predicate,
+    invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+) -> Result<Value, String> {
     // Short-circuit as soon as the requested all/any condition is determined.
-    let name = match predicate { Predicate::All => "array_all", Predicate::Any => "array_any" };
+    let name = match predicate {
+        Predicate::All => "array_all",
+        Predicate::Any => "array_any",
+    };
     require_count(name, args, 2, 2)?;
     let callback_name = callback_name(&args[1], name)?;
     let items = entries(&args[0], name)?;
     for (key, value) in items {
         let answer = invoke(callback_name, vec![value.clone(), key_value(key)])?.truthy();
-        if matches!(predicate, Predicate::All) && !answer { return Ok(Value::Bool(false)); }
-        if matches!(predicate, Predicate::Any) && answer { return Ok(Value::Bool(true)); }
+        if matches!(predicate, Predicate::All) && !answer {
+            return Ok(Value::Bool(false));
+        }
+        if matches!(predicate, Predicate::Any) && answer {
+            return Ok(Value::Bool(true));
+        }
     }
     Ok(Value::Bool(matches!(predicate, Predicate::All)))
 }
 
 /// Return the first callback-matching value or its key.
-pub(super) fn array_find(args: &[Value], return_key: bool, invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>) -> Result<Value, String> {
-    let name = if return_key { "array_find_key" } else { "array_find" };
+pub(super) fn array_find(
+    args: &[Value],
+    return_key: bool,
+    invoke: &mut dyn FnMut(&Value, Vec<Value>) -> Result<Value, String>,
+) -> Result<Value, String> {
+    let name = if return_key {
+        "array_find_key"
+    } else {
+        "array_find"
+    };
     require_count(name, args, 2, 2)?;
     let callback_name = callback_name(&args[1], name)?;
     for (key, value) in entries(&args[0], name)? {
         if invoke(callback_name, vec![value.clone(), key_value(key)])?.truthy() {
-            return Ok(if return_key { key_value(key) } else { value.clone() });
+            return Ok(if return_key {
+                key_value(key)
+            } else {
+                value.clone()
+            });
         }
     }
     Ok(Value::Null)
 }
-

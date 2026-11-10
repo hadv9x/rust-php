@@ -28,6 +28,8 @@ Use this page to find the documentation for each part of the project.
 - [Runtime and bytecode](runtime-and-bytecode.md) — VM execution, values, arrays, objects, and errors.
 - [CLI and installation](cli-and-installation.md) — commands, local installation, and Linux package usage.
 - [Release process](release-process.md) — version tags, GitHub Release assets, and checksum verification.
+- [Release roadmap](release-roadmap.md) — proposed goals, readiness gates, and priorities from 0.2.0 through 1.0.0.
+- [0.2.0 release notes](releases/0.2.0.md) — Developer Preview scope, install instructions, and known limitations.
 - [Build, install, and test](testing.md) — reproducible build/test commands and an installed-server HTTP smoke test and load script.
 - [Web server](web-server.md) — HTTP hosting, request globals, front-controller behavior, and current limits.
 - [Database connections](database.md) — configured pools, SQL drivers, and the current PDO surface.

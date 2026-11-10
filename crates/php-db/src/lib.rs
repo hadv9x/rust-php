@@ -4,15 +4,15 @@
 //! server integration. The pool blocks only the caller waiting for a slot, so
 //! it is intended to be used from the PHP VM's blocking request worker.
 
-mod postgres;
+mod mongo;
 mod mysql;
 mod odbc;
-mod mongo;
+mod postgres;
 
-pub use postgres::PostgresDriver;
+pub use mongo::MongoDriver;
 pub use mysql::MysqlDriver;
 pub use odbc::OdbcDriver;
-pub use mongo::MongoDriver;
+pub use postgres::PostgresDriver;
 
 use std::{
     collections::HashMap,
@@ -35,7 +35,9 @@ pub enum DatabaseKind {
 impl DatabaseKind {
     /// Parse PHP/PDO-style DSN prefixes and common URI schemes.
     pub fn from_dsn(dsn: &str) -> Result<Self, String> {
-        let prefix = dsn.split_once(':').map(|(prefix, _)| prefix)
+        let prefix = dsn
+            .split_once(':')
+            .map(|(prefix, _)| prefix)
             .or_else(|| dsn.split_once("//").map(|(scheme, _)| scheme))
             .ok_or_else(|| "database DSN must include a driver scheme".to_owned())?
             .to_ascii_lowercase();
@@ -62,15 +64,26 @@ pub struct PoolOptions {
 
 impl Default for PoolOptions {
     fn default() -> Self {
-        Self { min_connections: 0, max_connections: 10, acquire_timeout: Duration::from_secs(5), idle_timeout: Some(Duration::from_secs(600)) }
+        Self {
+            min_connections: 0,
+            max_connections: 10,
+            acquire_timeout: Duration::from_secs(5),
+            idle_timeout: Some(Duration::from_secs(600)),
+        }
     }
 }
 
 impl PoolOptions {
     pub fn validate(self) -> Result<Self, String> {
-        if self.max_connections == 0 { return Err("database pool max_connections must be greater than zero".into()); }
-        if self.min_connections > self.max_connections { return Err("database pool min_connections cannot exceed max_connections".into()); }
-        if self.acquire_timeout.is_zero() { return Err("database pool acquire_timeout must be greater than zero".into()); }
+        if self.max_connections == 0 {
+            return Err("database pool max_connections must be greater than zero".into());
+        }
+        if self.min_connections > self.max_connections {
+            return Err("database pool min_connections cannot exceed max_connections".into());
+        }
+        if self.acquire_timeout.is_zero() {
+            return Err("database pool acquire_timeout must be greater than zero".into());
+        }
         Ok(self)
     }
 }
@@ -95,28 +108,55 @@ impl ConnectionConfig {
     pub fn new(name: impl Into<String>, dsn: impl Into<String>) -> Result<Self, String> {
         let name = name.into();
         let dsn = dsn.into();
-        if name.trim().is_empty() { return Err("database connection name cannot be empty".into()); }
+        if name.trim().is_empty() {
+            return Err("database connection name cannot be empty".into());
+        }
         let kind = DatabaseKind::from_dsn(&dsn)?;
-        Ok(Self { name, kind, dsn, username: None, password: None, driver: None, pool: PoolOptions::default(), max_result_rows: 1_000_000, max_column_bytes: 8 * 1024 * 1024 })
+        Ok(Self {
+            name,
+            kind,
+            dsn,
+            username: None,
+            password: None,
+            driver: None,
+            pool: PoolOptions::default(),
+            max_result_rows: 1_000_000,
+            max_column_bytes: 8 * 1024 * 1024,
+        })
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.name.trim().is_empty() { return Err("database connection name cannot be empty".into()); }
+        if self.name.trim().is_empty() {
+            return Err("database connection name cannot be empty".into());
+        }
         let detected = DatabaseKind::from_dsn(&self.dsn)?;
-        if detected != self.kind { return Err("database connection kind does not match its DSN".into()); }
+        if detected != self.kind {
+            return Err("database connection kind does not match its DSN".into());
+        }
         self.pool.validate()?;
-        if self.max_result_rows == 0 { return Err("database max_result_rows must be greater than zero".into()); }
-        if self.max_result_rows > i64::MAX as usize { return Err("database max_result_rows cannot exceed signed 64-bit range".into()); }
-        if self.max_column_bytes == 0 { return Err("database max_column_bytes must be greater than zero".into()); }
+        if self.max_result_rows == 0 {
+            return Err("database max_result_rows must be greater than zero".into());
+        }
+        if self.max_result_rows > i64::MAX as usize {
+            return Err("database max_result_rows cannot exceed signed 64-bit range".into());
+        }
+        if self.max_column_bytes == 0 {
+            return Err("database max_column_bytes must be greater than zero".into());
+        }
         Ok(())
     }
 }
 
 impl fmt::Debug for ConnectionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ConnectionConfig").field("name", &self.name).field("kind", &self.kind)
-            .field("dsn", &"[redacted]").field("username", &self.username.as_ref().map(|_| "[redacted]"))
-            .field("password", &self.password.as_ref().map(|_| "[redacted]")).field("pool", &self.pool).finish()
+        f.debug_struct("ConnectionConfig")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("dsn", &"[redacted]")
+            .field("username", &self.username.as_ref().map(|_| "[redacted]"))
+            .field("password", &self.password.as_ref().map(|_| "[redacted]"))
+            .field("pool", &self.pool)
+            .finish()
     }
 }
 
@@ -136,25 +176,70 @@ pub enum DbValue {
 /// Driver-neutral command passed from the PHP extension layer to a backend.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DbCommand {
-    Sql { statement: String, parameters: Vec<DbValue> },
+    Sql {
+        statement: String,
+        parameters: Vec<DbValue>,
+    },
     /// SQL with values passed through the backend's native parameter API.
-    PreparedSql { statement: String, parameters: Vec<DbValue> },
-    Mongo { database: String, collection: String, action: MongoAction },
+    PreparedSql {
+        statement: String,
+        parameters: Vec<DbValue>,
+    },
+    Mongo {
+        database: String,
+        collection: String,
+        action: MongoAction,
+    },
 }
 
 /// Supported collection operations for MongoDB adapters.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MongoAction {
-    Find { filter: DbValue, limit: Option<u64>, options: DbValue },
-    CountDocuments { filter: DbValue, estimated: bool, options: DbValue },
-    InsertOne { document: DbValue, options: DbValue },
-    InsertMany { documents: Vec<DbValue>, options: DbValue },
-    ReplaceOne { filter: DbValue, replacement: DbValue, options: DbValue },
-    UpdateOne { filter: DbValue, update: DbValue, options: DbValue },
-    UpdateMany { filter: DbValue, update: DbValue, options: DbValue },
-    DeleteOne { filter: DbValue, options: DbValue },
-    DeleteMany { filter: DbValue, options: DbValue },
-    Aggregate { pipeline: Vec<DbValue>, options: DbValue },
+    Find {
+        filter: DbValue,
+        limit: Option<u64>,
+        options: DbValue,
+    },
+    CountDocuments {
+        filter: DbValue,
+        estimated: bool,
+        options: DbValue,
+    },
+    InsertOne {
+        document: DbValue,
+        options: DbValue,
+    },
+    InsertMany {
+        documents: Vec<DbValue>,
+        options: DbValue,
+    },
+    ReplaceOne {
+        filter: DbValue,
+        replacement: DbValue,
+        options: DbValue,
+    },
+    UpdateOne {
+        filter: DbValue,
+        update: DbValue,
+        options: DbValue,
+    },
+    UpdateMany {
+        filter: DbValue,
+        update: DbValue,
+        options: DbValue,
+    },
+    DeleteOne {
+        filter: DbValue,
+        options: DbValue,
+    },
+    DeleteMany {
+        filter: DbValue,
+        options: DbValue,
+    },
+    Aggregate {
+        pipeline: Vec<DbValue>,
+        options: DbValue,
+    },
 }
 
 /// Driver-neutral rows and write metadata returned to the PHP runtime.
@@ -202,18 +287,37 @@ pub struct DbErrorInfo {
 
 impl DbErrorInfo {
     pub fn encode(&self) -> String {
-        format!("\0DBERR:{}:{}:{}", self.sql_state, self.driver_code.map(|code| code.to_string()).unwrap_or_default(), self.message)
+        format!(
+            "\0DBERR:{}:{}:{}",
+            self.sql_state,
+            self.driver_code
+                .map(|code| code.to_string())
+                .unwrap_or_default(),
+            self.message
+        )
     }
 
     pub fn decode(error: &str) -> Self {
         if let Some(rest) = error.strip_prefix("\0DBERR:") {
             let mut fields = rest.splitn(3, ':');
-            let sql_state = fields.next().filter(|state| state.len() == 5).unwrap_or("HY000").to_owned();
+            let sql_state = fields
+                .next()
+                .filter(|state| state.len() == 5)
+                .unwrap_or("HY000")
+                .to_owned();
             let driver_code = fields.next().and_then(|code| code.parse().ok());
             let message = fields.next().unwrap_or(rest).to_owned();
-            Self { sql_state, driver_code, message }
+            Self {
+                sql_state,
+                driver_code,
+                message,
+            }
         } else {
-            Self { sql_state: "HY000".into(), driver_code: None, message: error.to_owned() }
+            Self {
+                sql_state: "HY000".into(),
+                driver_code: None,
+                message: error.to_owned(),
+            }
         }
     }
 }
@@ -226,18 +330,29 @@ pub trait DatabaseDriver: Send + Sync + 'static {
     fn ping(&self) -> Result<(), String>;
     fn execute(&self, command: &DbCommand) -> Result<DbResult, String>;
     /// Client library version, when exposed by the native backend API.
-    fn client_version(&self) -> Option<String> { None }
+    fn client_version(&self) -> Option<String> {
+        None
+    }
     /// Return a safely quoted SQL string literal for this backend.
     fn quote_string(&self, value: &str) -> Result<String, String> {
         Ok(format!("'{}'", value.replace('\'', "''")))
     }
     fn quote_binary(&self, value: &[u8]) -> Result<String, String> {
-        Ok(format!("X'{}'", value.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+        Ok(format!(
+            "X'{}'",
+            value
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
     }
     fn start_session(&self) -> Result<Box<dyn DatabaseSession>, String> {
         Err("transactions are not supported by this database driver".into())
     }
-    fn start_session_with_timeout(&self, _acquire_timeout: Duration) -> Result<Box<dyn DatabaseSession>, String> {
+    fn start_session_with_timeout(
+        &self,
+        _acquire_timeout: Duration,
+    ) -> Result<Box<dyn DatabaseSession>, String> {
         self.start_session()
     }
 }
@@ -246,16 +361,30 @@ pub trait DatabaseDriver: Send + Sync + 'static {
 pub trait DatabaseSession: Send + 'static {
     fn execute(&mut self, command: &DbCommand) -> Result<DbResult, String>;
     /// Client library or ODBC driver version for this checked-out connection.
-    fn client_version(&self) -> Option<String> { None }
+    fn client_version(&self) -> Option<String> {
+        None
+    }
     fn quote_string(&mut self, value: &str) -> Result<String, String> {
         Ok(format!("'{}'", value.replace('\'', "''")))
     }
     fn quote_binary(&mut self, value: &[u8]) -> Result<String, String> {
-        Ok(format!("X'{}'", value.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+        Ok(format!(
+            "X'{}'",
+            value
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
     }
-    fn begin_transaction(&mut self) -> Result<(), String> { Err("transactions are not supported by this database session".into()) }
-    fn commit_transaction(&mut self) -> Result<(), String> { Err("transactions are not supported by this database session".into()) }
-    fn rollback_transaction(&mut self) -> Result<(), String> { Err("transactions are not supported by this database session".into()) }
+    fn begin_transaction(&mut self) -> Result<(), String> {
+        Err("transactions are not supported by this database session".into())
+    }
+    fn commit_transaction(&mut self) -> Result<(), String> {
+        Err("transactions are not supported by this database session".into())
+    }
+    fn rollback_transaction(&mut self) -> Result<(), String> {
+        Err("transactions are not supported by this database session".into())
+    }
 }
 
 /// Process-wide named database handles shared by concurrent request workers.
@@ -271,36 +400,85 @@ struct RegisteredDriver {
 }
 
 impl DatabaseRegistry {
-    pub fn register(&self, config: &ConnectionConfig, driver: Arc<dyn DatabaseDriver>) -> Result<(), String> {
+    pub fn register(
+        &self,
+        config: &ConnectionConfig,
+        driver: Arc<dyn DatabaseDriver>,
+    ) -> Result<(), String> {
         config.validate()?;
-        if driver.kind() != config.kind { return Err(format!("database driver kind does not match connection '{}'", config.name)); }
-        let mut drivers = self.drivers.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if drivers.contains_key(&config.name) { return Err(format!("database connection '{}' is already registered", config.name)); }
-        drivers.insert(config.name.clone(), RegisteredDriver { config: config.clone(), driver });
+        if driver.kind() != config.kind {
+            return Err(format!(
+                "database driver kind does not match connection '{}'",
+                config.name
+            ));
+        }
+        let mut drivers = self
+            .drivers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if drivers.contains_key(&config.name) {
+            return Err(format!(
+                "database connection '{}' is already registered",
+                config.name
+            ));
+        }
+        drivers.insert(
+            config.name.clone(),
+            RegisteredDriver {
+                config: config.clone(),
+                driver,
+            },
+        );
         Ok(())
     }
 
     pub fn get(&self, name: &str) -> Result<Arc<dyn DatabaseDriver>, String> {
-        self.drivers.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(name).map(|entry| Arc::clone(&entry.driver))
+        self.drivers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .map(|entry| Arc::clone(&entry.driver))
             .ok_or_else(|| format!("database connection '{name}' is not configured"))
     }
 
     /// Resolve a PHP PDO DSN to a preconfigured named handle.
-    pub fn resolve_dsn(&self, dsn: &str, username: Option<&str>, password: Option<&str>) -> Result<(String, Arc<dyn DatabaseDriver>), String> {
-        let drivers = self.drivers.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut matches = drivers.values().filter(|entry| entry.config.dsn == dsn
-            && username.is_none_or(|username| entry.config.username.as_deref() == Some(username))
-            && password.is_none_or(|password| entry.config.password.as_deref() == Some(password)));
-        let entry = matches.next()
+    pub fn resolve_dsn(
+        &self,
+        dsn: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<(String, Arc<dyn DatabaseDriver>), String> {
+        let drivers = self
+            .drivers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut matches = drivers.values().filter(|entry| {
+            entry.config.dsn == dsn
+                && username
+                    .is_none_or(|username| entry.config.username.as_deref() == Some(username))
+                && password
+                    .is_none_or(|password| entry.config.password.as_deref() == Some(password))
+        });
+        let entry = matches
+            .next()
             .ok_or_else(|| "PDO DSN does not match a configured database connection".to_owned())?;
         if matches.next().is_some() {
-            return Err("PDO DSN matches multiple configured connections; use a unique DSN or credentials".into());
+            return Err(
+                "PDO DSN matches multiple configured connections; use a unique DSN or credentials"
+                    .into(),
+            );
         }
         Ok((entry.config.name.clone(), Arc::clone(&entry.driver)))
     }
 
     pub fn names(&self) -> Vec<String> {
-        let mut names = self.drivers.read().unwrap_or_else(std::sync::PoisonError::into_inner).keys().cloned().collect::<Vec<_>>();
+        let mut names = self
+            .drivers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
         names.sort();
         names
     }
@@ -308,7 +486,9 @@ impl DatabaseRegistry {
 
 impl fmt::Debug for DatabaseRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DatabaseRegistry").field("connections", &self.names()).finish()
+        f.debug_struct("DatabaseRegistry")
+            .field("connections", &self.names())
+            .finish()
     }
 }
 
@@ -346,25 +526,52 @@ pub struct Pool<C: Send + 'static> {
 }
 
 impl<C: Send + 'static> Clone for Pool<C> {
-    fn clone(&self) -> Self { Self { inner: Arc::clone(&self.inner), options: self.options } }
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            options: self.options,
+        }
+    }
 }
 
 impl<C: Send + 'static> Pool<C> {
     pub fn new(max_connections: usize) -> Result<Self, String> {
-        if max_connections == 0 { return Err("pool max_connections must be greater than zero".into()); }
-        Self::with_options(PoolOptions { max_connections, ..PoolOptions::default() })
+        if max_connections == 0 {
+            return Err("pool max_connections must be greater than zero".into());
+        }
+        Self::with_options(PoolOptions {
+            max_connections,
+            ..PoolOptions::default()
+        })
     }
 
     pub fn with_options(options: PoolOptions) -> Result<Self, String> {
         let options = options.validate()?;
-        Ok(Self { inner: Arc::new(Inner { max: options.max_connections, state: Mutex::new(State { idle: Vec::new(), total: 0, closed: false }), available: Condvar::new() }), options })
+        Ok(Self {
+            inner: Arc::new(Inner {
+                max: options.max_connections,
+                state: Mutex::new(State {
+                    idle: Vec::new(),
+                    total: 0,
+                    closed: false,
+                }),
+                available: Condvar::new(),
+            }),
+            options,
+        })
     }
 
-    pub fn acquire<T: Connector<Connection = C>>(&self, connector: &T, timeout: Duration) -> Result<PooledConnection<C>, AcquireError<String>> {
+    pub fn acquire<T: Connector<Connection = C>>(
+        &self,
+        connector: &T,
+        timeout: Duration,
+    ) -> Result<PooledConnection<C>, AcquireError<String>> {
         let deadline = Instant::now() + timeout;
         loop {
             let mut state = lock(&self.inner.state);
-            if state.closed { return Err(AcquireError::Closed); }
+            if state.closed {
+                return Err(AcquireError::Closed);
+            }
             if let Some(idle_timeout) = self.options.idle_timeout {
                 let now = Instant::now();
                 let expirable = state.total.saturating_sub(self.options.min_connections);
@@ -379,7 +586,13 @@ impl<C: Send + 'static> Pool<C> {
                 });
                 state.total = state.total.saturating_sub(expired);
             }
-            if let Some((connection, _)) = state.idle.pop() { return Ok(PooledConnection { connection: Some(connection), pool: Arc::clone(&self.inner), reusable: true }); }
+            if let Some((connection, _)) = state.idle.pop() {
+                return Ok(PooledConnection {
+                    connection: Some(connection),
+                    pool: Arc::clone(&self.inner),
+                    reusable: true,
+                });
+            }
             if state.total < self.inner.max {
                 state.total += 1;
                 drop(state);
@@ -394,7 +607,11 @@ impl<C: Send + 'static> Pool<C> {
                             return Err(AcquireError::Closed);
                         }
                         drop(state);
-                        return Ok(PooledConnection { connection: Some(connection), pool: Arc::clone(&self.inner), reusable: true });
+                        return Ok(PooledConnection {
+                            connection: Some(connection),
+                            pool: Arc::clone(&self.inner),
+                            reusable: true,
+                        });
                     }
                     Err(error) => {
                         let mut state = lock(&self.inner.state);
@@ -405,16 +622,23 @@ impl<C: Send + 'static> Pool<C> {
                 }
             }
             let now = Instant::now();
-            if now >= deadline { return Err(AcquireError::Timeout); }
+            if now >= deadline {
+                return Err(AcquireError::Timeout);
+            }
             let waited = self.inner.available.wait_timeout(state, deadline - now);
             let (next, result) = waited.unwrap_or_else(std::sync::PoisonError::into_inner);
             drop(next);
-            if result.timed_out() { return Err(AcquireError::Timeout); }
+            if result.timed_out() {
+                return Err(AcquireError::Timeout);
+            }
         }
     }
 
     /// Open the configured minimum number of connections up front.
-    pub fn warm<T: Connector<Connection = C>>(&self, connector: &T) -> Result<(), AcquireError<String>> {
+    pub fn warm<T: Connector<Connection = C>>(
+        &self,
+        connector: &T,
+    ) -> Result<(), AcquireError<String>> {
         let mut leases = Vec::with_capacity(self.options.min_connections);
         for _ in 0..self.options.min_connections {
             leases.push(self.acquire(connector, self.options.acquire_timeout)?);
@@ -453,24 +677,41 @@ impl<C: Send + 'static> PooledConnection<C> {
 
 impl<C: Send + 'static> std::ops::Deref for PooledConnection<C> {
     type Target = C;
-    fn deref(&self) -> &C { self.connection.as_ref().expect("pooled connection lease is present") }
+    fn deref(&self) -> &C {
+        self.connection
+            .as_ref()
+            .expect("pooled connection lease is present")
+    }
 }
 
 impl<C: Send + 'static> std::ops::DerefMut for PooledConnection<C> {
-    fn deref_mut(&mut self) -> &mut C { self.connection.as_mut().expect("pooled connection lease is present") }
+    fn deref_mut(&mut self) -> &mut C {
+        self.connection
+            .as_mut()
+            .expect("pooled connection lease is present")
+    }
 }
 
 impl<C: Send + 'static> Drop for PooledConnection<C> {
     fn drop(&mut self) {
-        let Some(connection) = self.connection.take() else { return; };
+        let Some(connection) = self.connection.take() else {
+            return;
+        };
         let mut state = lock(&self.pool.state);
-        if state.closed || !self.reusable { state.total = state.total.saturating_sub(1); }
-        else { state.idle.push((connection, Instant::now())); }
+        if state.closed || !self.reusable {
+            state.total = state.total.saturating_sub(1);
+        } else {
+            state.idle.push((connection, Instant::now()));
+        }
         self.pool.available.notify_one();
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> { mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 #[cfg(test)]
 #[path = "../../../tests/crates/php-db/db/lib.rs"]

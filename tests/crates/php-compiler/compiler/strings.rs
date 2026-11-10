@@ -139,31 +139,47 @@ fn hash_supports_md5_sha1_sha256_crc32b_and_php_named_arguments() {
 #[test]
 fn hash_algos_lists_the_supported_generic_hash_algorithms() {
     let source = "<?php echo implode(',', hash_algos()), '|', function_exists('hash_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha224,sha256,sha384,sha512,sha3-224,sha3-256,sha3-384,sha3-512,crc32b|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "md5,sha1,sha224,sha256,sha384,sha512,sha3-224,sha3-256,sha3-384,sha3-512,crc32b|1"
+    );
 }
 
 #[test]
 fn hash_hmac_algos_lists_only_supported_hmac_algorithms() {
-    let source = "<?php echo implode(',', hash_hmac_algos()), '|', function_exists('hash_hmac_algos');";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "md5,sha1,sha224,sha256,sha384,sha512,sha3-224,sha3-256,sha3-384,sha3-512|1");
+    let source =
+        "<?php echo implode(',', hash_hmac_algos()), '|', function_exists('hash_hmac_algos');";
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "md5,sha1,sha224,sha256,sha384,sha512,sha3-224,sha3-256,sha3-384,sha3-512|1"
+    );
 }
 
 #[test]
 fn hash_sha256_pbkdf2_matches_rfc_vector() {
     let source = "<?php echo hash_pbkdf2('sha256', 'password', 'salt', 1, 64);";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+    );
 }
 
 #[test]
 fn hash_sha224_pbkdf2_matches_reference_vector() {
     let source = "<?php echo hash_pbkdf2('sha224', 'password', 'salt', 1, 56);";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3c198cbdb9464b7857966bd05b7bc92bc1cc4e6e63155d4e490557fd");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "3c198cbdb9464b7857966bd05b7bc92bc1cc4e6e63155d4e490557fd"
+    );
 }
 
 #[test]
 fn hash_sha3_256_pbkdf2_matches_reference_vector() {
     let source = "<?php echo hash_pbkdf2('sha3-256', 'password', 'salt', 1, 64);";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "94613f3ee2ea730e0b06754f3fc816d4f87c9be9cbd8556b5d59b52330e333a8");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "94613f3ee2ea730e0b06754f3fc816d4f87c9be9cbd8556b5d59b52330e333a8"
+    );
 }
 
 #[test]
@@ -245,8 +261,15 @@ fn hash_hkdf_derives_deterministic_sha1_output_with_php_arguments() {
         try { hash_hkdf('sha1', '', 8); } catch (ValueError $error) { echo 'value-error|'; }
         echo function_exists('hash_hkdf');
     "#;
-    let expected_bytes = [0x65, 0x5b, 0xb6, 0x71, 0xa0, 0x8a, 0xfe, 0x86, 0xf6, 0x85, 0x0a, 0xc8, 0x9b, 0xa4, 0x95, 0xf0, 0x47, 0xd3, 0xf8, 0x7e, 0xf5, 0x5d, 0x0f, 0xc6, 0x13, 0x1d, 0xe1, 0xc7, 0x25, 0x5a, 0x94, 0x85, 0x45, 0xb9, 0xd7, 0xb0, 0x98, 0x86, 0x3a, 0xda, 0x1f, 0x20];
-    let expected = format!("{}|1|1|1|value-error|1", String::from_utf8_lossy(&expected_bytes));
+    let expected_bytes = [
+        0x65, 0x5b, 0xb6, 0x71, 0xa0, 0x8a, 0xfe, 0x86, 0xf6, 0x85, 0x0a, 0xc8, 0x9b, 0xa4, 0x95,
+        0xf0, 0x47, 0xd3, 0xf8, 0x7e, 0xf5, 0x5d, 0x0f, 0xc6, 0x13, 0x1d, 0xe1, 0xc7, 0x25, 0x5a,
+        0x94, 0x85, 0x45, 0xb9, 0xd7, 0xb0, 0x98, 0x86, 0x3a, 0xda, 0x1f, 0x20,
+    ];
+    let expected = format!(
+        "{}|1|1|1|value-error|1",
+        String::from_utf8_lossy(&expected_bytes)
+    );
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), expected);
 }
 
@@ -273,7 +296,10 @@ fn double_quoted_strings_interpolate_simple_and_braced_variables() {
         $render = function () use ($name) { return "inside $name"; };
         echo '|', $render();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hello PHP!|hello PHP!|literal $name|escaped $name|inside PHP");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "hello PHP!|hello PHP!|literal $name|escaped $name|inside PHP"
+    );
 }
 
 #[test]
@@ -282,15 +308,26 @@ fn dollar_brace_interpolation_evaluates_and_reports_php_deprecation() {
         $name = 'Ada';
         echo "${name}";
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "Ada");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert_eq!(result.diagnostics[0].message, "Using ${name} in strings is deprecated, use {$name} instead");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "Using ${name} in strings is deprecated, use {$name} instead"
+    );
     assert_eq!(result.diagnostics[0].source_line, Some(3));
 
     let suppressed = compile_source(r#"<?php error_reporting(0); $name = 'Ada'; echo "${name}";"#)
-        .unwrap().execute_with_globals(Default::default()).unwrap();
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(suppressed.output, "Ada");
     assert!(suppressed.diagnostics.is_empty());
 }
@@ -302,11 +339,20 @@ fn dollar_brace_variable_variable_interpolation_reports_php_deprecation() {
         $answer = '42';
         echo "${$selected}";
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "42");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert_eq!(result.diagnostics[0].message, "Using ${expr} (variable variables) in strings is deprecated, use {${expr}} instead");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "Using ${expr} (variable variables) in strings is deprecated, use {${expr}} instead"
+    );
     assert_eq!(result.diagnostics[0].source_line, Some(4));
 }
 
@@ -318,10 +364,16 @@ fn heredoc_supports_legacy_deprecated_interpolation() {
 ${name}
 TEXT;
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "Ada");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
     assert_eq!(result.diagnostics[0].source_line, Some(3));
 }
 
@@ -333,7 +385,10 @@ fn double_quoted_strings_interpolate_braced_property_and_array_offsets() {
         $values = ['key' => 'value'];
         echo "{$object->name}|{$values['key']}";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Ada|value");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Ada|value"
+    );
 }
 
 #[test]
@@ -344,7 +399,10 @@ fn double_quoted_strings_interpolate_dynamic_property_names() {
         $property = 'label';
         echo "{$object->$property}|{$object->{$property}}";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "dynamic|dynamic");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "dynamic|dynamic"
+    );
 }
 
 #[test]
@@ -356,7 +414,10 @@ fn double_quoted_strings_interpolate_variable_variables_and_dynamic_offsets() {
         $values = ['key' => 'value'];
         echo "{$$selected}|{$values[$offset]}";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42|value");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "42|value"
+    );
 }
 
 #[test]
@@ -368,14 +429,25 @@ fn sprintf_supports_common_format_conversions_positions_named_args_and_callbacks
         echo implode(',', array_map('sprintf', ['%02d', '%02d'], [3, 9])), '|';
         echo function_exists('sprintf');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value:0007:1.25:%|named-12|0x001f:-0007|03,09|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "value:0007:1.25:%|named-12|0x001f:-0007|03,09|1"
+    );
 }
 
 #[test]
 fn sprintf_rejects_unknown_conversion_and_missing_value() {
-    let unknown = compile_source("<?php try { sprintf('%q', 1); } catch (ValueError $error) { echo 'specifier'; }").unwrap().execute().unwrap();
+    let unknown = compile_source(
+        "<?php try { sprintf('%q', 1); } catch (ValueError $error) { echo 'specifier'; }",
+    )
+    .unwrap()
+    .execute()
+    .unwrap();
     assert_eq!(unknown, "specifier");
-    let missing = compile_source("<?php sprintf('%s');").unwrap().execute().unwrap_err();
+    let missing = compile_source("<?php sprintf('%s');")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(missing.contains("Too few arguments"), "{missing}");
 }
 
@@ -389,7 +461,10 @@ fn sprintf_supports_custom_padding_and_dynamic_width_precision() {
         echo sprintf('%*.*f', 8, 2, 1.5), '|';
         echo sprintf('%8c', 65);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "_____fox|     fox|fox     |fo|    1.50|A");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "_____fox|     fox|fox     |fo|    1.50|A"
+    );
 }
 
 #[test]
@@ -402,12 +477,18 @@ fn parse_str_decodes_query_values_and_builds_nested_arrays_by_reference() {
         echo $result['a_b'], '|', $result['empty'], '|', isset($result['old']) ? 'old' : 'cleared', '|';
         echo function_exists('parse_str');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "one two|Ada|admin,editor|x,y|new||cleared|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "one two|Ada|admin,editor|x,y|new||cleared|1"
+    );
 }
 
 #[test]
 fn parse_str_requires_a_writable_output_variable() {
-    let error = compile_source("<?php parse_str('a=1', []);").unwrap().execute().unwrap_err();
+    let error = compile_source("<?php parse_str('a=1', []);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(error.contains("cannot be passed by reference"), "{error}");
 }
 
@@ -427,7 +508,10 @@ fn printf_family_formats_arrays_writes_output_and_streams() {
         echo implode('', array_map('vsprintf', ['%02d', '%02d'], [[9], [10]])), '|';
         echo function_exists('printf'), function_exists('vprintf'), function_exists('vsprintf'), function_exists('fprintf');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "direct:04|array:05|printf:06|9|vprintf:07|10|stream:08|9|0910|1111");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "direct:04|array:05|printf:06|9|vprintf:07|10|stream:08|9|0910|1111"
+    );
 }
 
 #[test]
@@ -439,7 +523,10 @@ fn url_encoding_helpers_match_form_and_rfc3986_rules_and_dispatch_by_name() {
         echo array_map('rawurlencode', ['a b', 'x/y'])[1], '|';
         echo function_exists('urlencode'), function_exists('urldecode'), function_exists('rawurlencode'), function_exists('rawurldecode');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "a+b%2Bc%2F%C3%A9%7E|a%20b%2Bc%2F%C3%A9~|a b+c/é~|a+b+c/é~|x%2Fy|1111");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "a+b%2Bc%2F%C3%A9%7E|a%20b%2Bc%2F%C3%A9~|a b+c/é~|a+b+c/é~|x%2Fy|1111"
+    );
 }
 
 #[test]
@@ -456,7 +543,10 @@ fn nl2br_preserves_newlines_and_supports_xhtml_named_and_callback_calls() {
         echo implode(',', array_map('nl2br', ["a\rb", "c\nd"], [false, true])), "|";
         echo function_exists('nl2br');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "é<br />\r\nA<br />\n\rB<br />\rC|x<br>\ny|a<br>\rb,c<br />\nd|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "é<br />\r\nA<br />\n\rB<br />\rC|x<br>\ny|a<br>\rb,c<br />\nd|1"
+    );
 }
 
 #[test]
@@ -508,7 +598,10 @@ fn substr_compare_supports_named_arguments_callbacks_and_php_value_errors() {
         try { substr_compare('abc', 'x', 4); } catch (ValueError $error) { echo get_class($error), ':'; }
         try { substr_compare('abc', 'x', 1, -1); } catch (ValueError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:0:0:0:1:0:0:1:ValueError:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:0:0:0:1:0:0:1:ValueError:ValueError"
+    );
 }
 
 #[test]
@@ -520,7 +613,10 @@ fn strtok_keeps_token_state_skips_repeated_delimiters_and_resets() {
         echo implode('|', $first), ':', function_exists('strtok'), ':';
         echo strtok("a\tb\nc", "\t\n"), ':', strtok("\t\n");
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "alpha:beta:1:left:right:red|green:1:a:b");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "alpha:beta:1:left:right:red|green:1:a:b"
+    );
 }
 
 #[test]
@@ -534,7 +630,10 @@ fn levenshtein_supports_weighted_costs_named_arguments_bytes_and_callbacks() {
         echo implode('|', array_map('levenshtein', ['abc', 'kitten'], ['abd', 'sitting'])), ':';
         echo function_exists('levenshtein');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3:2:2:5:2:1|3:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "3:2:2:5:2:1|3:1"
+    );
 }
 
 #[test]
@@ -549,7 +648,10 @@ fn similar_text_returns_ordered_matches_and_writes_percent_by_reference() {
         echo implode('|', array_map('similar_text', ['abc', 'kitten'], ['abd', 'sitting'])), ':';
         try { similar_text('a', 'b', 0); } catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "5:71.428571:3:42.857143:0:1:2|4:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "5:71.428571:3:42.857143:0:1:2|4:TypeError"
+    );
 }
 
 #[test]
@@ -563,7 +665,10 @@ fn gettimeofday_returns_php_fields_float_mode_and_callback_results() {
         echo is_float(gettimeofday(as_float: true)), ':', is_array($mapped[0]), ':', is_float($mapped[1]), ':';
         echo function_exists('gettimeofday');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:4:1:1:1:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:4:1:1:1:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -577,7 +682,10 @@ fn basename_and_dirname_support_path_components_named_args_and_callbacks() {
         echo array_map('dirname', ['/a/b/file.txt'], [2])[0], ':';
         try { dirname('/tmp/file', 0); } catch (ValueError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "sudoers:etc::.:report:/usr:config:.:/:1:1:one.txt:/a:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "sudoers:etc::.:report:/usr:config:.:/:1:1:one.txt:/a:ValueError"
+    );
 }
 
 #[test]
@@ -593,7 +701,10 @@ fn pathinfo_returns_path_parts_and_supports_named_flags_and_callbacks() {
         echo PATHINFO_ALL, ':', function_exists('pathinfo'), ':';
         try { pathinfo('file.txt', 3); } catch (ValueError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "/www/htdocs/inc|lib.inc.php|php|lib.inc:file.tar::env::txt:15:1:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "/www/htdocs/inc|lib.inc.php|php|lib.inc:file.tar::env::txt:15:1:ValueError"
+    );
 }
 
 #[test]
@@ -605,7 +716,10 @@ fn strip_tags_removes_markup_and_comments_with_allowed_tags_named_args_and_callb
         echo array_map('strip_tags', ['<b>A</b>', '<i>B</i>'], ['<b>', ''])[0], ':';
         echo function_exists('strip_tags');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Hello <b class=\"x\">world</b>!:linktail:<b>A</b>:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Hello <b class=\"x\">world</b>!:linktail:<b>A</b>:1"
+    );
 }
 
 #[test]
@@ -615,7 +729,10 @@ fn stripcslashes_decodes_c_escapes_and_dispatches_as_a_callback() {
         echo str_replace("\n", '|', $decoded), ':', array_map('stripcslashes', ['x\\t', 'y\\101'])[1], ':';
         echo function_exists('stripcslashes');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "A|B!Aq:yA:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "A|B!Aq:yA:1"
+    );
 }
 
 #[test]
@@ -626,7 +743,10 @@ fn addcslashes_supports_control_escapes_ranges_named_args_and_callbacks() {
         echo implode('|', array_map('addcslashes', ['abc', 'xyz'], ['a', 'z'])), ':';
         echo function_exists('addcslashes');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "\\f\\o\\o\\[\\]:A\\nB:\\abc|xy\\z:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "\\f\\o\\o\\[\\]:A\\nB:\\abc|xy\\z:1"
+    );
 }
 
 #[test]
@@ -639,16 +759,28 @@ fn str_getcsv_parses_quoted_fields_and_binds_named_controls() {
         try { str_getcsv('a,b', separator: '::'); }
         catch (ValueError $error) { echo ':', get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "one|two,three|a\"b:left|right:1:1:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "one|two,three|a\"b:left|right:1:1:ValueError"
+    );
 }
 
 #[test]
 fn str_getcsv_warns_when_escape_uses_its_deprecated_default() {
     let source = "<?php\n$fields = str_getcsv('a,b');\nerror_reporting(0);\nstr_getcsv('c,d');";
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert_eq!(result.diagnostics[0].message, "str_getcsv(): the $escape parameter must be provided as its default value will change");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "str_getcsv(): the $escape parameter must be provided as its default value will change"
+    );
     assert_eq!(result.diagnostics[0].source_line, Some(2));
 }
 
@@ -660,12 +792,24 @@ fn hex2bin_decodes_and_warns_for_invalid_hex_through_direct_and_callback_calls()
         $invalid = array_map('hex2bin', ['0g']);
         echo ($odd === false), ':', ($invalid[0] === false), ':', function_exists('hex2bin');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "Hi:AB:1:1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[0].message, "hex2bin(): Hexadecimal input string must have an even length");
-    assert_eq!(result.diagnostics[1].message, "hex2bin(): Input string must be hexadecimal string");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "hex2bin(): Hexadecimal input string must have an even length"
+    );
+    assert_eq!(
+        result.diagnostics[1].message,
+        "hex2bin(): Input string must be hexadecimal string"
+    );
 }
 
 #[test]
@@ -673,10 +817,16 @@ fn chr_wraps_to_a_byte_and_deprecates_out_of_range_values() {
     let source = r#"<?php
         echo chr(codepoint: 65), ':', chr(-159), ':', implode('', array_map('chr', [833])), ':', function_exists('chr');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "A:a:A:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|item| item.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|item| item.level == php_runtime::DiagnosticLevel::Deprecated));
     assert!(result.diagnostics.iter().all(|item| item.message == "chr(): Providing a value not in-between 0 and 255 is deprecated, this is because a byte value must be in the [0, 255] interval. The value used will be constrained using % 256"));
 }
 
@@ -694,7 +844,10 @@ fn count_chars_supports_all_byte_modes_and_callback_dispatch() {
         echo (strpos($absent, 'a') === false), ':', count($mapped[0]), ':', function_exists('count_chars');
         try { count_chars('x', 5); } catch (ValueError $error) { echo ':', get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "256:2:1:2:254:ab:1:2:1:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "256:2:1:2:254:ab:1:2:1:ValueError"
+    );
 }
 
 #[test]
@@ -743,7 +896,10 @@ fn strtr_supports_named_arguments_and_array_callbacks() {
         echo strtr('ababa', ['a' => 'X', 'ab' => 'Y']), ':';
         echo implode(',', array_map('strtr', ['abc', 'def'], ['abc', 'def'], ['ABC', 'DEF'])), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hippo:YYX:ABC,DEF\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "hippo:YYX:ABC,DEF\n"
+    );
 }
 
 #[test]
@@ -752,7 +908,10 @@ fn strtr_rejects_named_arguments_for_the_alternative_overload() {
         echo strtr(replace_pairs: ['ab' => 'X', 'a' => 'Y'], string: 'ababa'), "\n";
     "#;
     let error = compile_source(source).unwrap().execute().unwrap_err();
-    assert!(error.contains("unknown named parameter '$replace_pairs'"), "{error}");
+    assert!(
+        error.contains("unknown named parameter '$replace_pairs'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -763,7 +922,10 @@ fn reverse_string_search_and_substring_count_support_named_arguments() {
         echo substr_count(haystack: 'banana', needle: 'ana'), ':';
         echo substr_count('banana', 'a', offset: 2, length: 3), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:4:1:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:4:1:1\n"
+    );
 }
 
 #[test]
@@ -773,7 +935,10 @@ fn strstr_and_chr_alias_support_named_calls_and_callbacks() {
         echo strchr('name@example.test', '@', before_needle: true), ':';
         echo implode(',', array_map('strstr', ['a-b', 'c-d'], ['-', '-'])), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "@example.test:name:-b,-d\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "@example.test:name:-b,-d\n"
+    );
 }
 
 #[test]
@@ -783,7 +948,10 @@ fn crc32_returns_php_integer_checksum_and_dispatches_as_callback() {
         $callbacks = array_map('crc32', ['', '123456789']);
         echo $checksum, ':', $callbacks[0], ':', $callbacks[1], ':', function_exists('crc32');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1095738169:0:3421780262:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1095738169:0:3421780262:1"
+    );
 }
 
 #[test]
@@ -797,7 +965,10 @@ fn base64_functions_encode_decode_tolerant_and_strict_inputs() {
         echo $tolerant, ':', $strict === false, ':', $whitespace, ':';
         echo function_exists('base64_encode'), ':', function_exists('base64_decode');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "UEhQ:UEhQ:UnVzdA==:Hello!:1:Hello:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "UEhQ:UEhQ:UnVzdA==:Hello!:1:Hello:1:1"
+    );
 }
 
 #[test]
@@ -808,5 +979,8 @@ fn str_shuffle_uses_named_string_argument_and_preserves_ascii_bytes() {
         sort($characters);
         echo strlen($shuffled), ':', implode('', $characters), ':', function_exists('str_shuffle'), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "12:aabbccddeeff:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "12:aabbccddeeff:1\n"
+    );
 }

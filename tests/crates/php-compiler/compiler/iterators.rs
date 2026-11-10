@@ -27,7 +27,10 @@ fn foreach_by_reference_uses_reference_returning_iterator_current() {
         unset($value);
         echo implode(',', $wrappedIterator->values);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "30,50|4,6");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "30,50|4,6"
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn foreach_by_reference_rejects_iterators_that_return_values_not_references() {
         foreach ($iterator as &$value) {}
     "#;
     let error = compile_source(source).unwrap().execute().unwrap_err();
-    assert!(error.contains("An iterator cannot be used with foreach by reference"), "{error}");
+    assert!(
+        error.contains("An iterator cannot be used with foreach by reference"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -71,14 +77,24 @@ fn by_reference_generators_report_notices_for_non_reference_yields() {
         }
         foreach (noticeGenerator() as $value) { echo $value, ','; }
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "3,4,");
     assert_eq!(result.diagnostics.len(), 2);
     assert!(result.diagnostics.iter().all(|diagnostic| {
         diagnostic.level == php_runtime::DiagnosticLevel::Notice
             && diagnostic.message == "Only variable references should be yielded by reference"
     }));
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(3), Some(4)]);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.source_line)
+            .collect::<Vec<_>>(),
+        vec![Some(3), Some(4)]
+    );
 }
 
 #[test]
@@ -136,7 +152,10 @@ fn foreach_object_visibility_and_reference_writes_follow_declaring_class_scope()
         $object->updateVisibleProperties();
         echo $object->childSecret();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "parent-private|protected:child-private:hidden-parent-private|updated");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "parent-private|protected:child-private:hidden-parent-private|updated"
+    );
 }
 
 #[test]
@@ -222,7 +241,10 @@ fn by_reference_yield_from_warns_for_value_returning_iterator_current() {
         $aggregate = new ValueYieldFromAggregate(new ValueYieldFromAggregate($iterator));
         foreach (delegateValueIterator($aggregate) as $value) { echo $value, ','; }
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "3,5,");
     assert_eq!(result.diagnostics.len(), 2);
     assert!(result.diagnostics.iter().all(|diagnostic| {
@@ -289,17 +311,29 @@ fn generators_suspend_lazily_resume_loops_and_run_finally() {
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "created;start;0:10;middle;1:20;end;named:A;4:B;5:C;safe;finally;3;4;closure;7;99;99;Generator:class:valid:1:0;42;closed:9;1:1;;instance:is-a:method;2;");
-    let rewind_error = compile_source("<?php function values() { yield 1; yield 2; } $g = values(); $g->next(); $g->rewind();")
-        .unwrap().execute().unwrap_err();
+    let rewind_error = compile_source(
+        "<?php function values() { yield 1; yield 2; } $g = values(); $g->next(); $g->rewind();",
+    )
+    .unwrap()
+    .execute()
+    .unwrap_err();
     assert!(rewind_error.contains("Cannot rewind a generator that was already run"));
-    let caught_rewind = compile_source(r#"<?php
+    let caught_rewind = compile_source(
+        r#"<?php
         function rewindValues() { yield 1; yield 2; }
         $generator = rewindValues();
         $generator->next();
         try { $generator->rewind(); }
         catch (Exception $error) { echo get_class($error), ':', $error->getMessage(); }
-    "#).unwrap().execute().unwrap();
-    assert_eq!(caught_rewind, "Exception:Cannot rewind a generator that was already run");
+    "#,
+    )
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        caught_rewind,
+        "Exception:Cannot rewind a generator that was already run"
+    );
 }
 
 #[test]
@@ -339,8 +373,12 @@ fn generator_throw_enters_suspended_yield_and_routes_through_catches() {
         .unwrap().execute().unwrap_err();
     assert!(invalid_object.contains("does not implement Throwable"));
 
-    let unknown_name = compile_source("<?php function values() { yield 1; } $generator = values(); $generator->send(other: 42);")
-        .unwrap().execute().unwrap_err();
+    let unknown_name = compile_source(
+        "<?php function values() { yield 1; } $generator = values(); $generator->send(other: 42);",
+    )
+    .unwrap()
+    .execute()
+    .unwrap_err();
     assert!(unknown_name.contains("unknown named parameter '$other'"));
 }
 
@@ -362,7 +400,10 @@ fn generator_locals_are_destroyed_on_completion_and_exceptional_exit() {
         echo $failure->current(), ';';
         try { $failure->next(); } catch (Exception $error) { echo 'caught;'; }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ready;resumed;complete;done;waiting;exception;caught;");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ready;resumed;complete;done;waiting;exception;caught;"
+    );
 }
 
 #[test]
@@ -410,9 +451,16 @@ fn yield_from_delegates_arrays_generators_send_return_and_exceptions() {
         echo $interrupted->throw(new DelegateFailure()), ';';
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "10:child;20;sent-value;child-return;child-return;caught;recovered;a:1;3:4;4:5;1;99;");
+    assert_eq!(
+        output,
+        "10:child;20;sent-value;child-return;child-return;caught;recovered;a:1;3:4;4:5;1;99;"
+    );
 
-    let invalid = compile_source("<?php function bad() { yield from 5; } foreach (bad() as $value) {} ").unwrap().execute().unwrap_err();
+    let invalid =
+        compile_source("<?php function bad() { yield from 5; } foreach (bad() as $value) {} ")
+            .unwrap()
+            .execute()
+            .unwrap_err();
     assert!(invalid.contains("yield from expects an array or Traversable object"));
 }
 
@@ -435,7 +483,10 @@ fn yield_from_delegates_user_iterators_and_iterator_aggregates() {
         foreach (delegateValues(new YieldFromAggregate()) as $key => $value) { echo $key, ':', $value, ';'; }
         echo 'done';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "item-0:10;item-1:11;item-0:10;item-1:11;done");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "item-0:10;item-1:11;item-0:10;item-1:11;done"
+    );
 }
 
 #[test]
@@ -458,9 +509,15 @@ fn iterator_to_array_copies_arrays_and_consumes_generators_with_key_modes() {
         echo count($copy), ':', $copy['same'], ':', $copy[5], "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "2:last:numbered\n3:first:last:numbered\narray:value:1\n2:last:numbered\n");
+    assert_eq!(
+        output,
+        "2:last:numbered\n3:first:last:numbered\narray:value:1\n2:last:numbered\n"
+    );
 
-    let invalid = compile_source("<?php iterator_to_array(42);").unwrap().execute().unwrap_err();
+    let invalid = compile_source("<?php iterator_to_array(42);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(invalid.contains("Traversable|array"));
 }
 
@@ -483,7 +540,10 @@ fn iterator_to_array_preserves_references_from_arrays_and_reference_generators()
         $overwritten['duplicate'] = 7;
         echo $first, ':', $last;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:4:4:5:7");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:4:4:5:7"
+    );
 }
 
 #[test]
@@ -500,7 +560,10 @@ fn iterator_count_counts_arrays_and_exhausts_generator_inputs() {
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "3:\n2:1\n3:\n");
 
-    let invalid = compile_source("<?php iterator_count(42);").unwrap().execute().unwrap_err();
+    let invalid = compile_source("<?php iterator_count(42);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(invalid.contains("Traversable|array"));
 }
 
@@ -523,8 +586,14 @@ fn generators_preserve_non_scalar_keys_and_array_conversion_reports_warnings() {
         $values = iterator_to_array(nonScalarKeys(), false);
         echo $values[0], ':', $values[1];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "object:1;array:2;object:1;array:2;2:0:1:2");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "Illegal offset type"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message == "Illegal offset type"));
 }

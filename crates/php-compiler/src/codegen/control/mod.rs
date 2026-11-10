@@ -8,7 +8,9 @@ use super::CodeGenerator;
 impl CodeGenerator<'_> {
     /// Compare the switch value against each case, then emit bodies in source order for fall-through.
     pub(super) fn switch_statement(&mut self, statement: &Stmt) {
-        let Stmt::Switch { value, cases } = statement else { unreachable!("switch_statement only handles switch AST nodes") };
+        let Stmt::Switch { value, cases } = statement else {
+            unreachable!("switch_statement only handles switch AST nodes")
+        };
         self.expression(value);
 
         // Each match branch keeps one copy of the switch value on the stack for later comparisons.
@@ -51,14 +53,24 @@ impl CodeGenerator<'_> {
 
     /// Patch switch-owned break and continue jumps to the end of this switch.
     fn finish_control(&mut self, continue_target: usize, break_target: usize) {
-        let context = self.control_stack.pop().expect("each switch pushes one control context");
-        for jump in context.breaks { self.instructions[jump] = Op::Jump(break_target); }
-        for jump in context.continues { self.instructions[jump] = Op::Jump(continue_target); }
+        let context = self
+            .control_stack
+            .pop()
+            .expect("each switch pushes one control context");
+        for jump in context.breaks {
+            self.instructions[jump] = Op::Jump(break_target);
+        }
+        for jump in context.continues {
+            self.instructions[jump] = Op::Jump(continue_target);
+        }
         for (instruction, level_slot, is_break) in context.dynamic_jumps {
             if let Op::DynamicLoopJump { targets, .. } = &mut self.instructions[instruction] {
-                targets[level_slot] = if is_break { break_target } else { continue_target };
+                targets[level_slot] = if is_break {
+                    break_target
+                } else {
+                    continue_target
+                };
             }
         }
     }
 }
-

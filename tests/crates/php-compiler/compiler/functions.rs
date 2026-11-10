@@ -24,7 +24,10 @@ fn unpack_expands_positional_named_and_reference_arguments() {
 #[test]
 fn unpack_rejects_non_arrays() {
     let program = compile_source("<?php function take($value) {} take(...42);").unwrap();
-    assert_eq!(program.execute().unwrap_err(), "Only arrays and Traversable objects can be unpacked");
+    assert_eq!(
+        program.execute().unwrap_err(),
+        "Only arrays and Traversable objects can be unpacked"
+    );
 }
 
 #[test]
@@ -35,9 +38,18 @@ fn traversable_unpack_reports_php_duplicate_named_argument_error() {
         accept_value(...duplicate_names());
     "#;
     let error = compile_source(source).unwrap().execute().unwrap_err();
-    assert!(error.contains("Named parameter $value overwrites previous argument"), "{error}");
-    let direct = compile_source("<?php function one($value) {} one(value: 1, value: 2);").unwrap().execute().unwrap_err();
-    assert!(direct.contains("Named parameter $value overwrites previous argument"), "{direct}");
+    assert!(
+        error.contains("Named parameter $value overwrites previous argument"),
+        "{error}"
+    );
+    let direct = compile_source("<?php function one($value) {} one(value: 1, value: 2);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(
+        direct.contains("Named parameter $value overwrites previous argument"),
+        "{direct}"
+    );
 }
 
 #[test]
@@ -47,21 +59,45 @@ fn traversable_unpack_passes_by_reference_parameters_by_value_with_warning() {
         function generated_values() { yield 0 => 3; }
         overwrite(...generated_values());
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "99\n");
     assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert!(result.diagnostics[0].message.contains("Cannot pass by-reference argument 1"), "{:?}", result.diagnostics[0]);
-    assert!(result.diagnostics[0].message.contains("by unpacking a Traversable, passing by-value instead"), "{:?}", result.diagnostics[0]);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert!(
+        result.diagnostics[0]
+            .message
+            .contains("Cannot pass by-reference argument 1"),
+        "{:?}",
+        result.diagnostics[0]
+    );
+    assert!(
+        result.diagnostics[0]
+            .message
+            .contains("by unpacking a Traversable, passing by-value instead"),
+        "{:?}",
+        result.diagnostics[0]
+    );
 
     let variadic = r#"<?php
         function overwrite_many(&...$values) { foreach ($values as &$value) { $value = 8; } }
         function generated_many() { yield 0 => 1; yield 1 => 2; }
         overwrite_many(...generated_many());
     "#;
-    let result = compile_source(variadic).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(variadic)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 2, "{:?}", result.diagnostics);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
 }
 
 #[test]
@@ -77,18 +113,37 @@ fn traversable_unpack_warns_for_builtin_array_reference_parameters() {
         $multisorted = array_multisort(...generated_multisort_args());
         echo $pushed, ':', $sorted, ':', $similar, ':', $multisorted;
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "3:1:3:1");
     assert_eq!(result.diagnostics.len(), 5, "{:?}", result.diagnostics);
-    assert!(result.diagnostics.iter().all(|diagnostic| {
-        diagnostic.level == php_runtime::DiagnosticLevel::Warning
-            && diagnostic.message.contains("by unpacking a Traversable, passing by-value instead")
-    }), "{:?}", result.diagnostics);
-    assert!(result.diagnostics[0].message.contains("argument 1 of array_push "));
-    assert!(result.diagnostics[1].message.contains("argument 1 of sort "));
-    assert!(result.diagnostics[2].message.contains("argument 3 of similar_text "));
-    assert!(result.diagnostics[3].message.contains("argument 1 of array_multisort "));
-    assert!(result.diagnostics[4].message.contains("argument 2 of array_multisort "));
+    assert!(
+        result.diagnostics.iter().all(|diagnostic| {
+            diagnostic.level == php_runtime::DiagnosticLevel::Warning
+                && diagnostic
+                    .message
+                    .contains("by unpacking a Traversable, passing by-value instead")
+        }),
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("argument 1 of array_push "));
+    assert!(result.diagnostics[1]
+        .message
+        .contains("argument 1 of sort "));
+    assert!(result.diagnostics[2]
+        .message
+        .contains("argument 3 of similar_text "));
+    assert!(result.diagnostics[3]
+        .message
+        .contains("argument 1 of array_multisort "));
+    assert!(result.diagnostics[4]
+        .message
+        .contains("argument 2 of array_multisort "));
 }
 
 #[test]
@@ -98,12 +153,22 @@ fn traversable_unpack_warns_for_array_walk_source_and_still_invokes_callback() {
         function generated_walk_args() { yield 0 => [1, 2]; yield 1 => 'bump_walk_value'; }
         echo array_walk(...generated_walk_args());
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1");
     assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert!(result.diagnostics[0].message.contains("argument 1 of array_walk "));
-    assert!(result.diagnostics[0].message.contains("by unpacking a Traversable, passing by-value instead"));
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("argument 1 of array_walk "));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("by unpacking a Traversable, passing by-value instead"));
 }
 
 #[test]
@@ -133,9 +198,18 @@ fn function_argument_introspection_tracks_named_variadic_and_reference_values() 
         $outer('outside');
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "3:A|B|Z\nchanged\n1:1:H\n3:2:H|M|T\nupdated\n3:second:first|second|third\n2:inside\n1\n");
-    let invalid = compile_source("<?php get_defined_vars(unknown: true);").unwrap().execute().unwrap_err();
-    assert!(invalid.contains("unknown named parameter '$unknown'"), "{invalid}");
+    assert_eq!(
+        output,
+        "3:A|B|Z\nchanged\n1:1:H\n3:2:H|M|T\nupdated\n3:second:first|second|third\n2:inside\n1\n"
+    );
+    let invalid = compile_source("<?php get_defined_vars(unknown: true);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(
+        invalid.contains("unknown named parameter '$unknown'"),
+        "{invalid}"
+    );
 }
 
 #[test]
@@ -256,7 +330,10 @@ fn user_static_class_variables_remain_visible_without_shadowing_late_static_bind
         echo StaticClassNameChild::identify(), ':', implode('|', array_slice(array_keys(get_defined_vars()), -1)), "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "static_class:local\nStaticClassNameChild:static_class\n");
+    assert_eq!(
+        output,
+        "static_class:local\nStaticClassNameChild:static_class\n"
+    );
 }
 
 #[test]
@@ -302,7 +379,10 @@ fn instance_method_and_constructor_frames_place_this_before_parameters() {
         $object->inspect(2);
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "construct:this|zeta|alpha\nmethod:this|zeta|alpha\n");
+    assert_eq!(
+        output,
+        "construct:this|zeta|alpha\nmethod:this|zeta|alpha\n"
+    );
 }
 
 #[test]
@@ -340,7 +420,10 @@ fn first_class_callables_cover_functions_methods_named_and_reference_arguments()
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "object:Closure:callable\nhello Ada:4\nhello Lin\nhello A,hello B\n*PHP*:[Rust]\n41\nchild\n");
-    let invalid = compile_source("<?php $missing = noSuchFunction(...);").unwrap().execute().unwrap_err();
+    let invalid = compile_source("<?php $missing = noSuchFunction(...);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(invalid.contains("Failed to create closure from callable"));
 }
 

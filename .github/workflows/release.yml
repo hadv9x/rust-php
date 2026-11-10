@@ -21,7 +21,19 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # action SHA
         with:
-          toolchain: stable
+          toolchain: 1.93.1
+          components: rustfmt, clippy
+
+      - name: Record Rust toolchain
+        run: rustc --version && cargo --version
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        # Existing warnings are informational while the baseline is established;
+        # compilation failures still fail this job.
+        run: cargo clippy --workspace --all-targets --locked
 
       - name: Verify tag matches workspace version
         id: version
@@ -38,6 +50,12 @@ jobs:
       - name: Test tagged source
         run: cargo test --workspace --locked
 
+      - name: Build release CLI for example checks
+        run: cargo build --release -p php-cli --locked
+
+      - name: Run PHP examples
+        run: ./scripts/test-examples.sh target/release/php-rust
+
       - name: Build Linux x86_64 package
         run: ./scripts/package-linux.sh
 
@@ -46,6 +64,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./scripts/docker-build.sh "$VERSION"
+          image_version=$(docker image inspect "php-rust:$VERSION" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+          test "$image_version" = "$VERSION"
           docker save "php-rust:$VERSION" | gzip -1 > "dist/php-rust-$VERSION-docker.tar.gz"
 
       - name: Create source archive and checksums
@@ -72,4 +92,4 @@ jobs:
             dist/SHA256SUMS \
             --verify-tag \
             --title "php-rust $VERSION" \
-            --generate-notes
+            --notes-file "docs/releases/$VERSION.md"

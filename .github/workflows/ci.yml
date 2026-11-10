@@ -19,7 +19,7 @@ env:
 
 jobs:
   test:
-    name: Test workspace (stable)
+    name: Test workspace (Rust 1.93.1)
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -28,7 +28,16 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # action SHA
         with:
-          toolchain: stable
+          toolchain: 1.93.1
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        # Existing warnings are informational while the baseline is established;
+        # compilation failures still fail this job.
+        run: cargo clippy --workspace --all-targets --locked
 
       - name: Run workspace tests
         run: cargo test --workspace --locked
@@ -38,3 +47,6 @@ jobs:
 
       - name: Build CLI and server
         run: cargo build --release -p php-cli --locked
+
+      - name: Run PHP examples
+        run: ./scripts/test-examples.sh target/release/php-rust

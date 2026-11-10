@@ -1,10 +1,10 @@
 //! Compiler code generation shared state and declaration passes.
 
-mod declarations;
 mod arrays;
+mod control;
+mod declarations;
 mod expressions;
 mod loops;
-mod control;
 mod statements;
 
 use std::collections::HashMap;
@@ -47,10 +47,22 @@ pub(super) struct CodeGenerator<'a> {
     pub(super) errors: Vec<String>,
 }
 
-pub(super) fn declared_parameter_types(parameters: &[String], types: &[Option<String>]) -> HashMap<String, String> {
-    parameters.iter().zip(types).filter_map(|(parameter, ty)| {
-        ty.as_ref().map(|ty| (parameter.clone(), ty.trim_start_matches('\\').to_ascii_lowercase()))
-    }).collect()
+pub(super) fn declared_parameter_types(
+    parameters: &[String],
+    types: &[Option<String>],
+) -> HashMap<String, String> {
+    parameters
+        .iter()
+        .zip(types)
+        .filter_map(|(parameter, ty)| {
+            ty.as_ref().map(|ty| {
+                (
+                    parameter.clone(),
+                    ty.trim_start_matches('\\').to_ascii_lowercase(),
+                )
+            })
+        })
+        .collect()
 }
 
 impl CodeGenerator<'_> {
@@ -58,12 +70,14 @@ impl CodeGenerator<'_> {
         for (label, instruction, source_path) in std::mem::take(&mut self.pending_gotos) {
             if let Some((target, target_path)) = self.labels.get(&label).cloned() {
                 if !source_path.starts_with(&target_path) {
-                    self.errors.push("Cannot 'goto' into loop or switch statement".into());
+                    self.errors
+                        .push("Cannot 'goto' into loop or switch statement".into());
                 } else {
                     self.instructions[instruction] = Op::Jump(target);
                 }
             } else {
-                self.errors.push(format!("'goto' to undefined label '{label}'"));
+                self.errors
+                    .push(format!("'goto' to undefined label '{label}'"));
             }
         }
     }
@@ -73,11 +87,17 @@ impl CodeGenerator<'_> {
     pub(super) fn push_control_context(&mut self) {
         let id = self.next_control_id;
         self.next_control_id += 1;
-        self.control_stack.push(ControlContext { id, ..ControlContext::default() });
+        self.control_stack.push(ControlContext {
+            id,
+            ..ControlContext::default()
+        });
     }
 
     pub(super) fn control_path(&self) -> Vec<usize> {
-        self.control_stack.iter().map(|context| context.id).collect()
+        self.control_stack
+            .iter()
+            .map(|context| context.id)
+            .collect()
     }
 }
 
@@ -93,5 +113,25 @@ pub(super) struct ControlContext {
 
 /// Compile the parsed program using the expression, statement, and declaration emitters.
 pub(super) fn compile(program: &Program) -> Result<BytecodeProgram, String> {
-    CodeGenerator { program: Some(program), instructions: Vec::new(), current_source_file: None, parent_class: None, current_class: None, current_class_display: None, current_method: None, current_function: None, strict_types: program.strict_types, known_callables: HashMap::new(), variable_types: HashMap::new(), returns_by_reference: false, control_stack: Vec::new(), labels: HashMap::new(), pending_gotos: Vec::new(), next_control_id: 0, include_return_stack: Vec::new(), errors: Vec::new() }.generate(program)
+    CodeGenerator {
+        program: Some(program),
+        instructions: Vec::new(),
+        current_source_file: None,
+        parent_class: None,
+        current_class: None,
+        current_class_display: None,
+        current_method: None,
+        current_function: None,
+        strict_types: program.strict_types,
+        known_callables: HashMap::new(),
+        variable_types: HashMap::new(),
+        returns_by_reference: false,
+        control_stack: Vec::new(),
+        labels: HashMap::new(),
+        pending_gotos: Vec::new(),
+        next_control_id: 0,
+        include_return_stack: Vec::new(),
+        errors: Vec::new(),
+    }
+    .generate(program)
 }

@@ -5,7 +5,11 @@ use super::super::Stmt;
 /// PHP member visibility, retained for compiler/runtime access checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// PHP visibility levels retained in declaration metadata.
-pub enum Visibility { Public, Protected, Private }
+pub enum Visibility {
+    Public,
+    Protected,
+    Private,
+}
 
 /// Function or method declaration. Interface signatures have an empty body.
 #[derive(Clone, Debug)]

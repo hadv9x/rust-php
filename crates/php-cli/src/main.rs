@@ -7,7 +7,10 @@ use php_runtime::{ArrayKey, Value};
 
 /// Print command-line usage for invalid or incomplete invocations.
 fn usage() {
-    println!("php-rust {} — Rust PHP runtime prototype", env!("CARGO_PKG_VERSION"));
+    println!(
+        "php-rust {} — Rust PHP runtime prototype",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Usage: php-rust <file.php> [script-arguments...]");
     println!("       php-rust --help");
     println!("       php-rust --version");
@@ -22,7 +25,10 @@ fn main() {
     };
 
     match input.as_str() {
-        "--help" | "-h" => { usage(); return; }
+        "--help" | "-h" => {
+            usage();
+            return;
+        }
         "--version" | "-V" => {
             println!("php-rust {}", env!("CARGO_PKG_VERSION"));
             return;
@@ -40,7 +46,8 @@ fn main() {
                 let level = match diagnostic.level {
                     php_runtime::DiagnosticLevel::Warning => "Warning",
                     php_runtime::DiagnosticLevel::Deprecated => "Deprecated",
-                    php_runtime::DiagnosticLevel::Notice | php_runtime::DiagnosticLevel::UserNotice => "Notice",
+                    php_runtime::DiagnosticLevel::Notice
+                    | php_runtime::DiagnosticLevel::UserNotice => "Notice",
                     php_runtime::DiagnosticLevel::UserWarning => "Warning",
                     php_runtime::DiagnosticLevel::UserDeprecated => "Deprecated",
                     php_runtime::DiagnosticLevel::Fatal => "Fatal error",
@@ -55,9 +62,14 @@ fn main() {
                     eprintln!("{level}: {}", diagnostic.message);
                 }
             }
-            if result.exit_code != 0 { process::exit(result.exit_code); }
+            if result.exit_code != 0 {
+                process::exit(result.exit_code);
+            }
         }
-        Err(error) => { eprintln!("php-rust: {error}"); process::exit(1); }
+        Err(error) => {
+            eprintln!("php-rust: {error}");
+            process::exit(1);
+        }
     }
 }
 
@@ -65,10 +77,17 @@ fn main() {
 fn cli_globals(script: &str, script_arguments: &[String]) -> HashMap<String, Value> {
     let mut argv = Vec::with_capacity(script_arguments.len() + 1);
     argv.push((ArrayKey::Integer(0), Value::String(script.to_string())));
-    argv.extend(script_arguments.iter().enumerate().map(|(index, argument)| (
-        ArrayKey::Integer(index as i64 + 1),
-        Value::String(argument.clone()),
-    )));
+    argv.extend(
+        script_arguments
+            .iter()
+            .enumerate()
+            .map(|(index, argument)| {
+                (
+                    ArrayKey::Integer(index as i64 + 1),
+                    Value::String(argument.clone()),
+                )
+            }),
+    );
     HashMap::from([
         ("argc".to_string(), Value::Integer(argv.len() as i64)),
         ("argv".to_string(), Value::from_array_entries(argv)),

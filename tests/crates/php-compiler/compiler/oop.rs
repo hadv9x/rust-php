@@ -12,7 +12,10 @@ fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_
         try { new ReflectionObject('ReflectedObjectSubject'); }
         catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ReflectionObject:ReflectedObjectSubject:ready:1:1:1:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionObject:ReflectedObjectSubject:ready:1:1:1:TypeError"
+    );
 }
 
 #[test]
@@ -25,7 +28,10 @@ fn invalid_object_and_array_keys_raise_catchable_type_errors() {
         try { $values[[]] = 'x'; }
         catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "TypeError:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "TypeError:TypeError"
+    );
 }
 
 #[test]
@@ -39,7 +45,10 @@ fn var_dump_uses_debug_info_and_hides_actual_object_properties() {
         var_dump(new DebugInfoSubject());
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "1:object(DebugInfoSubject)#1 (1) {\n  [\"visible\"]=>\n  string(6) \"custom\"\n}\n");
+    assert_eq!(
+        output,
+        "1:object(DebugInfoSubject)#1 (1) {\n  [\"visible\"]=>\n  string(6) \"custom\"\n}\n"
+    );
     assert!(!output.contains("secret"));
 }
 
@@ -56,9 +65,19 @@ fn var_dump_indents_nested_values_and_preserves_object_ids_and_private_propertie
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
     assert!(output.contains("array(2) {\n  [0]=>\n  object(DumpSubject)#1 (3) {\n    [\"visible\"]=>\n    array(1) {\n      [\"nested\"]=>\n      int(7)"), "{output}");
-    assert!(output.contains("[\"\\0DumpSubject\\0secret\"]=>\n    string(6) \"hidden\""), "{output}");
-    assert!(output.contains("[\"\\0*\\0state\"]=>\n    string(5) \"ready\""), "{output}");
-    assert_eq!(output.matches("object(DumpSubject)#1 (3)").count(), 3, "{output}");
+    assert!(
+        output.contains("[\"\\0DumpSubject\\0secret\"]=>\n    string(6) \"hidden\""),
+        "{output}"
+    );
+    assert!(
+        output.contains("[\"\\0*\\0state\"]=>\n    string(5) \"ready\""),
+        "{output}"
+    );
+    assert_eq!(
+        output.matches("object(DumpSubject)#1 (3)").count(),
+        3,
+        "{output}"
+    );
 }
 
 #[test]
@@ -107,7 +126,10 @@ fn reflection_enum_cases_expose_attributes() {
         $backedCase = (new ReflectionEnum('BackedColor'))->getCase('Blue');
         echo method_exists($case, 'getAttributes'), ':', $backedCase->getAttributes()[0]->newInstance()->label;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:16:rouge:red:1:1:blue");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:16:rouge:red:1:1:blue"
+    );
 }
 
 #[test]
@@ -173,7 +195,10 @@ fn reflected_enum_cases_expose_reflection_class_constant_behavior() {
         echo $case->getDeclaringClass()->getName(), ':', $case->getModifiers(), ':', ($case->getType() === null), ':';
         echo $case->hasType(), ':', $case->isEnumCase(), ':', $case->isPublic(), ':', $case->isProtected(), ':', $case->isPrivate(), ':', $case->isFinal();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:ReflectionEnumUnitCase:ReflectionClassConstant:ReflectedCaseKind:1:1::1:1:::");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:ReflectionEnumUnitCase:ReflectionClassConstant:ReflectedCaseKind:1:1::1:1:::"
+    );
 }
 
 #[test]
@@ -190,7 +215,10 @@ fn reflection_class_get_constructor_returns_inherited_constructor_or_null() {
         echo ($enumConstructor === null), ':', method_exists('ReflectionClass', 'getConstructor'), ':',
             method_exists('ReflectionEnum', 'getConstructor');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "__construct:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "__construct:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -209,7 +237,10 @@ fn reflection_property_reports_the_declaring_class_for_inherited_properties() {
         echo $count->getModifiers(), ':', $count->isStatic(), ':', $id->getModifiers(), ':', $id->isReadOnly(), ':';
         echo ReflectionProperty::IS_PUBLIC, ':', ReflectionProperty::IS_PROTECTED, ':', ReflectionProperty::IS_PRIVATE, ':', ReflectionProperty::IS_STATIC, ':', ReflectionProperty::IS_READONLY;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "token:ReflectedPropertyParent:string:1::1:1:1:1:2:1::17:1:129:1:1:2:4:16:128");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "token:ReflectedPropertyParent:string:1::1:1:1:1:2:1::17:1:129:1:1:2:4:16:128"
+    );
 }
 
 #[test]
@@ -223,7 +254,10 @@ fn reflection_property_reads_private_inherited_and_static_values() {
         echo $parent->getProperty('secret')->getValue($object), ':', $child->getProperty('token')->getValue($object), ':';
         echo $child->getProperty('count')->getValue(), ':', method_exists('ReflectionProperty', 'getValue');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hidden:parent:7:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "hidden:parent:7:1"
+    );
 }
 
 #[test]
@@ -240,7 +274,10 @@ fn reflection_property_sets_private_instance_and_static_values() {
         echo $secret->getValue($object), ':', $count->getValue(), ':', ($secret->setValue($object, 'again') === null), ':';
         try { $secret->setValue($object, 10); } catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "new:9:1:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "new:9:1:TypeError"
+    );
 }
 
 #[test]
@@ -269,11 +306,19 @@ fn reflection_property_set_accessible_is_a_deprecated_no_op_in_php_85() {
         echo ($property->setAccessible(accessible: false) === null), ':', $property->getValue($object), ':';
         echo ($property->setAccessible(true) === null), ':', method_exists('ReflectionProperty', 'setAccessible');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:hidden:1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.contains("setAccessible() is deprecated since 8.5")));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .contains("setAccessible() is deprecated since 8.5")));
 }
 
 #[test]
@@ -283,11 +328,19 @@ fn reflection_method_set_accessible_is_a_deprecated_no_op_in_php_85() {
         $method = (new ReflectionClass(ReflectionAccessibleMethod::class))->getMethod('hidden');
         echo ($method->setAccessible(accessible: false) === null), ':', method_exists('ReflectionMethod', 'setAccessible');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert!(result.diagnostics[0].message.contains("ReflectionMethod::setAccessible() is deprecated since 8.5"));
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("ReflectionMethod::setAccessible() is deprecated since 8.5"));
 }
 
 #[test]
@@ -309,7 +362,10 @@ fn reflection_class_get_default_properties_includes_inherited_defaults_and_nulls
         enum ReflectionDefaultEmpty { case Ready; }
         echo count((new ReflectionClass(ReflectionDefaultEmpty::class))->getDefaultProperties());
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "7:parent:base:child:private:1:1:static::1:0");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "7:parent:base:child:private:1:1:static::1:0"
+    );
 }
 
 #[test]
@@ -325,7 +381,10 @@ fn reflection_class_get_static_properties_reads_current_inherited_slots() {
         enum ReflectionStaticEmpty { case Ready; }
         echo count((new ReflectionEnum(ReflectionStaticEmpty::class))->getStaticProperties());
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:2:9:5:1::1:0");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:2:9:5:1::1:0"
+    );
 }
 
 #[test]
@@ -343,7 +402,10 @@ fn reflection_class_does_not_expose_parent_private_properties_as_inherited() {
         catch (ReflectionException $error) { echo get_class($error), ':'; }
         echo method_exists('ReflectionClass', 'getProperty');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "PrivateLookupChild::ReflectionException::ReflectionException:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "PrivateLookupChild::ReflectionException::ReflectionException:1"
+    );
 }
 
 #[test]
@@ -354,8 +416,10 @@ fn reflection_class_get_method_throws_reflection_exception_for_missing_methods()
         try { $reflection->getMethod('missing'); }
         catch (ReflectionException $error) { echo get_class($error), ':', $error->getMessage(); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(),
-        "ReflectionException:Method ReflectionMethodLookup::missing() does not exist");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionException:Method ReflectionMethodLookup::missing() does not exist"
+    );
 }
 
 #[test]
@@ -390,7 +454,12 @@ fn reflection_class_get_properties_filters_visibility_static_and_readonly_member
         echo count((new ReflectionEnum(ReflectionPropertyEnum::class))->getProperties()), ':';
         echo method_exists('ReflectionClass', 'getProperties');
     "#;
-    let source = source.replace("ReflectionPropertyEnum", "FilteredPropertyEnum").replace("$reflection =", "enum FilteredPropertyEnum { case Ready; }\n        $reflection =");
+    let source = source
+        .replace("ReflectionPropertyEnum", "FilteredPropertyEnum")
+        .replace(
+            "$reflection =",
+            "enum FilteredPropertyEnum { case Ready; }\n        $reflection =",
+        );
     assert_eq!(compile_source(&source).unwrap().execute().unwrap(), "baseStatic,childStatic,inherited,locked,name,secret:baseStatic,childStatic,locked,name:baseStatic,childStatic:locked::0:1");
 }
 
@@ -443,7 +512,10 @@ fn inherited_and_interface_signatures_support_optional_and_variadic_parameters()
         echo $child->fromParent(), ':', $child->optionalParent(), ':', $child->fromInterface(4), ':';
         echo $child->fromParentVariadic(5, 'parent'), ':', $child->fromInterfaceVariadic(6, 'interface');
     "#;
-    assert_eq!(compile_source(valid).unwrap().execute().unwrap(), "2:3:4:parent:interface");
+    assert_eq!(
+        compile_source(valid).unwrap().execute().unwrap(),
+        "2:3:4:parent:interface"
+    );
 
     let invalid = r#"<?php
         class RequiredExtraParent { public function run(int $value): void {} }
@@ -463,7 +535,10 @@ fn inherited_and_interface_signatures_support_optional_and_variadic_parameters()
         }
     "#;
     match compile_source(invalid_variadic) {
-        Err(error) => assert!(error.contains("does not match interface variancecontract signature"), "{error}"),
+        Err(error) => assert!(
+            error.contains("does not match interface variancecontract signature"),
+            "{error}"
+        ),
         Ok(_) => panic!("incompatible variadic type should be rejected"),
     }
 }
@@ -492,7 +567,9 @@ fn inherited_property_types_and_readonly_status_are_invariant() {
         class TypedPropertyChild extends TypedPropertyParent { public string $value; }
     "#;
     match compile_source(wrong_type) {
-        Err(error) => assert!(error.contains("Property TypedPropertyChild::$value cannot change inherited type")),
+        Err(error) => assert!(
+            error.contains("Property TypedPropertyChild::$value cannot change inherited type")
+        ),
         Ok(_) => panic!("inherited property type change should be rejected"),
     }
 
@@ -501,7 +578,10 @@ fn inherited_property_types_and_readonly_status_are_invariant() {
         class ReadonlyPropertyChild extends ReadonlyPropertyParent { public int $value; }
     "#;
     match compile_source(wrong_readonly) {
-        Err(error) => assert!(error.contains("Property ReadonlyPropertyChild::$value cannot change readonly status")),
+        Err(error) => {
+            assert!(error
+                .contains("Property ReadonlyPropertyChild::$value cannot change readonly status"))
+        }
         Ok(_) => panic!("inherited readonly status change should be rejected"),
     }
 }
@@ -531,7 +611,10 @@ fn null_coalescing_handles_uninitialized_typed_properties_like_isset() {
         UninitializedCoalesceExample::$staticValue ??= 8;
         echo $object->value, ':', UninitializedCoalesceExample::$staticValue;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "fallback:nested:static:ihidden:ig9:computed:7:8");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "fallback:nested:static:ihidden:ig9:computed:7:8"
+    );
 }
 
 #[test]
@@ -548,7 +631,12 @@ fn inherited_asymmetric_property_visibility_is_widened_and_private_set_is_final(
         class SetVisibilityNarrowChild extends SetVisibilityNarrowParent { public private(set) int $value; }
     "#;
     match compile_source(narrowed) {
-        Err(error) => assert!(error.contains("Property SetVisibilityNarrowChild::$value cannot reduce inherited set visibility"), "{error}"),
+        Err(error) => assert!(
+            error.contains(
+                "Property SetVisibilityNarrowChild::$value cannot reduce inherited set visibility"
+            ),
+            "{error}"
+        ),
         Ok(_) => panic!("inherited set visibility must not be narrowed"),
     }
 
@@ -557,7 +645,10 @@ fn inherited_asymmetric_property_visibility_is_widened_and_private_set_is_final(
         class FinalSetVisibilityChild extends FinalSetVisibilityParent { public int $value; }
     "#;
     match compile_source(private_set) {
-        Err(error) => assert!(error.contains("cannot override final private(set) property"), "{error}"),
+        Err(error) => assert!(
+            error.contains("cannot override final private(set) property"),
+            "{error}"
+        ),
         Ok(_) => panic!("private(set) property must be final"),
     }
 }
@@ -584,7 +675,10 @@ fn reflection_property_reports_asymmetric_set_visibility() {
         echo implode(',', $privateSetNames), ':', implode(',', $protectedSetNames), ':';
         echo method_exists('ReflectionProperty', 'isPrivateSet'), ':', method_exists('ReflectionProperty', 'isProtectedSet');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":1:65|1::33|::1|::4|32:64:private:protected:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        ":1:65|1::33|::1|::4|32:64:private:protected:1:1"
+    );
 }
 
 #[test]
@@ -599,7 +693,10 @@ fn reflection_class_reports_readonly_declaration_modifier() {
         echo method_exists('ReflectionClass', 'isReadOnly'), ':';
         echo method_exists('ReflectionEnum', 'isReadOnly');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:::1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:::1:1"
+    );
 }
 
 #[test]
@@ -613,7 +710,10 @@ fn reflection_class_identifies_anonymous_classes() {
         echo (new ReflectionEnum(ReflectionAnonymousEnum::class))->isAnonymous() ? 'yes' : 'no', ':';
         echo method_exists('ReflectionClass', 'isAnonymous'), ':', method_exists('ReflectionEnum', 'isAnonymous');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "no:yes:no:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "no:yes:no:1:1"
+    );
 }
 
 #[test]
@@ -648,7 +748,10 @@ fn reflection_class_checks_traversable_interfaces_and_parents() {
         echo (new ReflectionEnum(ReflectionNotWalkableEnum::class))->isIterable() ? 'yes' : 'no', ':';
         echo method_exists('ReflectionClass', 'isIterable'), ':', method_exists('ReflectionClass', 'isIterateable');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "yes:yes:no:no:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "yes:yes:no:no:1:1"
+    );
 }
 
 #[test]
@@ -668,7 +771,10 @@ fn readonly_class_constraints_cover_anonymous_classes_and_inheritance() {
         "<?php readonly class InvalidReadonlyClass { public static int $static; }",
         "<?php new readonly stdClass();",
     ] {
-        assert!(compile_source(source).is_err(), "accepted invalid readonly class declaration: {source}");
+        assert!(
+            compile_source(source).is_err(),
+            "accepted invalid readonly class declaration: {source}"
+        );
     }
 }
 
@@ -714,7 +820,10 @@ fn reflection_property_checks_initialized_state_for_instance_and_static_properti
         try { $untypedStatic->isInitialized(1); } catch (TypeError $error) { echo get_class($error), ':'; }
         echo method_exists('ReflectionProperty', 'isInitialized');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:1:1:0:0:1:1:TypeError:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:1:1:0:0:1:1:TypeError:1"
+    );
 }
 
 #[test]
@@ -737,11 +846,19 @@ fn reflection_property_distinguishes_implicit_and_declared_default_values() {
         echo ($typed->getDefaultValue() === null ? 1 : 0), ':', ($promoted->getDefaultValue() === null ? 1 : 0), ':';
         echo method_exists('ReflectionProperty', 'hasDefaultValue'), ':', method_exists('ReflectionProperty', 'getDefaultValue');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:0:1:0:1:1:1:1:1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.contains("ReflectionProperty::hasDefaultValue()")));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .contains("ReflectionProperty::hasDefaultValue()")));
 }
 
 #[test]
@@ -760,7 +877,10 @@ fn reflection_class_reads_inherited_constants_and_checks_constant_presence() {
         echo count($public), ':', $public['INHERITED'], ':', $public['OWN'], ':', count($private), ':', $private['FALSE_VALUE'], ':';
         echo implode(',', array_keys($order)), ':', method_exists('ReflectionClass', 'getConstant'), ':', method_exists('ReflectionClass', 'hasConstant'), ':', method_exists('ReflectionClass', 'getConstants');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "14:child:1:1:1::2:14:child:1::ZETA,ALPHA:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "14:child:1:1:1::2:14:child:1::ZETA,ALPHA:1:1:1"
+    );
 }
 
 #[test]
@@ -776,7 +896,10 @@ fn reflection_class_constant_exposes_metadata_and_inheritance() {
         echo $own->getModifiers(), ':', $own->isPublic(), ':', $own->isFinal(), ':', ($reflection->getReflectionConstant('Missing') === false), ':';
         echo class_exists('ReflectionClassConstant'), ':', method_exists('ReflectionClass', 'getReflectionConstant'), ':', method_exists($own, 'getValue');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "TOKEN:parent:1:ConstantMetadataParent:parent:33:1:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "TOKEN:parent:1:ConstantMetadataParent:parent:33:1:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -795,9 +918,15 @@ fn reflection_class_constant_exposes_and_validates_attributes() {
         echo count($attributes), ':', $attributes[0]->getName(), ':', $attributes[1]->getArguments()['label'], ':', $attributes[0]->getTarget(), ':', $attributes[0]->isRepeated(), ':';
         echo $attributes[0]->newInstance()->label, ':';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:ConstantTag:second:16:1:first:");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:ConstantTag:second:16:1:first:"
+    );
     let invalid_target = compile_source("<?php #[Attribute(Attribute::TARGET_CLASS)] class ClassOnlyTag {} class TaggedConstant { #[ClassOnlyTag] public const VALUE = 1; } (new ReflectionClass('TaggedConstant'))->getReflectionConstant('VALUE')->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid_target.execute().unwrap_err().contains("cannot target this declaration"));
+    assert!(invalid_target
+        .execute()
+        .unwrap_err()
+        .contains("cannot target this declaration"));
 }
 
 #[test]
@@ -819,7 +948,10 @@ fn reflection_class_constant_reports_types_and_enum_cases() {
         echo count($dnf->getTypes()), ':', get_class($intersection), ':', count($intersection->getTypes()), ':';
         echo $raw->hasType(), ':', ($raw->getType() === null), ':', $case->isEnumCase(), ':', $case->hasType(), ':', ($case->getType() === null), ':', $mixed->allowsNull();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:string:1::2:int::2:ReflectionIntersectionType:2::1:1::1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:string:1::2:int::2:ReflectionIntersectionType:2::1:1::1:1"
+    );
 }
 
 #[test]
@@ -829,9 +961,16 @@ fn typed_class_constants_validate_values_at_compile_time() {
         enum ConstantEnum implements ConstantMarker { case Ready; }
         class ValidTypedConstants implements ConstantMarker { public const ?string NULL_VALUE = null; public const float NUMBER = 1; public const int|string TEXT_OR_NUMBER = 'ok'; public const ConstantMarker MARKER = ConstantEnum::Ready; }
     "#;
-    compile_source(valid).expect("nullable, int-to-float, and union typed constants should compile");
-    let invalid = compile_source("<?php class InvalidTypedConstant { public const int VALUE = 'wrong'; }").err().expect("mismatched class constant type must fail compilation");
-    assert_eq!(invalid, "Cannot assign string to class constant InvalidTypedConstant::VALUE of type int");
+    compile_source(valid)
+        .expect("nullable, int-to-float, and union typed constants should compile");
+    let invalid =
+        compile_source("<?php class InvalidTypedConstant { public const int VALUE = 'wrong'; }")
+            .err()
+            .expect("mismatched class constant type must fail compilation");
+    assert_eq!(
+        invalid,
+        "Cannot assign string to class constant InvalidTypedConstant::VALUE of type int"
+    );
 
     for invalid in [
         "<?php class CallableConstantType { public const callable VALUE = 'not-callable'; }",
@@ -839,8 +978,13 @@ fn typed_class_constants_validate_values_at_compile_time() {
         "<?php class NeverConstantType { public const never VALUE = null; }",
         "<?php class UnionCallableConstantType { public const string|callable VALUE = 'text'; }",
     ] {
-        let error = compile_source(invalid).err().expect("unsupported typed class constant should fail compilation");
-        assert!(error.contains("cannot have type"), "unexpected error: {error}");
+        let error = compile_source(invalid)
+            .err()
+            .expect("unsupported typed class constant should fail compilation");
+        assert!(
+            error.contains("cannot have type"),
+            "unexpected error: {error}"
+        );
     }
 }
 
@@ -853,9 +997,15 @@ fn reflection_get_constant_deprecates_missing_names_and_respects_error_reporting
         error_reporting(0);
         $reflection->getConstant('AlsoMissing');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
     assert_eq!(result.diagnostics[0].message, "ReflectionClass::getConstant() for a non-existent constant is deprecated, use ReflectionClass::hasConstant() to check if the constant exists");
     assert_eq!(result.diagnostics[0].source_line, Some(4));
 }
@@ -933,7 +1083,8 @@ fn interface_variance_parses_parenthesized_dnf_types() {
             }
         }
     "#;
-    compile_source(valid).expect("DNF parameter contravariance and return covariance should compile");
+    compile_source(valid)
+        .expect("DNF parameter contravariance and return covariance should compile");
 
     for implementation in [
         "public function handle((DnfReadable&DnfCountable)|DnfExtra $value): (DnfReadable&DnfCountable)|DnfLoggable { return $value; }",
@@ -978,7 +1129,10 @@ fn traversable_subtypes_are_covariant_with_iterable_returns() {
         }
         echo get_class((new ConcreteIterableImplementation())->values());
     "#;
-    assert_eq!(compile_source(valid).unwrap().execute().unwrap(), "ConcreteIterator");
+    assert_eq!(
+        compile_source(valid).unwrap().execute().unwrap(),
+        "ConcreteIterator"
+    );
 
     let invalid = r#"<?php
         interface ReadableCollection extends Traversable {}
@@ -991,7 +1145,12 @@ fn traversable_subtypes_are_covariant_with_iterable_returns() {
         Err(error) => error,
         Ok(_) => panic!("a narrower parameter cannot replace iterable"),
     };
-    assert!(error.to_ascii_lowercase().contains("does not match interface iterableparametercontract signature"), "{error}");
+    assert!(
+        error
+            .to_ascii_lowercase()
+            .contains("does not match interface iterableparametercontract signature"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1054,7 +1213,10 @@ fn property_hook_return_type_errors_release_hook_local_objects_before_catch() {
         catch (TypeError $error) { echo 'caught|'; }
         echo 'end';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "drop|caught|end");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "drop|caught|end"
+    );
 }
 
 #[test]
@@ -1080,7 +1242,10 @@ fn property_hook_frames_release_temporaries_and_preserve_returned_objects() {
         echo 'held|';
         unset($held);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "drop|5|held|drop|");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "drop|5|held|drop|"
+    );
 }
 
 #[test]
@@ -1099,7 +1264,10 @@ fn property_hook_exceptions_release_local_objects_before_the_caller_catch() {
         catch (Exception $error) { echo 'caught|'; }
         echo 'end';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "drop|caught|end");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "drop|caught|end"
+    );
 }
 
 #[test]
@@ -1127,7 +1295,10 @@ fn get_called_class_tracks_late_static_binding_and_requires_class_context() {
         echo CalledBase::who(), ':', CalledChild::who(), ':', function_exists('get_called_class'), ':';
         try { get_called_class(); } catch (Error $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "CalledBase:CalledChild:1:Error");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "CalledBase:CalledChild:1:Error"
+    );
 }
 
 #[test]
@@ -1162,7 +1333,10 @@ fn reflection_class_lists_only_traits_used_directly_by_the_reflected_type() {
         $trait = $traits['ReflectionNestedTrait'] ?? null;
         echo implode(',', $names), ':', implode(',', array_keys($traits)), ':', is_object($trait), ':', implode(',', $childNames), ':', method_exists('ReflectionClass', 'getTraitNames'), ':', method_exists('ReflectionClass', 'getTraits');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ReflectionNestedTrait:ReflectionNestedTrait:1::1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionNestedTrait:ReflectionNestedTrait:1::1:1"
+    );
 }
 
 #[test]
@@ -1175,29 +1349,50 @@ fn reflection_class_reports_trait_aliases_with_original_names() {
         $childAliases = (new ReflectionClass('ReflectionAliasChild'))->getTraitAliases();
         echo implode(',', array_keys($aliases)), ':', $aliases['PublicAlias'], ':', count($childAliases), ':', method_exists('ReflectionClass', 'getTraitAliases');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "PublicAlias:ReflectionAliasTrait::OriginalMethod:0:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "PublicAlias:ReflectionAliasTrait::OriginalMethod:0:1"
+    );
 }
 
 #[test]
 fn nested_trait_adaptations_validate_missing_methods_and_unresolved_conflicts() {
-    let missing_method = compile_source(r#"<?php
+    let missing_method = compile_source(
+        r#"<?php
         trait TraitMethodSource { public function present() {} }
         trait TraitMethodConsumer { use TraitMethodSource { TraitMethodSource::absent as alias; } }
-    "#).err().expect("missing nested trait method must fail");
-    assert!(missing_method.contains("Trait method TraitMethodSource::absent not found"), "{missing_method}");
+    "#,
+    )
+    .err()
+    .expect("missing nested trait method must fail");
+    assert!(
+        missing_method.contains("Trait method TraitMethodSource::absent not found"),
+        "{missing_method}"
+    );
 
-    let unresolved_conflict = compile_source(r#"<?php
+    let unresolved_conflict = compile_source(
+        r#"<?php
         trait FirstTraitChoice { public function choose() {} }
         trait SecondTraitChoice { public function choose() {} }
         trait UnusedConflictingTrait { use FirstTraitChoice, SecondTraitChoice; }
-    "#).err().expect("unresolved nested trait conflict must fail");
-    assert!(unresolved_conflict.contains("Trait method conflict for choose in trait UnusedConflictingTrait"), "{unresolved_conflict}");
+    "#,
+    )
+    .err()
+    .expect("unresolved nested trait conflict must fail");
+    assert!(
+        unresolved_conflict
+            .contains("Trait method conflict for choose in trait UnusedConflictingTrait"),
+        "{unresolved_conflict}"
+    );
 
     let unknown_excluded = compile_source(r#"<?php
         trait ExclusionSourceTrait { public function choose() {} }
         trait InvalidExclusionTrait { use ExclusionSourceTrait { ExclusionSourceTrait::choose insteadof MissingExclusionTrait; } }
     "#).err().expect("unknown excluded trait must fail");
-    assert!(unknown_excluded.contains("Trait 'MissingExclusionTrait' is not part of the composition"), "{unknown_excluded}");
+    assert!(
+        unknown_excluded.contains("Trait 'MissingExclusionTrait' is not part of the composition"),
+        "{unknown_excluded}"
+    );
 
     let class_unknown_excluded = compile_source(r#"<?php
         trait ClassExclusionSource { public function choose() {} }
@@ -1232,7 +1427,10 @@ fn nested_trait_adaptations_validate_missing_methods_and_unresolved_conflicts() 
         $subject = new ProviderConflictSubject();
         echo $subject->select(), ':', $subject->selectDirect();
     "#;
-    assert_eq!(compile_source(nested_provider).unwrap().execute().unwrap(), "nested:direct");
+    assert_eq!(
+        compile_source(nested_provider).unwrap().execute().unwrap(),
+        "nested:direct"
+    );
 }
 
 #[test]
@@ -1248,7 +1446,10 @@ fn visibility_adaptation_on_insteadof_loser_does_not_replace_selected_method() {
         }
         echo (new VisibilityAdaptationWinner())->choose();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "preferred");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "preferred"
+    );
 }
 
 #[test]
@@ -1267,14 +1468,20 @@ fn trait_method_final_adaptation_overrides_parent_and_blocks_child_override() {
         $anonymous = new class { use AnonymousFinalAdaptationTrait { AnonymousFinalAdaptationTrait::identify as final; } };
         echo (new FinalAdaptationHost())->identify(), ':', (new FinalAdaptationLocalOverride())->identify(), ':', $anonymous->identify();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "trait:local:anonymous");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "trait:local:anonymous"
+    );
 
     let child_override = compile_source(r#"<?php
         trait FinalAdaptationSource { public function identify() {} }
         class FinalAdaptationBase { use FinalAdaptationSource { FinalAdaptationSource::identify as final; } }
         class FinalAdaptationChild extends FinalAdaptationBase { public function identify() {} }
     "#).err().expect("child must not override a final trait-adapted method");
-    assert!(child_override.contains("cannot override final method identify()"), "{child_override}");
+    assert!(
+        child_override.contains("cannot override final method identify()"),
+        "{child_override}"
+    );
 }
 
 #[test]
@@ -1285,14 +1492,20 @@ fn trait_final_alias_adaptation_marks_only_the_alias_final() {
         class AliasFinalChild extends AliasFinalHost { public function original() { return 'child'; } }
         echo (new AliasFinalChild())->original();
     "#;
-    assert_eq!(compile_source(alias_only).unwrap().execute().unwrap(), "child");
+    assert_eq!(
+        compile_source(alias_only).unwrap().execute().unwrap(),
+        "child"
+    );
 
     let child_alias_override = compile_source(r#"<?php
         trait AliasFinalChildSource { public function original() {} }
         class AliasFinalParent { use AliasFinalChildSource { AliasFinalChildSource::original as final aliasMethod; } }
         class AliasFinalOverride extends AliasFinalParent { public function aliasMethod() {} }
     "#).err().expect("child must not override a final alias");
-    assert!(child_alias_override.contains("cannot override final method aliasmethod()"), "{child_alias_override}");
+    assert!(
+        child_alias_override.contains("cannot override final method aliasmethod()"),
+        "{child_alias_override}"
+    );
 }
 
 #[test]
@@ -1303,8 +1516,13 @@ fn nested_trait_final_adaptation_propagates_to_consuming_class() {
         class NestedFinalParent { use NestedFinalAdapter; }
         class NestedFinalChild extends NestedFinalParent { public function locked() {} }
     "#;
-    let error = compile_source(source).err().expect("nested final adaptation must propagate");
-    assert!(error.contains("cannot override final method locked()"), "{error}");
+    let error = compile_source(source)
+        .err()
+        .expect("nested final adaptation must propagate");
+    assert!(
+        error.contains("cannot override final method locked()"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1321,24 +1539,44 @@ fn trait_properties_compose_recursively_and_require_compatible_declarations() {
     "#;
     assert_eq!(compile_source(compatible).unwrap().execute().unwrap(), "7");
 
-    let incompatible_traits = compile_source(r#"<?php
+    let incompatible_traits = compile_source(
+        r#"<?php
         trait PropertyConflictOne { public int $value = 7; }
         trait PropertyConflictTwo { public int $value = 8; }
         class IncompatiblePropertyTraits { use PropertyConflictOne, PropertyConflictTwo; }
-    "#).err().expect("incompatible trait properties must fail");
-    assert!(incompatible_traits.contains("Trait property conflict for $value in class IncompatiblePropertyTraits"), "{incompatible_traits}");
+    "#,
+    )
+    .err()
+    .expect("incompatible trait properties must fail");
+    assert!(
+        incompatible_traits
+            .contains("Trait property conflict for $value in class IncompatiblePropertyTraits"),
+        "{incompatible_traits}"
+    );
 
     let incompatible_class = compile_source(r#"<?php
         trait PropertyClassSource { public string $value = 'same'; }
         class IncompatibleTraitPropertyOverride { use PropertyClassSource; public string $value = 'different'; }
     "#).err().expect("incompatible class property override must fail");
-    assert!(incompatible_class.contains("Property IncompatibleTraitPropertyOverride::$value conflicts with a trait property"), "{incompatible_class}");
+    assert!(
+        incompatible_class.contains(
+            "Property IncompatibleTraitPropertyOverride::$value conflicts with a trait property"
+        ),
+        "{incompatible_class}"
+    );
 
-    let enum_trait_property = compile_source(r#"<?php
+    let enum_trait_property = compile_source(
+        r#"<?php
         trait EnumPropertyTrait { public int $value = 1; }
         enum InvalidPropertyEnum { use EnumPropertyTrait; case One; }
-    "#).err().expect("enum trait properties must fail");
-    assert!(enum_trait_property.contains("Enum InvalidPropertyEnum cannot include properties"), "{enum_trait_property}");
+    "#,
+    )
+    .err()
+    .expect("enum trait properties must fail");
+    assert!(
+        enum_trait_property.contains("Enum InvalidPropertyEnum cannot include properties"),
+        "{enum_trait_property}"
+    );
 
     let case_sensitive = r#"<?php
         trait LowercaseProperty { public int $value = 1; }
@@ -1347,7 +1585,10 @@ fn trait_properties_compose_recursively_and_require_compatible_declarations() {
         $object = new CaseSensitiveTraitProperties();
         echo $object->value, ':', $object->Value;
     "#;
-    assert_eq!(compile_source(case_sensitive).unwrap().execute().unwrap(), "1:2");
+    assert_eq!(
+        compile_source(case_sensitive).unwrap().execute().unwrap(),
+        "1:2"
+    );
 }
 
 #[test]
@@ -1362,20 +1603,36 @@ fn trait_constants_compose_recursively_and_require_compatible_declarations() {
         }
         echo CompatibleTraitConstants::DERIVED, ':', (new ReflectionClass('CompatibleTraitConstants'))->getConstant('BASE');
     "#;
-    assert_eq!(compile_source(compatible).unwrap().execute().unwrap(), "7:4");
+    assert_eq!(
+        compile_source(compatible).unwrap().execute().unwrap(),
+        "7:4"
+    );
 
-    let incompatible_traits = compile_source(r#"<?php
+    let incompatible_traits = compile_source(
+        r#"<?php
         trait FirstTraitConstant { public const string VALUE = 'first'; }
         trait SecondTraitConstant { public const string VALUE = 'second'; }
         class IncompatibleTraitConstants { use FirstTraitConstant, SecondTraitConstant; }
-    "#).err().expect("incompatible trait constants must fail");
-    assert!(incompatible_traits.contains("Trait constant conflict for VALUE in class IncompatibleTraitConstants"), "{incompatible_traits}");
+    "#,
+    )
+    .err()
+    .expect("incompatible trait constants must fail");
+    assert!(
+        incompatible_traits
+            .contains("Trait constant conflict for VALUE in class IncompatibleTraitConstants"),
+        "{incompatible_traits}"
+    );
 
     let incompatible_class = compile_source(r#"<?php
         trait TraitConstantOverride { public const string VALUE = 'trait'; }
         class IncompatibleClassConstant { use TraitConstantOverride; public const string VALUE = 'class'; }
     "#).err().expect("incompatible class constant override must fail");
-    assert!(incompatible_class.contains("Class constant IncompatibleClassConstant::VALUE conflicts with a trait constant"), "{incompatible_class}");
+    assert!(
+        incompatible_class.contains(
+            "Class constant IncompatibleClassConstant::VALUE conflicts with a trait constant"
+        ),
+        "{incompatible_class}"
+    );
 }
 
 #[test]
@@ -1389,7 +1646,10 @@ fn reflection_class_checks_inherited_and_missing_members_by_name() {
         echo reflectionMemberFlag($reflection->hasProperty(name: 'hiddenProperty')), ':', reflectionMemberFlag($reflection->hasProperty('staticProperty')), ':', reflectionMemberFlag($reflection->hasProperty('visibleProperty')), ':', reflectionMemberFlag($reflection->hasProperty('VisibleProperty')), ':', reflectionMemberFlag($reflection->hasProperty('missingProperty')), ':', reflectionMemberFlag($reflection->hasProperty('privateProperty')), ':';
         echo reflectionMemberFlag(method_exists('ReflectionClass', 'hasMethod')), ':', reflectionMemberFlag(method_exists('ReflectionClass', 'hasProperty'));
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:0:1:1:1:0:0:0:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:0:1:1:1:0:0:0:1:1"
+    );
 }
 
 #[test]
@@ -1418,7 +1678,10 @@ fn reflection_method_reports_visibility_modifiers_and_special_method_kind() {
         echo
             ':', method_exists('ReflectionMethod', 'isPublic'), method_exists('ReflectionMethod', 'isAbstract'), method_exists('ReflectionMethod', 'getDeclaringClass');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ReflectedMethodBase:111111110:111");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectedMethodBase:111111110:111"
+    );
 }
 
 #[test]
@@ -1519,7 +1782,10 @@ fn reflection_method_reports_parameter_counts_and_return_type() {
         $functionParameters = $function->getParameters();
         echo ':', $function->getNumberOfParameters(), ':', $function->getNumberOfRequiredParameters(), ':', $function->getReturnType()->getName(), ':', $functionParameters[1]->isDefaultValueAvailable(), ':', $functionParameters[1]->getDefaultValue() === null;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3:1:string:nullable:none:null:int:1:1:x:1:1:2:1:bool:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "3:1:string:nullable:none:null:int:1:1:x:1:1:2:1:bool:1:1"
+    );
 }
 
 #[test]
@@ -1545,10 +1811,18 @@ fn reflection_method_invokes_non_public_and_static_methods() {
         try { new ReflectionMethod('InvokableReflectionSubject', 'missing'); }
         catch (ReflectionException $error) { echo 'missing'; }
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
-    assert_eq!(result.output, "hello!:works?:named?:5:5:5:9:13:closure!:17:1111:missing");
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(
+        result.output,
+        "hello!:works?:named?:5:5:5:9:13:closure!:17:1111:missing"
+    );
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.contains("ReflectionMethod::__construct() with 1 argument is deprecated"));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("ReflectionMethod::__construct() with 1 argument is deprecated"));
 }
 
 #[test]
@@ -1573,7 +1847,10 @@ fn reflection_function_abstract_reports_variadic_reference_static_and_closure_me
         echo ($functionVariadic->isVariadic() ? '1' : '0'), '|';
         echo ($closure->isClosure() ? '1' : '0'), ':', ($closure->isStatic() ? '1' : '0'), ':', ($closure->isVariadic() ? '1' : '0');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:0:0|0:1|1:0:0|1|1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:0:0|0:1|1:0:0|1|1:1:1"
+    );
 }
 
 #[test]
@@ -1590,7 +1867,10 @@ fn reflection_function_invokes_named_and_closure_functions() {
         echo $reflection->getClosure()('wrapped'), ':', $closure->invoke('closure'), ':', $closure->getClosure()('copy'), ':';
         echo method_exists('ReflectionFunction', 'invoke'), method_exists('ReflectionFunction', 'invokeArgs'), method_exists('ReflectionFunction', 'getClosure');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "call!:named?:5:5:wrapped!:CLOSURE:COPY:111");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "call!:named?:5:5:wrapped!:CLOSURE:COPY:111"
+    );
 }
 
 #[test]
@@ -1601,7 +1881,10 @@ fn reflection_parameter_reports_nullability_from_types_and_defaults() {
         foreach ($parameters as $parameter) { echo $parameter->allowsNull() ? '1' : '0'; }
         echo ':', method_exists('ReflectionParameter', 'allowsNull');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "101110:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "101110:1"
+    );
 }
 
 #[test]
@@ -1618,7 +1901,10 @@ fn reflection_parameter_reports_its_declaring_function_and_class() {
         echo $methodParameter->getDeclaringFunction()->getName(), ':', $methodParameter->getDeclaringClass()->getName(), ':';
         echo method_exists('ReflectionParameter', 'getDeclaringFunction'), method_exists('ReflectionParameter', 'getDeclaringClass');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "parameter_origin_function:null|closure:null|run:ParameterOriginSubject:11");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "parameter_origin_function:null|closure:null|run:ParameterOriginSubject:11"
+    );
 }
 
 #[test]
@@ -1648,9 +1934,15 @@ fn reflection_parameter_constructor_resolves_functions_closures_and_callable_met
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "number:int:function|label:1:1|1:float|DirectParameterSubject:method:default:value:DirectParameterSubject|__invoke:0:1");
 
     let missing_name = compile_source("<?php function parameter_target($value) {} new ReflectionParameter('parameter_target', 'missing');").unwrap().execute().unwrap_err();
-    assert!(missing_name.contains("ReflectionException: Parameter $missing does not exist"), "{missing_name}");
+    assert!(
+        missing_name.contains("ReflectionException: Parameter $missing does not exist"),
+        "{missing_name}"
+    );
     let missing_position = compile_source("<?php function parameter_target($value) {} new ReflectionParameter('parameter_target', 2);").unwrap().execute().unwrap_err();
-    assert!(missing_position.contains("ReflectionException: Parameter number 2 does not exist"), "{missing_position}");
+    assert!(
+        missing_position.contains("ReflectionException: Parameter number 2 does not exist"),
+        "{missing_position}"
+    );
 }
 
 #[test]
@@ -1664,7 +1956,10 @@ fn reflection_parameter_reports_constructor_property_promotion() {
         echo ($parameters[0]->isPromoted() ? '1' : '0'), ($parameters[1]->isPromoted() ? '1' : '0'), ($parameters[2]->isPromoted() ? '1' : '0'), ':';
         echo ($direct->isPromoted() ? '1' : '0'), ':', method_exists('ReflectionParameter', 'isPromoted');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "110:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "110:1:1"
+    );
 }
 
 #[test]
@@ -1683,10 +1978,16 @@ fn reflection_parameter_reports_named_constant_defaults() {
         echo ($method[0]->isDefaultValueConstant() ? '1' : '0'), ':', $method[0]->getDefaultValueConstantName(), ':', $method[0]->getDefaultValue(), '|';
         echo method_exists('ReflectionParameter', 'isDefaultValueConstant'), method_exists('ReflectionParameter', 'getDefaultValueConstantName');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:GLOBAL_PARAMETER_DEFAULT:global|0:null:1|1:self::CLASS_PARAMETER_DEFAULT:8|11");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:GLOBAL_PARAMETER_DEFAULT:global|0:null:1|1:self::CLASS_PARAMETER_DEFAULT:8|11"
+    );
 
     let missing = compile_source("<?php function no_default_parameter($value) {} (new ReflectionFunction('no_default_parameter'))->getParameters()[0]->getDefaultValueConstantName();").unwrap().execute().unwrap_err();
-    assert!(missing.contains("ReflectionException: Parameter $value does not have a default value"), "{missing}");
+    assert!(
+        missing.contains("ReflectionException: Parameter $value does not have a default value"),
+        "{missing}"
+    );
 }
 
 #[test]
@@ -1699,7 +2000,10 @@ fn reflection_parameter_reports_value_passing_compatibility() {
         }
         echo method_exists('ReflectionParameter', 'canBePassedByValue');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:1|1:0|0:1|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:1|1:0|0:1|1"
+    );
 }
 
 #[test]
@@ -1713,11 +2017,19 @@ fn deprecated_reflection_parameter_type_helpers_inspect_named_and_union_types() 
         echo ($parameters[3]->getClass() === null ? '1' : '0'), ($parameters[3]->isArray() ? '1' : '0'), ($parameters[4]->isCallable() ? '1' : '0');
         echo ':', method_exists('ReflectionParameter', 'getClass'), method_exists('ReflectionParameter', 'isArray'), method_exists('ReflectionParameter', 'isCallable');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "DeprecatedTypeSubject|11100:111");
     assert_eq!(result.diagnostics.len(), 6);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.contains("deprecated since 8.0, use ReflectionParameter::getType() instead")));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .contains("deprecated since 8.0, use ReflectionParameter::getType() instead")));
 }
 
 #[test]
@@ -1733,7 +2045,10 @@ fn gc_collect_cycles_runs_destructors_and_releases_unreachable_object_cycles() {
         unset($live);
         echo gc_collect_cycles(), ':', function_exists('gc_collect_cycles');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:destroyed1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:destroyed1:1"
+    );
 }
 
 #[test]
@@ -1766,7 +2081,10 @@ fn gc_collect_cycles_preserves_objects_resurrected_by_their_destructor() {
         $collected = gc_collect_cycles();
         echo ':', $collected, ':', isset($GLOBALS['resurrected_cycle']->self) ? 'alive' : 'broken';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "d:0:alive");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "d:0:alive"
+    );
 }
 
 #[test]
@@ -1809,7 +2127,10 @@ fn trait_exists_guard_defers_namespaced_missing_trait_in_anonymous_class() {
         }
         echo "guarded\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "guarded\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "guarded\n"
+    );
 }
 
 #[test]
@@ -1857,10 +2178,15 @@ fn promoted_property_still_rejects_incompatible_trait_property() {
         trait ProvidesScrollText { public string $scroll; }
         class InvalidScrollableTable { use ProvidesScrollText; public function __construct(public int $scroll = 10) {} }
     "#;
-    let error = match compile_source(source) { Err(error) => error, Ok(_) => panic!("expected incompatible promoted property error") };
-    assert!(error.contains("Promoted property $scroll conflicts"), "{error}");
+    let error = match compile_source(source) {
+        Err(error) => error,
+        Ok(_) => panic!("expected incompatible promoted property error"),
+    };
+    assert!(
+        error.contains("Promoted property $scroll conflicts"),
+        "{error}"
+    );
 }
-
 
 #[test]
 fn anonymous_classes_compile_properties_methods_constructors_and_inheritance() {
@@ -1873,7 +2199,10 @@ fn anonymous_classes_compile_properties_methods_constructors_and_inheritance() {
         };
         echo $value->describe(), ':', ($value instanceof AnonymousBase), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "base:item:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "base:item:1\n"
+    );
 }
 
 #[test]
@@ -1897,7 +2226,9 @@ fn clone_magic_method_accepts_private_and_protected_visibility() {
         "<?php class StaticCloneHook { public static function __clone() {} }",
         "<?php class ParameterizedCloneHook { private function __clone($value) {} }",
     ] {
-        let error = compile_source(invalid).err().expect("invalid clone magic method must fail compilation");
+        let error = compile_source(invalid)
+            .err()
+            .expect("invalid clone magic method must fail compilation");
         assert!(error.contains("__clone() must be"));
     }
 }
@@ -1918,7 +2249,10 @@ fn readonly_properties_can_be_reinitialized_in_clone_hook() {
         $copy = clone $original;
         echo $original->value, ':', $copy->value;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "once:10:11");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "once:10:11"
+    );
 }
 
 #[test]
@@ -1932,7 +2266,10 @@ fn dynamic_static_property_name_uses_variable_variable_value() {
         echo $class::$$property;
         echo '|', isset($class::$$property);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "found|selected|found|1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "found|selected|found|1"
+    );
 }
 
 #[test]
@@ -1962,7 +2299,10 @@ fn tostring_weakly_coerces_scalar_results_and_rejects_arrays() {
         try { echo new ArrayStringifier(); }
         catch (Error $error) { echo get_class($error), ':', $error->getMessage(), "\n"; }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "42\ntext:text\nError:ArrayStringifier::__toString() must return a string\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "42\ntext:text\nError:ArrayStringifier::__toString() must return a string\n"
+    );
 
     let strict = r#"<?php
         declare(strict_types=1);
@@ -2023,7 +2363,10 @@ fn self_and_parent_property_types_resolve_for_instance_and_static_storage() {
         try { $child->traitChild = new PropertyTypeRoot(); }
         catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "assigned:TypeError:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "assigned:TypeError:TypeError"
+    );
 }
 
 #[test]
@@ -2043,7 +2386,10 @@ fn string_sorts_use_object_tostring_values() {
         $unique = array_unique([new SortLabel('same'), new SortLabel('same')]);
         echo count($unique), ':', $unique[0]->label;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "alpha:zeta:item2:item10:1:same");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "alpha:zeta:item2:item10:1:same"
+    );
 }
 
 #[test]
@@ -2057,7 +2403,10 @@ fn tostring_classes_automatically_implement_stringable() {
         echo ($implicit instanceof Stringable), ':', is_a($implicit, 'Stringable'), ':';
         echo ($explicit instanceof Stringable), ':', (string) $implicit, ':', (string) $explicit;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:1:label:explicit");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:1:1:label:explicit"
+    );
 }
 
 #[test]
@@ -2072,19 +2421,26 @@ fn destructors_run_once_in_reverse_creation_order_at_script_shutdown() {
         $second = new DestructorTrace('second');
         echo "body\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "body\ndestroy:second\ndestroy:first\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "body\ndestroy:second\ndestroy:first\n"
+    );
     for invalid in [
         "<?php class StaticDestructor { public static function __destruct() {} }",
         "<?php class ParameterizedDestructor { public function __destruct($value) {} }",
     ] {
-        let error = compile_source(invalid).err().expect("malformed destructor must fail compilation");
+        let error = compile_source(invalid)
+            .err()
+            .expect("malformed destructor must fail compilation");
         assert!(error.contains("__destruct() must be"));
     }
     for invalid in [
         "<?php class TypedDestructor { public function __destruct(): void {} }",
         "<?php class TypedConstructor { public function __construct(): void {} }",
     ] {
-        let error = compile_source(invalid).err().expect("constructor/destructor return type must fail compilation");
+        let error = compile_source(invalid)
+            .err()
+            .expect("constructor/destructor return type must fail compilation");
         assert!(error.contains("cannot declare a return type"), "{error}");
     }
 }
@@ -2199,7 +2555,10 @@ fn private_and_protected_destructors_run_when_objects_are_destroyed() {
         $private = new PrivateDestructor();
         $protected = new ProtectedDestructor();
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "protected:\nprivate:\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "protected:\nprivate:\n"
+    );
 }
 
 #[test]
@@ -2213,7 +2572,10 @@ fn destructor_runs_when_unset_releases_the_last_variable_reference() {
         unset($value);
         echo "after\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "before\ndestroyed\nafter\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "before\ndestroyed\nafter\n"
+    );
 }
 
 #[test]
@@ -2286,7 +2648,10 @@ fn destructor_runs_when_compound_array_assignment_replaces_a_stringable_object()
         $items[0] .= 'value';
         echo "assigned\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "drop\nassigned\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "drop\nassigned\n"
+    );
 }
 
 #[test]
@@ -2304,7 +2669,10 @@ fn destructor_runs_when_destructuring_replaces_an_array_slot() {
         [$owner->items[0]] = ['replacement'];
         echo "assigned\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "drop\ndrop\ndrop\nassigned\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "drop\ndrop\ndrop\nassigned\n"
+    );
 }
 
 #[test]
@@ -2323,7 +2691,10 @@ fn magic_unset_handles_inaccessible_properties_and_direct_unset_skips_hook() {
         unset($value->visible);
         echo implode(',', $value->calls), '|', (int)$value->hasHidden(), '|', (int)isset($value->visible);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "missing,hidden|1|0");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "missing,hidden|1|0"
+    );
 }
 
 #[test]
@@ -2387,7 +2758,10 @@ fn object_property_array_paths_support_compound_assignment() {
         }
         $store = new SectionStore(); $store->append('main', ' world'); echo $store->sections['main'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "hello world\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "hello world\n"
+    );
 }
 
 #[test]
@@ -2454,7 +2828,10 @@ fn native_runtime_exceptions_capture_source_line_and_active_call_frames() {
             echo $error->getLine(), ':', $trace[0]['function'], ':', count($trace);
         }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:triggerNativeFailure:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:triggerNativeFailure:1"
+    );
 }
 
 #[test]
@@ -2469,8 +2846,15 @@ fn builtin_exception_objects_expose_core_fields_and_throwable_hierarchy() {
         catch (Throwable $caught) { echo $caught->getMessage(), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert!(output.starts_with("bad input:12:Exception: bad input in :2\nStack trace:\n#0 {main}\n:1\n"), "{output}");
-    assert!(output.ends_with("TypeError:Error:1:1:1:1:0:0\nwrong type\n"), "{output}");
+    assert!(
+        output
+            .starts_with("bad input:12:Exception: bad input in :2\nStack trace:\n#0 {main}\n:1\n"),
+        "{output}"
+    );
+    assert!(
+        output.ends_with("TypeError:Error:1:1:1:1:0:0\nwrong type\n"),
+        "{output}"
+    );
 }
 
 #[test]
@@ -2485,7 +2869,10 @@ fn standard_exception_families_have_php_parent_classes_and_catch_behavior() {
         catch (RuntimeException $caught) { echo $caught->getMessage(), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "BadFunctionCallException:BadFunctionCallException:1:1\nRuntimeException:1:1\nmissing\n");
+    assert_eq!(
+        output,
+        "BadFunctionCallException:BadFunctionCallException:1:1\nRuntimeException:1:1\nmissing\n"
+    );
 }
 
 #[test]
@@ -2504,16 +2891,31 @@ fn native_exception_methods_reject_unknown_named_arguments() {
     for method in ["getMessage", "getTraceAsString"] {
         let source = format!("<?php (new Exception('x'))->{method}(unknown: true);");
         let error = compile_source(&source).unwrap().execute().unwrap_err();
-        assert!(error.contains("unknown named parameter '$unknown'"), "{method}: {error}");
+        assert!(
+            error.contains("unknown named parameter '$unknown'"),
+            "{method}: {error}"
+        );
     }
 }
 
 #[test]
 fn native_exception_constructors_reject_unknown_and_duplicate_named_arguments() {
-    let unknown = compile_source("<?php new RuntimeException(detail: 'x');").unwrap().execute().unwrap_err();
-    assert!(unknown.contains("unknown named parameter '$detail'"), "{unknown}");
-    let duplicate = compile_source("<?php new Exception(message: 'first', message: 'second');").unwrap().execute().unwrap_err();
-    assert!(duplicate.contains("Named parameter $message overwrites previous argument"), "{duplicate}");
+    let unknown = compile_source("<?php new RuntimeException(detail: 'x');")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(
+        unknown.contains("unknown named parameter '$detail'"),
+        "{unknown}"
+    );
+    let duplicate = compile_source("<?php new Exception(message: 'first', message: 'second');")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(
+        duplicate.contains("Named parameter $message overwrites previous argument"),
+        "{duplicate}"
+    );
 }
 
 #[test]
@@ -2531,7 +2933,10 @@ fn user_exception_subclasses_inherit_native_state_and_catch_types() {
         catch (Error $caught) { echo $caught->getMessage(), ':', get_parent_class($caught), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "DomainFailure:domain:23:1:1:1:1:1\ntype:TypeError\n");
+    assert_eq!(
+        output,
+        "DomainFailure:domain:23:1:1:1:1:1\ntype:TypeError\n"
+    );
 }
 
 #[test]
@@ -2551,7 +2956,9 @@ fn invalid_throw_operands_become_errors_and_only_throwables_match_catches() {
 
 #[test]
 fn throwable_cannot_be_implemented_directly_but_can_be_extended_by_an_interface() {
-    let class_error = compile_source("<?php class InvalidThrowable implements Throwable {}").err().expect("direct Throwable implementation must fail");
+    let class_error = compile_source("<?php class InvalidThrowable implements Throwable {}")
+        .err()
+        .expect("direct Throwable implementation must fail");
     assert!(class_error.contains("cannot implement interface Throwable directly"));
     compile_source("<?php interface InvalidThrowable extends Throwable {}")
         .expect("user interfaces may extend Throwable");
@@ -2559,8 +2966,11 @@ fn throwable_cannot_be_implemented_directly_but_can_be_extended_by_an_interface(
 
 #[test]
 fn exception_previous_argument_must_implement_throwable() {
-    let invalid = compile_source("<?php class PlainObject {} new Exception('outer', 0, new PlainObject());")
-        .unwrap().execute().unwrap_err();
+    let invalid =
+        compile_source("<?php class PlainObject {} new Exception('outer', 0, new PlainObject());")
+            .unwrap()
+            .execute()
+            .unwrap_err();
     assert!(invalid.contains("Argument #3 ($previous) must be of type ?Throwable"));
     let valid = compile_source("<?php class DomainFailure extends Exception {} $previous = new DomainFailure('inner'); $outer = new Exception('outer', 0, $previous); echo $outer->getPrevious()->getMessage();")
         .unwrap().execute().unwrap();
@@ -2603,15 +3013,26 @@ fn reference_returning_functions_and_closures_preserve_aliases_only_when_request
         echo $shared, ':', $copyArray[0], "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "10:10\n10:20\n30:30\nafter\nchanged\nproperty assignment\n30:40\n");
+    assert_eq!(
+        output,
+        "10:10\n10:20\n30:30\nafter\nchanged\nproperty assignment\n30:40\n"
+    );
 }
 
 #[test]
 fn reference_returns_reject_non_reference_results_and_non_reference_callables() {
-    let invalid_return = compile_source("<?php function &badReference() { return 42; } badReference();").unwrap();
-    assert_eq!(invalid_return.execute().unwrap_err(), "badreference() must return a reference");
-    let invalid_assignment = compile_source("<?php function valueOnly() { return 42; } $value =& valueOnly();").unwrap();
-    assert_eq!(invalid_assignment.execute().unwrap_err(), "Only a reference-returning function can be assigned by reference");
+    let invalid_return =
+        compile_source("<?php function &badReference() { return 42; } badReference();").unwrap();
+    assert_eq!(
+        invalid_return.execute().unwrap_err(),
+        "badreference() must return a reference"
+    );
+    let invalid_assignment =
+        compile_source("<?php function valueOnly() { return 42; } $value =& valueOnly();").unwrap();
+    assert_eq!(
+        invalid_assignment.execute().unwrap_err(),
+        "Only a reference-returning function can be assigned by reference"
+    );
 }
 
 #[test]
@@ -2631,7 +3052,10 @@ fn union_catch_matches_each_declared_class_and_keeps_finally_order() {
         catch (FirstFailure) { echo "caught without binding\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "caught second clause\nouter finally\ncaught without binding\n");
+    assert_eq!(
+        output,
+        "caught second clause\nouter finally\ncaught without binding\n"
+    );
 }
 
 #[test]
@@ -2810,9 +3234,15 @@ fn by_reference_read_of_overloaded_property_uses_reference_returning_getter() {
         $dynamicAlias = 'changed';
         echo $object->read(), ':', $object->dynamic;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "after:changed");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "after:changed"
+    );
     let invalid = compile_source("<?php class ValueGetter { public function __get($name) { return 1; } } $object = new ValueGetter(); $alias =& $object->missing;").unwrap();
-    assert!(invalid.execute().unwrap_err().contains("__get() must return by reference"));
+    assert!(invalid
+        .execute()
+        .unwrap_err()
+        .contains("__get() must return by reference"));
 }
 
 #[test]
@@ -2828,7 +3258,10 @@ fn increment_of_overloaded_property_runs_getter_then_setter() {
         $object = new IncrementOverloaded();
         echo $object->missing++, ':', ++$object->missing, ':', $object->actual(), ':', implode('|', $object->calls);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:6:6:get:missing|set:missing:5|get:missing|set:missing:6");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:6:6:get:missing|set:missing:5|get:missing|set:missing:6"
+    );
 }
 
 #[test]
@@ -2846,13 +3279,22 @@ fn reflection_class_reads_class_attributes_and_arguments() {
         $fromObject = new ReflectionClass(new ReflectedService());
         echo $reflection->getName(), ':', $fromObject->getName(), ':', count($all), ':', $all[0]->getName(), ':', $filtered[0]->getTarget(), ':', $filtered[0]->isRepeated(), ':', $arguments['mode'], ':', $arguments['retries'], ':', $instance->mode, ':', $instance->retries, ':', count($reflection->getAttributes('Missing')), ':', class_exists('ReflectionClass'), ':', method_exists('ReflectionAttribute', 'newInstance');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ReflectedService:ReflectedService:2:ExampleMarker:1::safe:3:safe:3:0:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectedService:ReflectedService:2:ExampleMarker:1::safe:3:safe:3:0:1:1"
+    );
     let invalid = compile_source("<?php class NotAnAttribute {} #[NotAnAttribute] class Holder {} (new ReflectionClass('Holder'))->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid.execute().unwrap_err().contains("Attempting to use non-attribute class"));
+    assert!(invalid
+        .execute()
+        .unwrap_err()
+        .contains("Attempting to use non-attribute class"));
     for method in ["getTarget", "isRepeated"] {
         let source = format!("<?php #[Attribute] class Marker {{}} #[Marker] class Holder {{}} (new ReflectionClass('Holder'))->getAttributes()[0]->{method}(unexpected: true);");
         let error = compile_source(&source).unwrap().execute().unwrap_err();
-        assert!(error.contains("unknown named parameter '$unexpected'"), "{method}: {error}");
+        assert!(
+            error.contains("unknown named parameter '$unexpected'"),
+            "{method}: {error}"
+        );
     }
 }
 
@@ -2871,7 +3313,10 @@ fn reflection_class_reports_enum_interface_abstract_and_final_flags() {
         echo $abstract->isAbstract(), ':', $interface->isInterface(), ':', $enum->isEnum(), ':';
         echo method_exists('ReflectionClass', 'isEnum'), ':', method_exists('ReflectionClass', 'isFinal');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":::1:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        ":::1:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -2894,7 +3339,10 @@ fn reflection_class_reports_instantiability_for_declaration_kinds_and_constructo
         echo implode('', $flags), ':', ($enum->isInstantiable() ? '1' : '0'), ':',
             method_exists('ReflectionClass', 'isInstantiable'), ':', method_exists('ReflectionEnum', 'isInstantiable');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "00010011:0:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "00010011:0:1:1"
+    );
 }
 
 #[test]
@@ -2916,7 +3364,10 @@ fn reflection_class_reports_cloneability_including_inherited_clone_visibility() 
         echo implode('', $flags), ':', (new ReflectionEnum('CloneEnum'))->isCloneable(), ':';
         echo method_exists('ReflectionClass', 'isCloneable'), ':', method_exists('ReflectionEnum', 'isCloneable');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "10100100::1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "10100100::1:1"
+    );
 }
 
 #[test]
@@ -2928,7 +3379,10 @@ fn reflection_class_returns_parent_metadata_or_false() {
         $child = new ReflectionClass('ReflectionChild');
         echo $child->getParentClass()->getName(), ':', $parent->getParentClass(), ':', method_exists('ReflectionClass', 'getParentClass');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ReflectionParent::1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ReflectionParent::1"
+    );
 }
 
 #[test]
@@ -2941,18 +3395,35 @@ fn reflection_class_checks_parent_and_interface_relationships() {
         echo $reflection->isSubclassOf(class: 'ReflectsBase'), ':', $reflection->implementsInterface(interface: 'ReflectsContract'), ':';
         echo $reflection->isSubclassOf('ReflectsChild'), ':', $reflection->implementsInterface('ReflectsContract'), ':', method_exists('ReflectionClass', 'implementsInterface');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1::1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1::1:1"
+    );
 }
 
 #[test]
 fn attribute_marker_rejects_abstract_and_non_class_declarations_at_compile_time() {
     for (source, expected) in [
-        ("<?php #[Attribute] abstract class AbstractTag {}", "Cannot apply #[\\Attribute] to abstract class AbstractTag"),
-        ("<?php #[Attribute] enum TaggedEnum {}", "Cannot apply #[\\Attribute] to enum TaggedEnum"),
-        ("<?php #[Attribute] interface TaggedInterface {}", "Cannot apply #[\\Attribute] to interface TaggedInterface"),
-        ("<?php #[Attribute] trait TaggedTrait {}", "Cannot apply #[\\Attribute] to trait TaggedTrait"),
+        (
+            "<?php #[Attribute] abstract class AbstractTag {}",
+            "Cannot apply #[\\Attribute] to abstract class AbstractTag",
+        ),
+        (
+            "<?php #[Attribute] enum TaggedEnum {}",
+            "Cannot apply #[\\Attribute] to enum TaggedEnum",
+        ),
+        (
+            "<?php #[Attribute] interface TaggedInterface {}",
+            "Cannot apply #[\\Attribute] to interface TaggedInterface",
+        ),
+        (
+            "<?php #[Attribute] trait TaggedTrait {}",
+            "Cannot apply #[\\Attribute] to trait TaggedTrait",
+        ),
     ] {
-        let error = compile_source(source).err().expect("invalid attribute marker should fail compilation");
+        let error = compile_source(source)
+            .err()
+            .expect("invalid attribute marker should fail compilation");
         assert!(error.contains(expected), "{error}");
     }
     let valid_trait_attribute = r#"<?php
@@ -2961,7 +3432,13 @@ fn attribute_marker_rejects_abstract_and_non_class_declarations_at_compile_time(
         $attributes = (new ReflectionClass('TaggedTrait'))->getAttributes();
         echo count($attributes), ':', get_class($attributes[0]->newInstance());
     "#;
-    assert_eq!(compile_source(valid_trait_attribute).unwrap().execute().unwrap(), "1:TraitTag");
+    assert_eq!(
+        compile_source(valid_trait_attribute)
+            .unwrap()
+            .execute()
+            .unwrap(),
+        "1:TraitTag"
+    );
     compile_source("<?php #[Attribute] class ConcreteTag {}").unwrap();
     compile_source("<?php #[Vendor\\Attribute] abstract class VendorMarkedType {}").unwrap();
 }
@@ -2984,14 +3461,23 @@ fn php85_global_constant_attributes_reflect_target_repeatability_and_values() {
         echo (new ReflectionConstant('BUILD_VERSION'))->getAttributes()[0]->newInstance() instanceof NamedConstantTag, ':';
         echo method_exists('ReflectionConstant', 'getAttributes'), ':', class_exists('ReflectionConstant');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "APP_NAME:rust-php::64:1:primary:2:64:127:128:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "APP_NAME:rust-php::64:1:primary:2:64:127:128:1:1:1"
+    );
 
-    let invalid = compile_source(r#"<?php
+    let invalid = compile_source(
+        r#"<?php
         #[Attribute(Attribute::TARGET_CLASS)] class ClassOnlyTag {}
         #[ClassOnlyTag] const INVALID_CONSTANT = 1;
         (new ReflectionConstant('INVALID_CONSTANT'))->getAttributes()[0]->newInstance();
-    "#).unwrap();
-    assert!(invalid.execute().unwrap_err().contains("cannot target this declaration"));
+    "#,
+    )
+    .unwrap();
+    assert!(invalid
+        .execute()
+        .unwrap_err()
+        .contains("cannot target this declaration"));
 }
 
 #[test]
@@ -3004,13 +3490,22 @@ fn attribute_target_and_repeatable_flags_are_enforced() {
         $attributes = (new ReflectionClass('MarkedTwice'))->getAttributes();
         echo count($attributes), ':', $attributes[1]->isRepeated(), ':', get_class($attributes[0]->newInstance());
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:1:RepeatableTag");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:1:RepeatableTag"
+    );
 
     let invalid_target = compile_source("<?php #[Attribute(Attribute::TARGET_METHOD)] class MethodTag {} #[MethodTag] class InvalidTarget {} (new ReflectionClass('InvalidTarget'))->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid_target.execute().unwrap_err().contains("cannot target this declaration"));
+    assert!(invalid_target
+        .execute()
+        .unwrap_err()
+        .contains("cannot target this declaration"));
 
     let invalid_repeat = compile_source("<?php #[Attribute(Attribute::TARGET_CLASS)] class SingleTag {} #[SingleTag, SingleTag] class RepeatedInvalid {} (new ReflectionClass('RepeatedInvalid'))->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid_repeat.execute().unwrap_err().contains("must not be repeated"));
+    assert!(invalid_repeat
+        .execute()
+        .unwrap_err()
+        .contains("must not be repeated"));
 }
 
 #[test]
@@ -3025,7 +3520,10 @@ fn reflection_method_reads_method_attributes_and_instantiates_them() {
         $route = $attribute->newInstance();
         echo $method->getName(), ':', $attribute->getName(), ':', $attribute->getTarget(), ':', $attribute->getArguments()[0], ':', $route->path;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "listItems:RouteTag:4:/items:/items");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "listItems:RouteTag:4:/items:/items"
+    );
 }
 
 #[test]
@@ -3038,7 +3536,10 @@ fn reflection_property_reads_property_attributes_and_instantiates_them() {
         $attribute = $property->getAttributes(name: 'ColumnTag')[0];
         echo $property->getName(), ':', $attribute->getName(), ':', $attribute->getTarget(), ':', $attribute->getArguments()['column'], ':', $attribute->newInstance()->column;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "id:ColumnTag:8:record_id:record_id");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "id:ColumnTag:8:record_id:record_id"
+    );
 }
 
 #[test]
@@ -3053,10 +3554,16 @@ fn reflection_parameter_reads_parameter_attributes_and_instantiates_them() {
         $attribute = $parameter->getAttributes(name: 'ParamTag')[0];
         echo count($parameters), ':', $parameter->getName(), ':', $parameter->getPosition(), ':', $attribute->getTarget(), ':', $attribute->getArguments()['label'], ':', $attribute->newInstance()->label, ':', class_exists('ReflectionParameter'), ':', method_exists('ReflectionMethod', 'getParameters');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:value:0:32:payload:payload:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:value:0:32:payload:payload:1:1"
+    );
 
     let invalid_target = compile_source("<?php #[Attribute(Attribute::TARGET_METHOD)] class MethodOnly {} class Subject { public function run(#[MethodOnly] $value) {} } (new ReflectionClass('Subject'))->getMethod('run')->getParameters()[0]->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid_target.execute().unwrap_err().contains("cannot target this declaration"));
+    assert!(invalid_target
+        .execute()
+        .unwrap_err()
+        .contains("cannot target this declaration"));
 }
 
 #[test]
@@ -3070,10 +3577,16 @@ fn reflection_function_reads_function_attributes_and_instantiates_them() {
         $attribute = $reflection->getAttributes()[0];
         echo $reflection->getName(), ':', $attribute->getTarget(), ':', $attribute->getArguments()['label'], ':', $attribute->newInstance()->label, ':', class_exists('ReflectionFunction'), ':', method_exists('ReflectionFunction', 'getAttributes');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "processTask:2:worker:worker:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "processTask:2:worker:worker:1:1"
+    );
 
     let invalid_target = compile_source("<?php #[Attribute(Attribute::TARGET_METHOD)] class MethodOnly {} #[MethodOnly] function utility() {} (new ReflectionFunction('utility'))->getAttributes()[0]->newInstance();").unwrap();
-    assert!(invalid_target.execute().unwrap_err().contains("cannot target this declaration"));
+    assert!(invalid_target
+        .execute()
+        .unwrap_err()
+        .contains("cannot target this declaration"));
 }
 
 #[test]
@@ -3086,7 +3599,10 @@ fn reflection_class_reads_interface_attributes() {
         $attribute = (new ReflectionClass('CacheableContract'))->getAttributes()[0];
         echo $attribute->getTarget(), ':', $attribute->newInstance()->name;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:cacheable");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:cacheable"
+    );
 }
 
 #[test]
@@ -3098,7 +3614,10 @@ fn anonymous_class_attributes_are_reflectable() {
         $attribute = (new ReflectionClass($object))->getAttributes()[0];
         echo $attribute->getTarget(), ':', $attribute->newInstance()->name;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:ephemeral");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:ephemeral"
+    );
 }
 
 #[test]
@@ -3145,7 +3664,10 @@ fn by_reference_arguments_bind_to_the_private_property_slot_of_the_calling_scope
         $value->updateChild();
         echo $value->readParent(), ':', $value->readChild(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "parent!:child!\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "parent!:child!\n"
+    );
 }
 
 #[test]
@@ -3161,7 +3683,10 @@ fn by_reference_arguments_bind_nested_offsets_of_object_properties() {
         $box->update();
         echo $box->read(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "shared\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "shared\n"
+    );
 }
 
 #[test]
@@ -3177,7 +3702,10 @@ fn dynamic_object_property_array_offsets_bind_variable_references() {
         $container->values['item'] = 'from-property';
         echo $source, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "from-variable:from-property\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "from-variable:from-property\n"
+    );
 }
 
 #[test]
@@ -3199,7 +3727,10 @@ fn private_object_property_array_references_respect_calling_scope() {
         $parent = 'parent alias'; $child = 'child alias';
         echo $box->read(), ':', $box->readChild(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "parent alias:child alias\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "parent alias:child alias\n"
+    );
 }
 
 #[test]
@@ -3211,7 +3742,10 @@ fn inaccessible_private_object_property_array_reference_raises_error() {
         try { $box->values['item'] =& $source; }
         catch (Error $error) { echo get_class($error), "\n"; }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Error\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error\n"
+    );
 }
 
 #[test]
@@ -3258,7 +3792,10 @@ fn typed_property_array_references_bind_and_readonly_targets_raise_catchable_err
         try { $readonly->values['item'] =& $source; }
         catch (Error $error) { echo get_class($error), "\n"; }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "shared:Error\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "shared:Error\n"
+    );
 }
 
 #[test]
@@ -3301,8 +3838,10 @@ fn typed_static_property_reference_uses_typed_property_error() {
         try { $alias =& StaticTypedAliasGetter::get(); }
         catch (Error $error) { echo $error->getMessage(), "\n"; }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(),
-        "9\n13\nTyped property statictypedaliastarget::$value must not be referenced\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "9\n13\nTyped property statictypedaliastarget::$value must not be referenced\n"
+    );
 }
 
 #[test]
@@ -3318,7 +3857,10 @@ fn by_reference_overloaded_read_of_typed_property_checks_getter_value() {
         $alias = 'untyped alias';
         echo $alias;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "untyped alias");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "untyped alias"
+    );
 }
 
 #[test]
@@ -3349,7 +3891,10 @@ fn invoke_magic_method_supports_callable_objects_and_array_callbacks() {
         array_walk($values, new WalkCallable());
         echo $values['x'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:direct!:named!:a!,b!:xa\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:direct!:named!:a!,b!:xa\n"
+    );
 }
 
 #[test]
@@ -3378,7 +3923,10 @@ fn enum_implements_unit_enum_and_backed_enum_interfaces() {
         echo is_a(HttpStatus::Ok, 'BackedEnum'), ':', is_a(PlainStatus::Ready, 'UnitEnum'), ':';
         echo is_a(RoundingMode::HalfEven, 'UnitEnum'), ':', is_a(SortDirection::Ascending, 'UnitEnum');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:1::1:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:1:1::1:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -3400,7 +3948,10 @@ fn reflection_closure_and_arrow_parameters_expose_attributes() {
         echo $arrowParameter->getName(), ':', $arrowParameter->getAttributes()[0]->getArguments()['name'], ':';
         echo $repeatedParameter->getAttributes()[0]->isRepeated(), ':', count($closureReflection->getAttributes()), ':', method_exists('ReflectionFunction', 'getParameters');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value:closure:value:arrow:1:0:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "value:closure:value:arrow:1:0:1"
+    );
 }
 
 #[test]
@@ -3412,7 +3963,10 @@ fn reflection_function_parameters_keep_parameter_attributes() {
         $parameter = (new ReflectionFunction('processArgument'))->getParameters()[0];
         echo $parameter->getName(), ':', $parameter->getAttributes()[0]->newInstance()->label;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "argument:function");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "argument:function"
+    );
 }
 
 #[test]
@@ -3428,6 +3982,8 @@ fn override_attribute_on_properties_requires_a_parent_property() {
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "child");
 
     let invalid = r#"<?php class MissingOverrideProperty { #[\Override] public $label; }"#;
-    let error = compile_source(invalid).err().expect("unmatched Override property must fail compilation");
+    let error = compile_source(invalid)
+        .err()
+        .expect("unmatched Override property must fail compilation");
     assert!(error.contains("MissingOverrideProperty::$label has #[\\Override] attribute, but no matching parent property exists"), "{error}");
 }

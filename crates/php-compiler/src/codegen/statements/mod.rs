@@ -19,7 +19,9 @@ fn reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
 
 fn property_reference_path(expression: &Expr) -> Option<(Expr, String, Vec<&Expr>)> {
     match expression {
-        Expr::Property(receiver, property) => Some(((**receiver).clone(), property.clone(), Vec::new())),
+        Expr::Property(receiver, property) => {
+            Some(((**receiver).clone(), property.clone(), Vec::new()))
+        }
         Expr::Index(array, key) => {
             let (receiver, property, mut keys) = property_reference_path(array)?;
             keys.push(key);
@@ -32,7 +34,9 @@ fn property_reference_path(expression: &Expr) -> Option<(Expr, String, Vec<&Expr
 impl CodeGenerator<'_> {
     /// Generate bytecode for each statement in source order and propagate code-generation errors.
     pub(super) fn statements(&mut self, statements: &[Stmt]) {
-        for statement in statements { self.statement(statement); }
+        for statement in statements {
+            self.statement(statement);
+        }
     }
 
     /// Emit stack-machine instructions for one statement node.
@@ -70,25 +74,40 @@ impl CodeGenerator<'_> {
             Stmt::IncludeReturn => {
                 let instruction = self.instructions.len();
                 self.instructions.push(Op::Jump(0));
-                if let Some(jumps) = self.include_return_stack.last_mut() { jumps.push(instruction); }
-                else { self.errors.push("include return outside an included-file scope".into()); }
+                if let Some(jumps) = self.include_return_stack.last_mut() {
+                    jumps.push(instruction);
+                } else {
+                    self.errors
+                        .push("include return outside an included-file scope".into());
+                }
             }
             Stmt::IncludeReturnValue(value) => {
                 self.expression(value);
                 self.instructions.push(Op::Pop);
                 let instruction = self.instructions.len();
                 self.instructions.push(Op::Jump(0));
-                if let Some(jumps) = self.include_return_stack.last_mut() { jumps.push(instruction); }
-                else { self.errors.push("include return outside an included-file scope".into()); }
+                if let Some(jumps) = self.include_return_stack.last_mut() {
+                    jumps.push(instruction);
+                } else {
+                    self.errors
+                        .push("include return outside an included-file scope".into());
+                }
             }
-            Stmt::FunctionDeclaration(_) | Stmt::ClassDeclaration(_) | Stmt::InterfaceDeclaration(_) | Stmt::TraitDeclaration(_) => {},
+            Stmt::FunctionDeclaration(_)
+            | Stmt::ClassDeclaration(_)
+            | Stmt::InterfaceDeclaration(_)
+            | Stmt::TraitDeclaration(_) => {}
             Stmt::Include { kind, path } => {
                 self.expression(path);
                 self.instructions.push(Op::Include(match kind {
                     php_syntax::IncludeKind::Include => php_runtime::bytecode::IncludeMode::Include,
-                    php_syntax::IncludeKind::IncludeOnce => php_runtime::bytecode::IncludeMode::IncludeOnce,
+                    php_syntax::IncludeKind::IncludeOnce => {
+                        php_runtime::bytecode::IncludeMode::IncludeOnce
+                    }
                     php_syntax::IncludeKind::Require => php_runtime::bytecode::IncludeMode::Require,
-                    php_syntax::IncludeKind::RequireOnce => php_runtime::bytecode::IncludeMode::RequireOnce,
+                    php_syntax::IncludeKind::RequireOnce => {
+                        php_runtime::bytecode::IncludeMode::RequireOnce
+                    }
                 }));
                 self.instructions.push(Op::Pop);
             }
@@ -109,15 +128,24 @@ impl CodeGenerator<'_> {
                         return;
                     }
                     let known = match value {
-                        Expr::String(_) | Expr::Array(_) | Expr::FirstClassCallable(_) => Some(value.clone()),
+                        Expr::String(_) | Expr::Array(_) | Expr::FirstClassCallable(_) => {
+                            Some(value.clone())
+                        }
                         Expr::Variable(source) => self.known_callables.get(source).cloned(),
                         _ => None,
                     };
-                    if let Some(known) = known { self.known_callables.insert(name.clone(), known); }
-                    else { self.known_callables.remove(name); }
-                    let assigned_type = super::expressions::assigned_type(value, &self.variable_types);
-                    if let Some(assigned_type) = assigned_type { self.variable_types.insert(name.clone(), assigned_type); }
-                    else { self.variable_types.remove(name); }
+                    if let Some(known) = known {
+                        self.known_callables.insert(name.clone(), known);
+                    } else {
+                        self.known_callables.remove(name);
+                    }
+                    let assigned_type =
+                        super::expressions::assigned_type(value, &self.variable_types);
+                    if let Some(assigned_type) = assigned_type {
+                        self.variable_types.insert(name.clone(), assigned_type);
+                    } else {
+                        self.variable_types.remove(name);
+                    }
                     self.expression(value);
                     self.instructions.push(Op::Store(name.clone()));
                 }
@@ -136,14 +164,18 @@ impl CodeGenerator<'_> {
                 }
                 AssignTarget::Index { variable, keys } => {
                     self.instructions.push(Op::Load(variable.clone()));
-                    for key in keys { self.expression(key); }
+                    for key in keys {
+                        self.expression(key);
+                    }
                     self.expression(value);
                     self.instructions.push(Op::ArraySetPath(keys.len()));
                     self.instructions.push(Op::StoreArrayRoot(variable.clone()));
                 }
                 AssignTarget::Append { variable, keys } => {
                     self.instructions.push(Op::Load(variable.clone()));
-                    for key in keys { self.expression(key); }
+                    for key in keys {
+                        self.expression(key);
+                    }
                     self.expression(value);
                     if keys.is_empty() {
                         self.instructions.push(Op::ArrayAppend);
@@ -155,136 +187,306 @@ impl CodeGenerator<'_> {
                 AssignTarget::ArrayPath { variable, segments } => {
                     self.instructions.push(Op::Load(variable.clone()));
                     for segment in segments {
-                        if let php_syntax::ArrayPathSegment::Key(key) = segment { self.expression(key); }
+                        if let php_syntax::ArrayPathSegment::Key(key) = segment {
+                            self.expression(key);
+                        }
                     }
                     self.expression(value);
-                    self.instructions.push(Op::ArraySetMixedPath(segments.iter().map(|segment| matches!(segment, php_syntax::ArrayPathSegment::Append)).collect()));
+                    self.instructions.push(Op::ArraySetMixedPath(
+                        segments
+                            .iter()
+                            .map(|segment| matches!(segment, php_syntax::ArrayPathSegment::Append))
+                            .collect(),
+                    ));
                     self.instructions.push(Op::StoreArrayRoot(variable.clone()));
                 }
                 AssignTarget::Property { object, property } => {
                     self.instructions.push(Op::Load(object.clone()));
                     self.expression(value);
-                    self.instructions.push(Op::SetProperty(property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
+                    self.instructions.push(Op::SetProperty(
+                        property.clone(),
+                        self.current_class.clone(),
+                        self.current_method
+                            .as_deref()
+                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    ));
                 }
                 AssignTarget::StaticProperty { class, property } => {
                     self.expression(value);
                     let class = match class.as_str() {
-                        "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                        "self" => self
+                            .current_class
+                            .clone()
+                            .unwrap_or_else(|| class.to_ascii_lowercase()),
                         "static" => "static".into(),
                         _ => class.to_ascii_lowercase(),
                     };
-                    self.instructions.push(Op::SetStaticProperty(class, property.clone(), self.current_class.clone()));
+                    self.instructions.push(Op::SetStaticProperty(
+                        class,
+                        property.clone(),
+                        self.current_class.clone(),
+                    ));
                 }
             },
             Stmt::ListAssign { targets, value } => {
                 self.expression(value);
                 let mut target_key_count = 0;
-                let targets = targets.iter().map(|target| compile_destructure_target(self, target, &mut target_key_count)).collect();
-                let source_variable = match value { Expr::Variable(name) => Some(name.clone()), _ => None };
-                self.instructions.push(Op::ListDestructure(targets, target_key_count, self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")), source_variable));
+                let targets = targets
+                    .iter()
+                    .map(|target| compile_destructure_target(self, target, &mut target_key_count))
+                    .collect();
+                let source_variable = match value {
+                    Expr::Variable(name) => Some(name.clone()),
+                    _ => None,
+                };
+                self.instructions.push(Op::ListDestructure(
+                    targets,
+                    target_key_count,
+                    self.current_class.clone(),
+                    self.current_method
+                        .as_deref()
+                        .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    source_variable,
+                ));
             }
             Stmt::Global(variables) => {
-                for variable in variables { self.instructions.push(Op::DeclareGlobal(variable.clone())); }
+                for variable in variables {
+                    self.instructions.push(Op::DeclareGlobal(variable.clone()));
+                }
             }
             Stmt::ReferenceAssign { target, source } => {
-                if target == "GLOBALS" || matches!(source, Expr::Variable(name) if name == "GLOBALS") {
-                    self.errors.push("Cannot create a reference to $GLOBALS itself".into());
+                if target == "GLOBALS"
+                    || matches!(source, Expr::Variable(name) if name == "GLOBALS")
+                {
+                    self.errors
+                        .push("Cannot create a reference to $GLOBALS itself".into());
                     return;
                 }
                 if let php_syntax::Expr::Property(receiver, property) = source {
                     self.expression(receiver);
-                    self.instructions.push(Op::LoadPropertyReference(property.clone(), self.current_class.clone()));
-                    self.instructions.push(Op::BindReturnedReference(target.clone()));
-                } else if let Some((class, property, keys)) = super::expressions::static_property_path(source) {
+                    self.instructions.push(Op::LoadPropertyReference(
+                        property.clone(),
+                        self.current_class.clone(),
+                    ));
+                    self.instructions
+                        .push(Op::BindReturnedReference(target.clone()));
+                } else if let Some((class, property, keys)) =
+                    super::expressions::static_property_path(source)
+                {
                     let class = match class {
-                        "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
-                        "parent" => self.parent_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                        "self" => self
+                            .current_class
+                            .clone()
+                            .unwrap_or_else(|| class.to_ascii_lowercase()),
+                        "parent" => self
+                            .parent_class
+                            .clone()
+                            .unwrap_or_else(|| class.to_ascii_lowercase()),
                         "static" => "static".into(),
                         _ => class.to_ascii_lowercase(),
                     };
-                    self.instructions.push(Op::LoadStaticPropertyReference(class, property.to_string(), self.current_class.clone()));
-                    for key in &keys { self.expression(key); }
-                    if !keys.is_empty() { self.instructions.push(Op::LoadStaticPropertyArrayReference(keys.len())); }
-                    self.instructions.push(Op::BindReturnedReference(target.clone()));
+                    self.instructions.push(Op::LoadStaticPropertyReference(
+                        class,
+                        property.to_string(),
+                        self.current_class.clone(),
+                    ));
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    if !keys.is_empty() {
+                        self.instructions
+                            .push(Op::LoadStaticPropertyArrayReference(keys.len()));
+                    }
+                    self.instructions
+                        .push(Op::BindReturnedReference(target.clone()));
                 } else if let Some((source, keys)) = reference_path(source) {
                     if keys.is_empty() {
-                        self.instructions.push(Op::AssignReference(target.clone(), source));
+                        self.instructions
+                            .push(Op::AssignReference(target.clone(), source));
                     } else {
-                        for key in &keys { self.expression(key); }
-                        self.instructions.push(Op::AssignArrayReference(target.clone(), source, keys.len()));
+                        for key in &keys {
+                            self.expression(key);
+                        }
+                        self.instructions.push(Op::AssignArrayReference(
+                            target.clone(),
+                            source,
+                            keys.len(),
+                        ));
                     }
                 } else {
                     self.expression(source);
-                    self.instructions.push(Op::BindReturnedReference(target.clone()));
+                    self.instructions
+                        .push(Op::BindReturnedReference(target.clone()));
                 }
             }
-            Stmt::ArrayReferenceAssign { target, target_keys, source, source_keys } => {
-                for key in target_keys { self.expression(key); }
-                for key in source_keys { self.expression(key); }
-                self.instructions.push(Op::BindArrayReference(target.clone(), target_keys.len(), source.clone(), source_keys.len()));
+            Stmt::ArrayReferenceAssign {
+                target,
+                target_keys,
+                source,
+                source_keys,
+            } => {
+                for key in target_keys {
+                    self.expression(key);
+                }
+                for key in source_keys {
+                    self.expression(key);
+                }
+                self.instructions.push(Op::BindArrayReference(
+                    target.clone(),
+                    target_keys.len(),
+                    source.clone(),
+                    source_keys.len(),
+                ));
             }
-            Stmt::ArrayReferenceAssignExpr { target, target_keys, source } => {
-                for key in target_keys { self.expression(key); }
+            Stmt::ArrayReferenceAssignExpr {
+                target,
+                target_keys,
+                source,
+            } => {
+                for key in target_keys {
+                    self.expression(key);
+                }
                 if let Expr::Property(receiver, property) = source {
                     self.expression(receiver);
-                    self.instructions.push(Op::LoadPropertyReference(property.clone(), self.current_class.clone()));
-                    self.instructions.push(Op::BindArrayReturnedReference(target.clone(), target_keys.len()));
+                    self.instructions.push(Op::LoadPropertyReference(
+                        property.clone(),
+                        self.current_class.clone(),
+                    ));
+                    self.instructions.push(Op::BindArrayReturnedReference(
+                        target.clone(),
+                        target_keys.len(),
+                    ));
                 } else {
-                    self.errors.push("Array reference assignment source must be a reference-returning property".into());
+                    self.errors.push(
+                        "Array reference assignment source must be a reference-returning property"
+                            .into(),
+                    );
                 }
             }
-            Stmt::StaticPropertyArrayReferenceAssign { target_class, target_property, target_keys, source_class, source_property, source_keys } => {
-                for key in target_keys { self.expression(key); }
-                for key in source_keys { self.expression(key); }
+            Stmt::StaticPropertyArrayReferenceAssign {
+                target_class,
+                target_property,
+                target_keys,
+                source_class,
+                source_property,
+                source_keys,
+            } => {
+                for key in target_keys {
+                    self.expression(key);
+                }
+                for key in source_keys {
+                    self.expression(key);
+                }
                 let class_name = |class: &str, current: &Option<String>| match class {
-                    "self" => current.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                    "self" => current
+                        .clone()
+                        .unwrap_or_else(|| class.to_ascii_lowercase()),
                     "static" => "static".to_string(),
                     _ => class.to_ascii_lowercase(),
                 };
                 self.instructions.push(Op::BindStaticPropertyArrayReference(
-                    class_name(target_class, &self.current_class), target_property.clone(), target_keys.len(),
-                    class_name(source_class, &self.current_class), source_property.clone(), source_keys.len(),
+                    class_name(target_class, &self.current_class),
+                    target_property.clone(),
+                    target_keys.len(),
+                    class_name(source_class, &self.current_class),
+                    source_property.clone(),
+                    source_keys.len(),
                     self.current_class.clone(),
                 ));
             }
-            Stmt::DynamicPropertyReferenceAssign { receiver, property, source } => {
+            Stmt::DynamicPropertyReferenceAssign {
+                receiver,
+                property,
+                source,
+            } => {
                 self.expression(receiver);
                 self.expression(property);
                 if let Expr::Property(source_receiver, source_property) = source {
                     self.expression(source_receiver);
-                    self.instructions.push(Op::LoadPropertyReference(source_property.clone(), self.current_class.clone()));
+                    self.instructions.push(Op::LoadPropertyReference(
+                        source_property.clone(),
+                        self.current_class.clone(),
+                    ));
                     self.instructions.push(Op::BindDynamicPropertyReference);
                 } else {
                     self.errors.push("Dynamic property reference assignment requires a reference-returning property".into());
                 }
             }
-            Stmt::DynamicPropertyArrayReferenceAssign { receiver, property, target_keys, source, source_keys } => {
+            Stmt::DynamicPropertyArrayReferenceAssign {
+                receiver,
+                property,
+                target_keys,
+                source,
+                source_keys,
+            } => {
                 self.expression(receiver);
                 self.expression(property);
-                for key in target_keys { self.expression(key); }
-                for key in source_keys { self.expression(key); }
-                self.instructions.push(Op::BindDynamicPropertyArrayReference(
-                    target_keys.len(), source.clone(), source_keys.len(), self.current_class.clone(),
-                    self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
-                ));
+                for key in target_keys {
+                    self.expression(key);
+                }
+                for key in source_keys {
+                    self.expression(key);
+                }
+                self.instructions
+                    .push(Op::BindDynamicPropertyArrayReference(
+                        target_keys.len(),
+                        source.clone(),
+                        source_keys.len(),
+                        self.current_class.clone(),
+                        self.current_method
+                            .as_deref()
+                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    ));
             }
-            Stmt::PropertyAppendReferenceAssign { receiver, property, source } => {
+            Stmt::PropertyAppendReferenceAssign {
+                receiver,
+                property,
+                source,
+            } => {
                 self.expression(receiver);
                 if let Expr::Property(source_receiver, source_property) = source {
                     self.expression(source_receiver);
-                    self.instructions.push(Op::LoadPropertyReference(source_property.clone(), self.current_class.clone()));
-                    self.instructions.push(Op::BindPropertyAppendReference(property.clone(), self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct"))));
+                    self.instructions.push(Op::LoadPropertyReference(
+                        source_property.clone(),
+                        self.current_class.clone(),
+                    ));
+                    self.instructions.push(Op::BindPropertyAppendReference(
+                        property.clone(),
+                        self.current_class.clone(),
+                        self.current_method
+                            .as_deref()
+                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    ));
                 } else {
-                    self.errors.push("Property array append reference requires a reference-returning property".into());
+                    self.errors.push(
+                        "Property array append reference requires a reference-returning property"
+                            .into(),
+                    );
                 }
             }
-            Stmt::PropertyArrayReferenceAssign { receiver, property, target_keys, source, source_keys } => {
+            Stmt::PropertyArrayReferenceAssign {
+                receiver,
+                property,
+                target_keys,
+                source,
+                source_keys,
+            } => {
                 self.expression(receiver);
-                for key in target_keys { self.expression(key); }
-                for key in source_keys { self.expression(key); }
+                for key in target_keys {
+                    self.expression(key);
+                }
+                for key in source_keys {
+                    self.expression(key);
+                }
                 self.instructions.push(Op::BindPropertyArrayReference(
-                    property.clone(), target_keys.len(), source.clone(), source_keys.len(),
-                    self.current_class.clone(), self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    property.clone(),
+                    target_keys.len(),
+                    source.clone(),
+                    source_keys.len(),
+                    self.current_class.clone(),
+                    self.current_method
+                        .as_deref()
+                        .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                 ));
             }
             Stmt::Static(variables) => {
@@ -301,28 +503,44 @@ impl CodeGenerator<'_> {
                             php_syntax::Expr::Number(number) => Value::Number(-number),
                             _ => {
                                 let check = self.instructions.len();
-                                self.instructions.push(Op::StaticInitializerCheck(variable.name.clone(), 0));
-                                self.expression(variable.initial.as_ref().expect("initializer expression exists"));
-                                self.instructions.push(Op::InitializeStatic(variable.name.clone()));
+                                self.instructions
+                                    .push(Op::StaticInitializerCheck(variable.name.clone(), 0));
+                                self.expression(
+                                    variable
+                                        .initial
+                                        .as_ref()
+                                        .expect("initializer expression exists"),
+                                );
+                                self.instructions
+                                    .push(Op::InitializeStatic(variable.name.clone()));
                                 let end = self.instructions.len();
-                                self.instructions[check] = Op::StaticInitializerCheck(variable.name.clone(), end);
+                                self.instructions[check] =
+                                    Op::StaticInitializerCheck(variable.name.clone(), end);
                                 continue;
                             }
                         },
                         Some(initializer) => {
                             let check = self.instructions.len();
-                            self.instructions.push(Op::StaticInitializerCheck(variable.name.clone(), 0));
+                            self.instructions
+                                .push(Op::StaticInitializerCheck(variable.name.clone(), 0));
                             self.expression(initializer);
-                            self.instructions.push(Op::InitializeStatic(variable.name.clone()));
+                            self.instructions
+                                .push(Op::InitializeStatic(variable.name.clone()));
                             let end = self.instructions.len();
-                            self.instructions[check] = Op::StaticInitializerCheck(variable.name.clone(), end);
+                            self.instructions[check] =
+                                Op::StaticInitializerCheck(variable.name.clone(), end);
                             continue;
                         }
                     };
-                    self.instructions.push(Op::DeclareStatic(variable.name.clone(), initial));
+                    self.instructions
+                        .push(Op::DeclareStatic(variable.name.clone(), initial));
                 }
             }
-            Stmt::CompoundAssign { target, operation, value } => {
+            Stmt::CompoundAssign {
+                target,
+                operation,
+                value,
+            } => {
                 if matches!(target, AssignTarget::Variable(name) if name == "GLOBALS") {
                     self.errors.push("Cannot re-assign $GLOBALS".into());
                     return;
@@ -342,43 +560,78 @@ impl CodeGenerator<'_> {
                         }
                         AssignTarget::Index { variable, keys } => {
                             self.instructions.push(Op::Load(variable.clone()));
-                            for key in keys { self.expression(key); }
+                            for key in keys {
+                                self.expression(key);
+                            }
                             let present_branch = self.instructions.len();
                             self.instructions.push(Op::CoalescePathJump(0, keys.len()));
                             self.expression(value);
-                            self.instructions.push(Op::CoalesceAssignPath(variable.clone(), keys.len()));
+                            self.instructions
+                                .push(Op::CoalesceAssignPath(variable.clone(), keys.len()));
                             self.instructions.push(Op::Pop);
                             let end = self.instructions.len();
-                            self.instructions[present_branch] = Op::CoalescePathJump(end, keys.len());
+                            self.instructions[present_branch] =
+                                Op::CoalescePathJump(end, keys.len());
                         }
                         AssignTarget::Property { object, property } => {
                             self.instructions.push(Op::Load(object.clone()));
                             let present_branch = self.instructions.len();
-                            self.instructions.push(Op::CoalescePropertyJump(0, property.clone(), self.current_class.clone()));
+                            self.instructions.push(Op::CoalescePropertyJump(
+                                0,
+                                property.clone(),
+                                self.current_class.clone(),
+                            ));
                             self.expression(value);
                             self.instructions.push(Op::CoalesceAssignProperty(
-                                property.clone(), self.current_class.clone(),
-                                self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                                property.clone(),
+                                self.current_class.clone(),
+                                self.current_method.as_deref().is_some_and(|method| {
+                                    method.eq_ignore_ascii_case("__construct")
+                                }),
                             ));
                             self.instructions.push(Op::Pop);
                             let end = self.instructions.len();
-                            self.instructions[present_branch] = Op::CoalescePropertyJump(end, property.clone(), self.current_class.clone());
+                            self.instructions[present_branch] = Op::CoalescePropertyJump(
+                                end,
+                                property.clone(),
+                                self.current_class.clone(),
+                            );
                         }
                         AssignTarget::StaticProperty { class, property } => {
                             let class = match class.as_str() {
-                                "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                                "self" => self
+                                    .current_class
+                                    .clone()
+                                    .unwrap_or_else(|| class.to_ascii_lowercase()),
                                 "static" => "static".into(),
                                 _ => class.to_ascii_lowercase(),
                             };
                             let present_branch = self.instructions.len();
-                            self.instructions.push(Op::CoalesceStaticPropertyJump(0, class.clone(), property.clone(), self.current_class.clone()));
+                            self.instructions.push(Op::CoalesceStaticPropertyJump(
+                                0,
+                                class.clone(),
+                                property.clone(),
+                                self.current_class.clone(),
+                            ));
                             self.expression(value);
-                            self.instructions.push(Op::CoalesceAssignStaticProperty(class.clone(), property.clone(), self.current_class.clone()));
+                            self.instructions.push(Op::CoalesceAssignStaticProperty(
+                                class.clone(),
+                                property.clone(),
+                                self.current_class.clone(),
+                            ));
                             let pop = self.instructions.len();
                             self.instructions.push(Op::Pop);
-                            self.instructions[present_branch] = Op::CoalesceStaticPropertyJump(pop, class, property.clone(), self.current_class.clone());
+                            self.instructions[present_branch] = Op::CoalesceStaticPropertyJump(
+                                pop,
+                                class,
+                                property.clone(),
+                                self.current_class.clone(),
+                            );
                         }
-                        _ => self.errors.push("Coalescing assignment currently requires a variable or array element".into()),
+                        _ => self.errors.push(
+                            "Coalescing assignment currently requires a variable or array element"
+                                .into(),
+                        ),
                     }
                     return;
                 }
@@ -405,83 +658,179 @@ impl CodeGenerator<'_> {
                     }
                     AssignTarget::Index { variable, keys } => {
                         self.instructions.push(Op::Load(variable.clone()));
-                        for key in keys { self.expression(key); }
+                        for key in keys {
+                            self.expression(key);
+                        }
                         self.expression(value);
                         let operation = match operation {
-                            php_syntax::BinaryOp::Add => php_runtime::bytecode::CompoundOperation::Add,
-                            php_syntax::BinaryOp::Subtract => php_runtime::bytecode::CompoundOperation::Subtract,
-                            php_syntax::BinaryOp::Multiply => php_runtime::bytecode::CompoundOperation::Multiply,
-                            php_syntax::BinaryOp::Power => php_runtime::bytecode::CompoundOperation::Power,
-                            php_syntax::BinaryOp::Divide => php_runtime::bytecode::CompoundOperation::Divide,
-                            php_syntax::BinaryOp::Modulo => php_runtime::bytecode::CompoundOperation::Modulo,
-                            php_syntax::BinaryOp::Concatenate => php_runtime::bytecode::CompoundOperation::Concatenate,
-                            php_syntax::BinaryOp::BitAnd => php_runtime::bytecode::CompoundOperation::BitAnd,
-                            php_syntax::BinaryOp::BitXor => php_runtime::bytecode::CompoundOperation::BitXor,
-                            php_syntax::BinaryOp::BitOr => php_runtime::bytecode::CompoundOperation::BitOr,
-                            php_syntax::BinaryOp::ShiftLeft => php_runtime::bytecode::CompoundOperation::ShiftLeft,
-                            php_syntax::BinaryOp::ShiftRight => php_runtime::bytecode::CompoundOperation::ShiftRight,
+                            php_syntax::BinaryOp::Add => {
+                                php_runtime::bytecode::CompoundOperation::Add
+                            }
+                            php_syntax::BinaryOp::Subtract => {
+                                php_runtime::bytecode::CompoundOperation::Subtract
+                            }
+                            php_syntax::BinaryOp::Multiply => {
+                                php_runtime::bytecode::CompoundOperation::Multiply
+                            }
+                            php_syntax::BinaryOp::Power => {
+                                php_runtime::bytecode::CompoundOperation::Power
+                            }
+                            php_syntax::BinaryOp::Divide => {
+                                php_runtime::bytecode::CompoundOperation::Divide
+                            }
+                            php_syntax::BinaryOp::Modulo => {
+                                php_runtime::bytecode::CompoundOperation::Modulo
+                            }
+                            php_syntax::BinaryOp::Concatenate => {
+                                php_runtime::bytecode::CompoundOperation::Concatenate
+                            }
+                            php_syntax::BinaryOp::BitAnd => {
+                                php_runtime::bytecode::CompoundOperation::BitAnd
+                            }
+                            php_syntax::BinaryOp::BitXor => {
+                                php_runtime::bytecode::CompoundOperation::BitXor
+                            }
+                            php_syntax::BinaryOp::BitOr => {
+                                php_runtime::bytecode::CompoundOperation::BitOr
+                            }
+                            php_syntax::BinaryOp::ShiftLeft => {
+                                php_runtime::bytecode::CompoundOperation::ShiftLeft
+                            }
+                            php_syntax::BinaryOp::ShiftRight => {
+                                php_runtime::bytecode::CompoundOperation::ShiftRight
+                            }
                             _ => unreachable!("unsupported compound assignment operator"),
                         };
-                        self.instructions.push(Op::CompoundAssignPath(keys.len(), operation));
+                        self.instructions
+                            .push(Op::CompoundAssignPath(keys.len(), operation));
                         self.instructions.push(Op::StoreArrayRoot(variable.clone()));
                     }
                     AssignTarget::Property { object, property } => {
                         if *operation == php_syntax::BinaryOp::Coalesce {
-                            self.errors.push("Coalescing assignment to object properties is not implemented".into());
+                            self.errors.push(
+                                "Coalescing assignment to object properties is not implemented"
+                                    .into(),
+                            );
                             return;
                         }
                         let operation = match operation {
-                            php_syntax::BinaryOp::Add => php_runtime::bytecode::CompoundOperation::Add,
-                            php_syntax::BinaryOp::Subtract => php_runtime::bytecode::CompoundOperation::Subtract,
-                            php_syntax::BinaryOp::Multiply => php_runtime::bytecode::CompoundOperation::Multiply,
-                            php_syntax::BinaryOp::Power => php_runtime::bytecode::CompoundOperation::Power,
-                            php_syntax::BinaryOp::Divide => php_runtime::bytecode::CompoundOperation::Divide,
-                            php_syntax::BinaryOp::Modulo => php_runtime::bytecode::CompoundOperation::Modulo,
-                            php_syntax::BinaryOp::Concatenate => php_runtime::bytecode::CompoundOperation::Concatenate,
-                            php_syntax::BinaryOp::BitAnd => php_runtime::bytecode::CompoundOperation::BitAnd,
-                            php_syntax::BinaryOp::BitXor => php_runtime::bytecode::CompoundOperation::BitXor,
-                            php_syntax::BinaryOp::BitOr => php_runtime::bytecode::CompoundOperation::BitOr,
-                            php_syntax::BinaryOp::ShiftLeft => php_runtime::bytecode::CompoundOperation::ShiftLeft,
-                            php_syntax::BinaryOp::ShiftRight => php_runtime::bytecode::CompoundOperation::ShiftRight,
+                            php_syntax::BinaryOp::Add => {
+                                php_runtime::bytecode::CompoundOperation::Add
+                            }
+                            php_syntax::BinaryOp::Subtract => {
+                                php_runtime::bytecode::CompoundOperation::Subtract
+                            }
+                            php_syntax::BinaryOp::Multiply => {
+                                php_runtime::bytecode::CompoundOperation::Multiply
+                            }
+                            php_syntax::BinaryOp::Power => {
+                                php_runtime::bytecode::CompoundOperation::Power
+                            }
+                            php_syntax::BinaryOp::Divide => {
+                                php_runtime::bytecode::CompoundOperation::Divide
+                            }
+                            php_syntax::BinaryOp::Modulo => {
+                                php_runtime::bytecode::CompoundOperation::Modulo
+                            }
+                            php_syntax::BinaryOp::Concatenate => {
+                                php_runtime::bytecode::CompoundOperation::Concatenate
+                            }
+                            php_syntax::BinaryOp::BitAnd => {
+                                php_runtime::bytecode::CompoundOperation::BitAnd
+                            }
+                            php_syntax::BinaryOp::BitXor => {
+                                php_runtime::bytecode::CompoundOperation::BitXor
+                            }
+                            php_syntax::BinaryOp::BitOr => {
+                                php_runtime::bytecode::CompoundOperation::BitOr
+                            }
+                            php_syntax::BinaryOp::ShiftLeft => {
+                                php_runtime::bytecode::CompoundOperation::ShiftLeft
+                            }
+                            php_syntax::BinaryOp::ShiftRight => {
+                                php_runtime::bytecode::CompoundOperation::ShiftRight
+                            }
                             _ => unreachable!("unsupported compound assignment operator"),
                         };
                         self.instructions.push(Op::Load(object.clone()));
                         self.expression(value);
                         self.instructions.push(Op::CompoundAssignProperty(
-                            property.clone(), operation, self.current_class.clone(),
-                            self.current_method.as_deref().is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                            property.clone(),
+                            operation,
+                            self.current_class.clone(),
+                            self.current_method
+                                .as_deref()
+                                .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
                         ));
                         self.instructions.push(Op::Pop);
                     }
                     AssignTarget::StaticProperty { class, property } => {
                         let class = match class.as_str() {
-                            "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                            "self" => self
+                                .current_class
+                                .clone()
+                                .unwrap_or_else(|| class.to_ascii_lowercase()),
                             "static" => "static".into(),
                             _ => class.to_ascii_lowercase(),
                         };
                         let operation = match operation {
-                            php_syntax::BinaryOp::Add => php_runtime::bytecode::CompoundOperation::Add,
-                            php_syntax::BinaryOp::Subtract => php_runtime::bytecode::CompoundOperation::Subtract,
-                            php_syntax::BinaryOp::Multiply => php_runtime::bytecode::CompoundOperation::Multiply,
-                            php_syntax::BinaryOp::Power => php_runtime::bytecode::CompoundOperation::Power,
-                            php_syntax::BinaryOp::Divide => php_runtime::bytecode::CompoundOperation::Divide,
-                            php_syntax::BinaryOp::Modulo => php_runtime::bytecode::CompoundOperation::Modulo,
-                            php_syntax::BinaryOp::Concatenate => php_runtime::bytecode::CompoundOperation::Concatenate,
-                            php_syntax::BinaryOp::BitAnd => php_runtime::bytecode::CompoundOperation::BitAnd,
-                            php_syntax::BinaryOp::BitXor => php_runtime::bytecode::CompoundOperation::BitXor,
-                            php_syntax::BinaryOp::BitOr => php_runtime::bytecode::CompoundOperation::BitOr,
-                            php_syntax::BinaryOp::ShiftLeft => php_runtime::bytecode::CompoundOperation::ShiftLeft,
-                            php_syntax::BinaryOp::ShiftRight => php_runtime::bytecode::CompoundOperation::ShiftRight,
+                            php_syntax::BinaryOp::Add => {
+                                php_runtime::bytecode::CompoundOperation::Add
+                            }
+                            php_syntax::BinaryOp::Subtract => {
+                                php_runtime::bytecode::CompoundOperation::Subtract
+                            }
+                            php_syntax::BinaryOp::Multiply => {
+                                php_runtime::bytecode::CompoundOperation::Multiply
+                            }
+                            php_syntax::BinaryOp::Power => {
+                                php_runtime::bytecode::CompoundOperation::Power
+                            }
+                            php_syntax::BinaryOp::Divide => {
+                                php_runtime::bytecode::CompoundOperation::Divide
+                            }
+                            php_syntax::BinaryOp::Modulo => {
+                                php_runtime::bytecode::CompoundOperation::Modulo
+                            }
+                            php_syntax::BinaryOp::Concatenate => {
+                                php_runtime::bytecode::CompoundOperation::Concatenate
+                            }
+                            php_syntax::BinaryOp::BitAnd => {
+                                php_runtime::bytecode::CompoundOperation::BitAnd
+                            }
+                            php_syntax::BinaryOp::BitXor => {
+                                php_runtime::bytecode::CompoundOperation::BitXor
+                            }
+                            php_syntax::BinaryOp::BitOr => {
+                                php_runtime::bytecode::CompoundOperation::BitOr
+                            }
+                            php_syntax::BinaryOp::ShiftLeft => {
+                                php_runtime::bytecode::CompoundOperation::ShiftLeft
+                            }
+                            php_syntax::BinaryOp::ShiftRight => {
+                                php_runtime::bytecode::CompoundOperation::ShiftRight
+                            }
                             _ => unreachable!("unsupported compound assignment operator"),
                         };
                         self.expression(value);
-                        self.instructions.push(Op::CompoundAssignStaticProperty(class, property.clone(), operation, self.current_class.clone()));
+                        self.instructions.push(Op::CompoundAssignStaticProperty(
+                            class,
+                            property.clone(),
+                            operation,
+                            self.current_class.clone(),
+                        ));
                         self.instructions.push(Op::Pop);
                     }
-                    _ => self.errors.push("Unsupported compound assignment target".into()),
+                    _ => self
+                        .errors
+                        .push("Unsupported compound assignment target".into()),
                 }
             }
-            Stmt::If { condition, then_body, else_body } => {
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 self.known_callables.clear();
                 self.expression(condition);
                 let condition_callables = self.known_callables.clone();
@@ -504,14 +853,31 @@ impl CodeGenerator<'_> {
                 self.known_callables.clear();
                 self.variable_types.clear();
             }
-            Stmt::Switch { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.switch_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
-            Stmt::TryCatch { try_body, catches, finally_body: None } => {
+            Stmt::Switch { .. } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
+                self.switch_statement(statement);
+                self.known_callables.clear();
+                self.variable_types.clear();
+            }
+            Stmt::TryCatch {
+                try_body,
+                catches,
+                finally_body: None,
+            } => {
                 self.known_callables.clear();
                 self.variable_types.clear();
                 let handler = self.instructions.len();
-                self.instructions.push(Op::TryStart(catches.iter().map(|catch| php_runtime::bytecode::CatchTarget {
-                    target: 0, variable: catch.variable.clone(), types: catch.types.clone(),
-                }).collect()));
+                self.instructions.push(Op::TryStart(
+                    catches
+                        .iter()
+                        .map(|catch| php_runtime::bytecode::CatchTarget {
+                            target: 0,
+                            variable: catch.variable.clone(),
+                            types: catch.types.clone(),
+                        })
+                        .collect(),
+                ));
                 self.statements(try_body);
                 self.instructions.push(Op::TryEnd);
                 let skip_catch = self.instructions.len();
@@ -522,27 +888,44 @@ impl CodeGenerator<'_> {
                     self.known_callables.clear();
                     self.variable_types.clear();
                     let target = self.instructions.len();
-                    targets.push(php_runtime::bytecode::CatchTarget { target, variable: catch.variable.clone(), types: catch.types.clone() });
+                    targets.push(php_runtime::bytecode::CatchTarget {
+                        target,
+                        variable: catch.variable.clone(),
+                        types: catch.types.clone(),
+                    });
                     self.statements(&catch.body);
                     exits.push(self.instructions.len());
                     self.instructions.push(Op::Jump(0));
                 }
                 let end = self.instructions.len();
                 self.instructions[handler] = Op::TryStart(targets);
-                for exit in exits { self.instructions[exit] = Op::Jump(end); }
+                for exit in exits {
+                    self.instructions[exit] = Op::Jump(end);
+                }
                 self.instructions[skip_catch] = Op::Jump(end);
                 self.known_callables.clear();
                 self.variable_types.clear();
             }
-            Stmt::TryCatch { try_body, catches, finally_body: Some(finally_body) } => {
+            Stmt::TryCatch {
+                try_body,
+                catches,
+                finally_body: Some(finally_body),
+            } => {
                 self.known_callables.clear();
                 self.variable_types.clear();
                 let finally_handler = self.instructions.len();
                 self.instructions.push(Op::FinallyStart(0, Vec::new()));
                 let catch_handler = self.instructions.len();
-                self.instructions.push(Op::TryStart(catches.iter().map(|catch| php_runtime::bytecode::CatchTarget {
-                    target: 0, variable: catch.variable.clone(), types: catch.types.clone(),
-                }).collect()));
+                self.instructions.push(Op::TryStart(
+                    catches
+                        .iter()
+                        .map(|catch| php_runtime::bytecode::CatchTarget {
+                            target: 0,
+                            variable: catch.variable.clone(),
+                            types: catch.types.clone(),
+                        })
+                        .collect(),
+                ));
                 let try_start = self.instructions.len();
                 self.statements(try_body);
                 let try_end = self.instructions.len();
@@ -559,7 +942,11 @@ impl CodeGenerator<'_> {
                     self.known_callables.clear();
                     self.variable_types.clear();
                     let target = self.instructions.len();
-                    targets.push(php_runtime::bytecode::CatchTarget { target, variable: catch.variable.clone(), types: catch.types.clone() });
+                    targets.push(php_runtime::bytecode::CatchTarget {
+                        target,
+                        variable: catch.variable.clone(),
+                        types: catch.types.clone(),
+                    });
                     let catch_body_start = self.instructions.len();
                     self.statements(&catch.body);
                     let catch_body_end = self.instructions.len();
@@ -574,16 +961,22 @@ impl CodeGenerator<'_> {
 
                 let exception_finally_start = self.instructions.len();
                 self.instructions[catch_handler] = Op::TryStart(targets);
-                self.instructions[finally_handler] = Op::FinallyStart(exception_finally_start, protected_ranges);
+                self.instructions[finally_handler] =
+                    Op::FinallyStart(exception_finally_start, protected_ranges);
                 self.statements(finally_body);
                 self.instructions.push(Op::FinallyResume);
                 let end = self.instructions.len();
                 self.instructions[skip_catch] = Op::Jump(end);
-                for exit in exits { self.instructions[exit] = Op::Jump(end); }
+                for exit in exits {
+                    self.instructions[exit] = Op::Jump(end);
+                }
                 self.known_callables.clear();
                 self.variable_types.clear();
             }
-            Stmt::TryFinally { try_body, finally_body } => {
+            Stmt::TryFinally {
+                try_body,
+                finally_body,
+            } => {
                 self.known_callables.clear();
                 self.variable_types.clear();
                 let finally_handler = self.instructions.len();
@@ -596,7 +989,8 @@ impl CodeGenerator<'_> {
                 let skip_exception_finally = self.instructions.len();
                 self.instructions.push(Op::Jump(0));
                 let exception_finally_start = self.instructions.len();
-                self.instructions[finally_handler] = Op::FinallyStart(exception_finally_start, vec![(try_start, try_end)]);
+                self.instructions[finally_handler] =
+                    Op::FinallyStart(exception_finally_start, vec![(try_start, try_end)]);
                 self.known_callables.clear();
                 self.variable_types.clear();
                 self.statements(finally_body);
@@ -612,42 +1006,83 @@ impl CodeGenerator<'_> {
             }
             Stmt::Exit(value) => {
                 let (value, argument_name) = match value {
-                    Some(Expr::NamedArgument(name, value)) => (Some(value.as_ref()), Some(name.clone())),
+                    Some(Expr::NamedArgument(name, value)) => {
+                        (Some(value.as_ref()), Some(name.clone()))
+                    }
                     Some(value) => (Some(value), None),
                     None => (None, None),
                 };
-                if let Some(value) = value { self.expression(value); }
-                else { self.instructions.push(Op::Const(Value::Integer(0))); }
-                self.instructions.push(Op::Exit(argument_name, self.strict_types));
+                if let Some(value) = value {
+                    self.expression(value);
+                } else {
+                    self.instructions.push(Op::Const(Value::Integer(0)));
+                }
+                self.instructions
+                    .push(Op::Exit(argument_name, self.strict_types));
             }
-            Stmt::While { .. } | Stmt::Foreach { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
-            Stmt::DoWhile { .. } | Stmt::For { .. } => { self.known_callables.clear(); self.variable_types.clear(); self.loop_statement(statement); self.known_callables.clear(); self.variable_types.clear(); }
+            Stmt::While { .. } | Stmt::Foreach { .. } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
+                self.loop_statement(statement);
+                self.known_callables.clear();
+                self.variable_types.clear();
+            }
+            Stmt::DoWhile { .. } | Stmt::For { .. } => {
+                self.known_callables.clear();
+                self.variable_types.clear();
+                self.loop_statement(statement);
+                self.known_callables.clear();
+                self.variable_types.clear();
+            }
             Stmt::Break(level) => self.loop_jump_expr(true, level),
             Stmt::Continue(level) => self.loop_jump_expr(false, level),
             Stmt::Goto(label) => {
                 let instruction = self.instructions.len();
                 self.instructions.push(Op::Jump(0));
-                self.pending_gotos.push((label.clone(), instruction, self.control_path()));
+                self.pending_gotos
+                    .push((label.clone(), instruction, self.control_path()));
             }
             Stmt::Label(label) => {
-                if self.labels.insert(label.clone(), (self.instructions.len(), self.control_path())).is_some() {
-                    self.errors.push(format!("Label '{label}' is already defined"));
+                if self
+                    .labels
+                    .insert(
+                        label.clone(),
+                        (self.instructions.len(), self.control_path()),
+                    )
+                    .is_some()
+                {
+                    self.errors
+                        .push(format!("Label '{label}' is already defined"));
                 }
             }
             // Preserve object/property operands so unset can dispatch __unset at runtime.
             Stmt::UnsetProperty { object, property } => {
                 self.instructions.push(Op::Load(object.clone()));
-                self.instructions.push(Op::UnsetProperty(property.clone(), self.current_class.clone()));
+                self.instructions.push(Op::UnsetProperty(
+                    property.clone(),
+                    self.current_class.clone(),
+                ));
             }
-            Stmt::UnsetPropertyArrayPath { object, property, keys } => {
+            Stmt::UnsetPropertyArrayPath {
+                object,
+                property,
+                keys,
+            } => {
                 self.expression(object);
-                for key in keys { self.expression(key); }
-                self.instructions.push(Op::UnsetPropertyArray(property.clone(), keys.len(), self.current_class.clone()));
+                for key in keys {
+                    self.expression(key);
+                }
+                self.instructions.push(Op::UnsetPropertyArray(
+                    property.clone(),
+                    keys.len(),
+                    self.current_class.clone(),
+                ));
             }
             Stmt::UnsetDynamicProperty { object, property } => {
                 self.expression(object);
                 self.expression(property);
-                self.instructions.push(Op::UnsetDynamicProperty(self.current_class.clone()));
+                self.instructions
+                    .push(Op::UnsetDynamicProperty(self.current_class.clone()));
             }
             Stmt::Unset { variable, keys } => {
                 if keys.is_empty() {
@@ -659,46 +1094,92 @@ impl CodeGenerator<'_> {
                     self.variable_types.remove(variable);
                     self.instructions.push(Op::UnsetVariable(variable.clone()));
                 } else {
-                    for key in keys { self.expression(key); }
-                    self.instructions.push(Op::UnsetArrayPath(variable.clone(), keys.len()));
+                    for key in keys {
+                        self.expression(key);
+                    }
+                    self.instructions
+                        .push(Op::UnsetArrayPath(variable.clone(), keys.len()));
                 }
             }
-            Stmt::UnsetMany(statements) => for statement in statements { self.statement(statement); },
-            Stmt::UnsetStaticPropertyPath { class, property, keys } => {
-                for key in keys { self.expression(key); }
-                self.instructions.push(Op::UnsetStaticPropertyArray(class.to_ascii_lowercase(), property.clone(), keys.len(), self.current_class.clone()));
+            Stmt::UnsetMany(statements) => {
+                for statement in statements {
+                    self.statement(statement);
+                }
+            }
+            Stmt::UnsetStaticPropertyPath {
+                class,
+                property,
+                keys,
+            } => {
+                for key in keys {
+                    self.expression(key);
+                }
+                self.instructions.push(Op::UnsetStaticPropertyArray(
+                    class.to_ascii_lowercase(),
+                    property.clone(),
+                    keys.len(),
+                    self.current_class.clone(),
+                ));
             }
             Stmt::Return(value) => {
                 if let Some(value) = value {
                     if self.returns_by_reference {
                         if let Some((variable, keys)) = reference_path(value) {
-                            for key in &keys { self.expression(key); }
-                            self.instructions.push(Op::LoadReference(variable, keys.len()));
-                        } else if let Some((receiver, property, keys)) = property_reference_path(value) {
+                            for key in &keys {
+                                self.expression(key);
+                            }
+                            self.instructions
+                                .push(Op::LoadReference(variable, keys.len()));
+                        } else if let Some((receiver, property, keys)) =
+                            property_reference_path(value)
+                        {
                             self.expression(&receiver);
                             if keys.is_empty() {
-                                self.instructions.push(Op::LoadPropertyReference(property, self.current_class.clone()));
+                                self.instructions.push(Op::LoadPropertyReference(
+                                    property,
+                                    self.current_class.clone(),
+                                ));
                             } else {
-                                for key in &keys { self.expression(key); }
-                                self.instructions.push(Op::LoadPropertyArrayReference(property, keys.len(), self.current_class.clone()));
+                                for key in &keys {
+                                    self.expression(key);
+                                }
+                                self.instructions.push(Op::LoadPropertyArrayReference(
+                                    property,
+                                    keys.len(),
+                                    self.current_class.clone(),
+                                ));
                             }
                         } else if let Expr::StaticProperty(class, property) = value {
                             let class = match class.as_str() {
-                                "self" => self.current_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
-                                "parent" => self.parent_class.clone().unwrap_or_else(|| class.to_ascii_lowercase()),
+                                "self" => self
+                                    .current_class
+                                    .clone()
+                                    .unwrap_or_else(|| class.to_ascii_lowercase()),
+                                "parent" => self
+                                    .parent_class
+                                    .clone()
+                                    .unwrap_or_else(|| class.to_ascii_lowercase()),
                                 "static" => "static".into(),
                                 _ => class.to_ascii_lowercase(),
                             };
-                            self.instructions.push(Op::LoadStaticPropertyReference(class, property.clone(), self.current_class.clone()));
-                        } else { self.expression(value); }
-                    } else { self.expression(value); }
+                            self.instructions.push(Op::LoadStaticPropertyReference(
+                                class,
+                                property.clone(),
+                                self.current_class.clone(),
+                            ));
+                        } else {
+                            self.expression(value);
+                        }
+                    } else {
+                        self.expression(value);
+                    }
+                } else {
+                    self.instructions.push(Op::Const(Value::Null));
                 }
-                else { self.instructions.push(Op::Const(Value::Null)); }
                 self.instructions.push(Op::Return);
             }
         }
     }
-
 }
 
 pub(super) fn compile_destructure_target(
@@ -708,7 +1189,9 @@ pub(super) fn compile_destructure_target(
 ) -> php_runtime::bytecode::DestructureTarget {
     let key = target.key.as_ref().and_then(|key| match key {
         php_syntax::DestructureKey::Integer(value) => Some(php_runtime::ArrayKey::Integer(*value)),
-        php_syntax::DestructureKey::String(value) => Some(php_runtime::ArrayKey::String(value.clone())),
+        php_syntax::DestructureKey::String(value) => {
+            Some(php_runtime::ArrayKey::String(value.clone()))
+        }
         php_syntax::DestructureKey::Computed(_) => None,
     });
     if let Some(php_syntax::DestructureKey::Computed(expression)) = &target.key {
@@ -727,15 +1210,27 @@ pub(super) fn compile_destructure_target(
     }
     php_runtime::bytecode::DestructureTarget {
         key,
-        computed_key: matches!(target.key.as_ref(), Some(php_syntax::DestructureKey::Computed(_))),
+        computed_key: matches!(
+            target.key.as_ref(),
+            Some(php_syntax::DestructureKey::Computed(_))
+        ),
         variable: target.variable.clone(),
         array_variable: target.array_variable.clone(),
         array_key_count: target.array_keys.len(),
         array_append: target.array_append,
         property_receiver: target.property_receiver.is_some(),
         property: target.property.clone(),
-        property_array_key_count: if target.property_receiver.is_some() { target.array_keys.len() } else { 0 },
-        nested: target.nested.as_ref().map(|targets| targets.iter().map(|target| compile_destructure_target(generator, target, target_key_count)).collect()),
+        property_array_key_count: if target.property_receiver.is_some() {
+            target.array_keys.len()
+        } else {
+            0
+        },
+        nested: target.nested.as_ref().map(|targets| {
+            targets
+                .iter()
+                .map(|target| compile_destructure_target(generator, target, target_key_count))
+                .collect()
+        }),
         by_reference: target.by_reference,
     }
 }

@@ -2,7 +2,7 @@
 
 [![Rust CI](https://github.com/hadv9x/rust-php/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/hadv9x/rust-php/actions/workflows/ci.yml)
 
-`php-rust` is an experimental PHP interpreter written in Rust. It parses PHP source, compiles the supported language subset to bytecode, and executes that bytecode in a virtual machine. The project provides a command-line runner and an HTTP development server.
+`php-rust` is an experimental PHP interpreter written in Rust. Version 0.2.0 is a Developer Preview: it parses PHP source, compiles the supported language subset to bytecode, and executes that bytecode in a virtual machine. The project provides a command-line runner and an HTTP development server.
 
 This project is **not a drop-in replacement for PHP**. Language and standard-library coverage are actively being expanded, and compatibility with existing PHP applications depends on which features they use. See the [compatibility backlog](docs/php-compatibility-backlog.md) and [manual coverage audit](docs/php-manual-coverage.md) for the current scope and open work.
 
@@ -115,4 +115,4 @@ The Laravel smoke workflow is an integration check, not a claim of broad Laravel
 
 ## Release
 
-To publish a version, push a matching `vX.Y.Z` tag. GitHub Actions tests the tagged source and creates a GitHub Release with the Linux package, Docker image, source archive, and checksums. Follow the [release process](docs/release-process.md).
+To publish a version, push a matching `vX.Y.Z` tag. GitHub Actions verifies formatting, Clippy, workspace tests, and PHP examples on the tagged source, then creates a GitHub Release with the Linux package, Docker image, source archive, checksums, and versioned release notes. Follow the [release process](docs/release-process.md) and see the [release roadmap](docs/release-roadmap.md).

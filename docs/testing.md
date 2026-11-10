@@ -12,9 +12,12 @@ rustc --version
 cargo fetch --locked
 cargo test --workspace --locked
 cargo build -p php-cli --release --locked
+./scripts/test-examples.sh target/release/php-rust
 ```
 
 `cargo test` runs the parser/runtime/compiler unit and doc tests, plus the HTTP server tests. A successful run ends with all test summaries reporting `0 failed`. The release build produces both `target/release/php-rust` and `target/release/php-rust-server`.
+
+The example runner executes each top-level `examples/*.php` file in a fresh process and fails on the first non-zero exit. It verifies successful execution, not exact output. It is included in CI after the release CLI build; live database and application integration tests need separate setup.
 
 All test source lives in the repository-root `tests/` directory, grouped first by crate and then by source area: for example `tests/crates/php-compiler/compiler/`, `tests/crates/php-runtime/runtime/`, `tests/crates/php-db/db/`, `tests/crates/php-cli/cli/`, and `tests/crates/php-syntax/`. Internal tests that need private implementation details are included from their owning module with a `#[cfg(test)]` path, so test source stays separate while retaining access to that module's private API. Cargo integration targets such as compiler behavior tests and live database tests are explicitly wired to files under this root directory.
 
@@ -110,11 +113,11 @@ Keep that server running in one terminal and run `./scripts/load-test-server.sh 
 
 ## 5. Build and run a versioned Docker image
 
-Docker tags come from the workspace version in `Cargo.toml`; the Dockerfile checks that build argument against the source version and adds it as an OCI image label. For example, version `0.1.0` builds as `php-rust:0.1.0`:
+Docker tags come from the workspace version in `Cargo.toml`; the Dockerfile checks that build argument against the source version and adds it as an OCI image label. For version `0.2.0`, the image is `php-rust:0.2.0`:
 
 ```sh
 ./scripts/docker-build.sh
-docker image inspect php-rust:0.1.0 --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+docker image inspect php-rust:0.2.0 --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
 ./scripts/docker-run.sh /path/to/php-app 3000
 ```
 

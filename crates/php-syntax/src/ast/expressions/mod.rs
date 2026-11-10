@@ -28,7 +28,10 @@ pub enum Expr {
     /// A variable whose name is computed inside `${...}`.
     DynamicVariableExpr(Box<Expr>),
     Array(Vec<ArrayEntry>),
-    ListAssignment { targets: Vec<super::super::DestructureTarget>, value: Box<Expr> },
+    ListAssignment {
+        targets: Vec<super::super::DestructureTarget>,
+        value: Box<Expr>,
+    },
     Index(Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
     /// Argument label and value for PHP named-argument calls.
@@ -39,8 +42,17 @@ pub enum Expr {
     DynamicNewObject(Box<Expr>, Vec<Expr>, usize),
     Property(Box<Expr>, String),
     DynamicProperty(Box<Expr>, Box<Expr>),
-    DynamicPropertyAssignment { receiver: Box<Expr>, property: Box<Expr>, value: Box<Expr> },
-    DynamicPropertyCompoundAssignment { receiver: Box<Expr>, property: Box<Expr>, operation: crate::ast::BinaryOp, value: Box<Expr> },
+    DynamicPropertyAssignment {
+        receiver: Box<Expr>,
+        property: Box<Expr>,
+        value: Box<Expr>,
+    },
+    DynamicPropertyCompoundAssignment {
+        receiver: Box<Expr>,
+        property: Box<Expr>,
+        operation: crate::ast::BinaryOp,
+        value: Box<Expr>,
+    },
     /// Property-specific isset form; unlike Property, this must not trigger __get.
     IssetProperty(Box<Expr>, String),
     IssetPropertyChain(Box<Expr>, Vec<IssetPropertySegment>),
@@ -83,41 +95,124 @@ pub enum Expr {
     /// Test an object against a class/interface name or a runtime class-name value.
     InstanceOf(Box<Expr>, Box<Expr>),
     /// Assign a variable within an expression, optionally applying a compound operator.
-    Assignment { variable: String, operation: Option<super::BinaryOp>, value: Box<Expr> },
+    Assignment {
+        variable: String,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
     /// Bind a variable to a reference-returning expression and preserve assignment value semantics.
-    ReferenceAssignment { variable: String, value: Box<Expr> },
+    ReferenceAssignment {
+        variable: String,
+        value: Box<Expr>,
+    },
     /// Assign to a dynamically named variable within an expression.
-    DynamicVariableAssignment { name: Box<Expr>, operation: Option<super::BinaryOp>, value: Box<Expr> },
+    DynamicVariableAssignment {
+        name: Box<Expr>,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
     /// Assign through a nested array path within an expression.
-    ArrayAssignment { variable: String, keys: Vec<Expr>, operation: Option<super::BinaryOp>, value: Box<Expr> },
+    ArrayAssignment {
+        variable: String,
+        keys: Vec<Expr>,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
     /// Assign to an instance property within an expression.
-    PropertyAssignment { receiver: Box<Expr>, property: String, operation: Option<super::BinaryOp>, value: Box<Expr> },
+    PropertyAssignment {
+        receiver: Box<Expr>,
+        property: String,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
     /// Assign through nested offsets of an object property.
-    PropertyArrayAssignment { receiver: Box<Expr>, property: String, keys: Vec<Expr>, operation: Option<super::BinaryOp>, value: Box<Expr> },
-    PropertyAppendAssignment { receiver: Box<Expr>, property: String, keys: Vec<Expr>, value: Box<Expr> },
-    DynamicPropertyAppendAssignment { receiver: Box<Expr>, property: Box<Expr>, keys: Vec<Expr>, value: Box<Expr> },
+    PropertyArrayAssignment {
+        receiver: Box<Expr>,
+        property: String,
+        keys: Vec<Expr>,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
+    PropertyAppendAssignment {
+        receiver: Box<Expr>,
+        property: String,
+        keys: Vec<Expr>,
+        value: Box<Expr>,
+    },
+    DynamicPropertyAppendAssignment {
+        receiver: Box<Expr>,
+        property: Box<Expr>,
+        keys: Vec<Expr>,
+        value: Box<Expr>,
+    },
     PropertyAppend(Box<Expr>),
-    StaticPropertyArrayAssignment { class: String, property: String, keys: Vec<Expr>, operation: Option<super::BinaryOp>, value: Box<Expr> },
-    DynamicStaticPropertyArrayAssignment { class: Box<Expr>, property: Box<Expr>, keys: Vec<Expr>, operation: Option<super::BinaryOp>, value: Box<Expr> },
-    ArrayAppendAssignment { variable: String, keys: Vec<Expr>, value: Box<Expr> },
-    ArrayExpressionAppendAssignment { array: Box<Expr>, keys: Vec<Expr>, value: Box<Expr> },
-    StaticPropertyAppendAssignment { class: String, property: String, keys: Vec<Expr>, value: Box<Expr> },
+    StaticPropertyArrayAssignment {
+        class: String,
+        property: String,
+        keys: Vec<Expr>,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
+    DynamicStaticPropertyArrayAssignment {
+        class: Box<Expr>,
+        property: Box<Expr>,
+        keys: Vec<Expr>,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
+    ArrayAppendAssignment {
+        variable: String,
+        keys: Vec<Expr>,
+        value: Box<Expr>,
+    },
+    ArrayExpressionAppendAssignment {
+        array: Box<Expr>,
+        keys: Vec<Expr>,
+        value: Box<Expr>,
+    },
+    StaticPropertyAppendAssignment {
+        class: String,
+        property: String,
+        keys: Vec<Expr>,
+        value: Box<Expr>,
+    },
     /// Assign to a static property within an expression.
-    StaticPropertyAssignment { class: String, property: String, operation: Option<super::BinaryOp>, value: Box<Expr> },
+    StaticPropertyAssignment {
+        class: String,
+        property: String,
+        operation: Option<super::BinaryOp>,
+        value: Box<Expr>,
+    },
     /// Select one branch based on the condition's truthiness.
-    Ternary { condition: Box<Expr>, then_value: Box<Expr>, else_value: Box<Expr> },
+    Ternary {
+        condition: Box<Expr>,
+        then_value: Box<Expr>,
+        else_value: Box<Expr>,
+    },
     /// Select the first strict-value arm, or raise UnhandledMatchError if no arm matches.
-    Match { subject: Box<Expr>, arms: Vec<MatchArm> },
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     /// Return the already-evaluated condition when truthy, otherwise use the fallback.
-    ShorthandTernary { condition: Box<Expr>, else_value: Box<Expr> },
+    ShorthandTernary {
+        condition: Box<Expr>,
+        else_value: Box<Expr>,
+    },
     /// Return the left value unless it is null; otherwise evaluate the right value.
     Coalesce(Box<Expr>, Box<Expr>),
     /// Anonymous function with explicit by-value or by-reference captures.
-    Closure { declaration: Box<super::FunctionDecl>, captures: Vec<(String, bool)> },
+    Closure {
+        declaration: Box<super::FunctionDecl>,
+        captures: Vec<(String, bool)>,
+    },
     /// Invoke an expression that evaluates to a closure value.
     Invoke(Box<Expr>, Vec<Expr>),
     /// Suspend the active generator and yield a value, optionally under an explicit key.
-    Yield { key: Option<Box<Expr>>, value: Box<Expr> },
+    Yield {
+        key: Option<Box<Expr>>,
+        value: Box<Expr>,
+    },
     /// Delegate iteration to an array or generator and evaluate to its return value.
     YieldFrom(Box<Expr>),
     /// Create a first-class callable using PHP's `target(...)` syntax.
@@ -142,22 +237,60 @@ pub enum FirstClassCallableTarget {
 
 /// Scalar casts represented by the parser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CastType { Integer, Float, String, Bool, Array, Object }
+pub enum CastType {
+    Integer,
+    Float,
+    String,
+    Bool,
+    Array,
+    Object,
+}
 
 /// Variable or nested array path modified by prefix/postfix increment.
 #[derive(Clone, Debug)]
 pub enum IncrementTarget {
     Variable(String),
     /// A variable-variable target and optional array path rooted at it.
-    DynamicVariable { name: Box<Expr>, keys: Vec<Expr> },
-    ArrayPath { variable: String, keys: Vec<Expr> },
-    PropertyArrayPath { receiver: Box<Expr>, property: String, keys: Vec<Expr> },
-    StaticPropertyArrayPath { class: String, property: String, keys: Vec<Expr> },
-    DynamicPropertyArrayPath { receiver: Box<Expr>, property: Box<Expr>, keys: Vec<Expr> },
-    DynamicStaticPropertyArrayPath { class: Box<Expr>, property: Box<Expr>, keys: Vec<Expr> },
-    Property { receiver: Box<Expr>, property: String },
-    DynamicProperty { receiver: Box<Expr>, property: Box<Expr> },
-    StaticProperty { class: String, property: String },
+    DynamicVariable {
+        name: Box<Expr>,
+        keys: Vec<Expr>,
+    },
+    ArrayPath {
+        variable: String,
+        keys: Vec<Expr>,
+    },
+    PropertyArrayPath {
+        receiver: Box<Expr>,
+        property: String,
+        keys: Vec<Expr>,
+    },
+    StaticPropertyArrayPath {
+        class: String,
+        property: String,
+        keys: Vec<Expr>,
+    },
+    DynamicPropertyArrayPath {
+        receiver: Box<Expr>,
+        property: Box<Expr>,
+        keys: Vec<Expr>,
+    },
+    DynamicStaticPropertyArrayPath {
+        class: Box<Expr>,
+        property: Box<Expr>,
+        keys: Vec<Expr>,
+    },
+    Property {
+        receiver: Box<Expr>,
+        property: String,
+    },
+    DynamicProperty {
+        receiver: Box<Expr>,
+        property: Box<Expr>,
+    },
+    StaticProperty {
+        class: String,
+        property: String,
+    },
 }
 
 /// One PHP array item; a missing key means the VM assigns the next integer key.

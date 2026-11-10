@@ -6,7 +6,10 @@ fn json_encode_supports_pretty_and_unescaped_slashes_flags() {
         echo json_encode(['url' => 'https://example.test/a'], JSON_UNESCAPED_SLASHES), "\n";
         echo json_encode(['url' => 'https://example.test/a'], JSON_PRETTY_PRINT), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"url\":\"https://example.test/a\"}\n{\n  \"url\": \"https:\\/\\/example.test\\/a\"\n}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"url\":\"https://example.test/a\"}\n{\n  \"url\": \"https:\\/\\/example.test\\/a\"\n}\n"
+    );
 }
 
 #[test]
@@ -23,7 +26,10 @@ fn json_encode_formats_floats_with_php_exponent_thresholds() {
 #[test]
 fn json_numeric_check_trims_ascii_whitespace_but_not_unicode_whitespace() {
     let source = "<?php echo json_encode(['ascii' => \"\\t 42 \\n\", 'nbsp' => \" 42 \"], JSON_NUMERIC_CHECK), \"\\n\";";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"ascii\":42,\"nbsp\":\"\\u00a042\\u00a0\"}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"ascii\":42,\"nbsp\":\"\\u00a042\\u00a0\"}\n"
+    );
 }
 
 #[test]
@@ -56,15 +62,21 @@ fn json_encode_escapes_unicode_by_default_and_supports_unescaped_flag() {
         echo json_encode('café 🚀'), "\n";
         echo json_encode('café 🚀', JSON_UNESCAPED_UNICODE), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), r#""caf\u00e9 \ud83d\ude80"
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        r#""caf\u00e9 \ud83d\ude80"
 "café 🚀"
-"#);
+"#
+    );
 }
 
 #[test]
 fn json_encode_force_object_uses_named_flag() {
     let source = r#"<?php echo json_encode([7, 8], JSON_FORCE_OBJECT), "\n";"#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"0\":7,\"1\":8}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"0\":7,\"1\":8}\n"
+    );
 }
 
 #[test]
@@ -109,7 +121,10 @@ fn json_encode_invokes_json_serializable_recursively() {
 #[test]
 fn json_encode_supports_unescaped_line_terminators_flag() {
     let source = "<?php echo json_encode(\"\u{2028}\", JSON_UNESCAPED_UNICODE), \"\\n\", json_encode(\"\u{2028}\", JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_LINE_TERMINATORS), \"\\n\";";
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "\"\\u2028\"\n\"\u{2028}\"\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "\"\\u2028\"\n\"\u{2028}\"\n"
+    );
 }
 
 #[test]
@@ -133,7 +148,10 @@ fn computed_break_and_continue_levels_select_nested_targets() {
         }
         echo "done\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "b00;b01;c10;c20;done\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "b00;b01;c10;c20;done\n"
+    );
 }
 
 #[test]
@@ -154,7 +172,10 @@ fn computed_loop_control_levels_count_switches_as_breakable() {
         }
         echo "done\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "after-switch:0;done\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "after-switch:0;done\n"
+    );
 }
 
 #[test]
@@ -173,7 +194,10 @@ fn foreach_advances_user_iterator_objects_after_each_body() {
         }
         echo interface_exists('Iterator'), ":", interface_exists('Traversable'), ":done\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "item-0=0;item-1=10;item-2=20;1:1:done\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "item-0=0;item-1=10;item-2=20;1:1:done\n"
+    );
 }
 
 #[test]
@@ -196,10 +220,16 @@ fn foreach_preserves_non_scalar_keys_from_user_iterators() {
         $reindexed = iterator_to_array(new ArbitraryKeyIterator(), false);
         echo $reindexed[0], ':', $reindexed[1];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "object:0;array:1;2:0:0:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "Illegal offset type"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message == "Illegal offset type"));
 }
 
 #[test]
@@ -219,7 +249,10 @@ fn foreach_supports_iterator_aggregate_returning_a_user_iterator() {
         foreach (new ValueCollection() as $key => $value) echo $key, ":", $value, ";";
         echo "done\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:4;1:5;done\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:4;1:5;done\n"
+    );
 }
 
 #[test]
@@ -262,9 +295,17 @@ fn iterator_helpers_consume_user_iterator_and_aggregate_objects() {
 
 #[test]
 fn iterator_interfaces_require_their_protocol_methods() {
-    let iterator_error = match compile_source("<?php class InvalidIterator implements Iterator {}") { Err(error) => error, Ok(_) => panic!("missing Iterator methods should fail compilation") };
+    let iterator_error = match compile_source("<?php class InvalidIterator implements Iterator {}")
+    {
+        Err(error) => error,
+        Ok(_) => panic!("missing Iterator methods should fail compilation"),
+    };
     assert!(iterator_error.contains("must implement rewind()"));
-    let aggregate_error = match compile_source("<?php class InvalidAggregate implements IteratorAggregate {}") { Err(error) => error, Ok(_) => panic!("missing IteratorAggregate methods should fail compilation") };
+    let aggregate_error =
+        match compile_source("<?php class InvalidAggregate implements IteratorAggregate {}") {
+            Err(error) => error,
+            Ok(_) => panic!("missing IteratorAggregate methods should fail compilation"),
+        };
     assert!(aggregate_error.contains("must implement getIterator()"));
 }
 
@@ -296,7 +337,10 @@ fn traversable_hierarchy_matches_iterable_types_and_is_iterable() {
         echo implode(',', array_map('is_iterable', [[], $iterator, $aggregate, $plain, sampleGenerator()]));
         try { acceptsIterable($plain); } catch (TypeError $error) { echo ':', get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:1:1:1:1::1:accepted:accepted:accepted:1,1,1,,1:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:1:1:1:1:1::1:accepted:accepted:accepted:1,1,1,,1:TypeError"
+    );
 }
 
 #[test]
@@ -307,7 +351,10 @@ fn json_last_error_tracks_encode_and_decode_results() {
         json_decode('{"ok":true}');
         echo json_last_error(), ':', json_last_error_msg(), ':', function_exists('json_last_error'), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:Syntax error:0:No error:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:Syntax error:0:No error:1\n"
+    );
 }
 
 #[test]
@@ -321,7 +368,10 @@ fn json_decode_and_validate_accept_only_json_whitespace() {
         echo json_validate($verticalTab) ? '1' : '0', ':', json_last_error(), ':';
         echo json_validate("\t true \r") ? '1' : '0', ':', json_last_error(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:0:1:4:0:4:1:0\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:0:1:4:0:4:1:0\n"
+    );
 }
 
 #[test]
@@ -384,7 +434,10 @@ b"');
         json_decode('"\\uD800"');
         echo json_last_error(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:3:10\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:3:10\n"
+    );
 }
 
 #[test]
@@ -420,7 +473,10 @@ fn json_decode_object_duplicate_members_keep_one_property_at_first_position() {
         $object = json_decode('{"first":1,"second":2,"first":3}');
         echo json_encode($object), ':', $object->first, ':', $object->second, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"first\":3,\"second\":2}:3:2\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"first\":3,\"second\":2}:3:2\n"
+    );
 }
 
 #[test]
@@ -434,7 +490,10 @@ fn json_validate_matches_php_flags_depth_errors_and_error_state() {
         try { json_validate([]); } catch (TypeError $error) { echo get_class($error); }
         echo "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:0:4:Syntax error:1:0:ValueError:ValueError:TypeError\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:0:4:Syntax error:1:0:ValueError:ValueError:TypeError\n"
+    );
 }
 
 #[test]
@@ -448,7 +507,10 @@ fn json_depth_argument_range_errors_are_value_errors() {
         try { json_decode('{}', depth: 0, flags: JSON_THROW_ON_ERROR); } catch (ValueError $error) { echo get_class($error), ':'; }
         echo $previousError, ':', json_last_error(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ValueError:ValueError:ValueError:ValueError:4:4\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ValueError:ValueError:ValueError:ValueError:4:4\n"
+    );
 }
 
 #[test]
@@ -456,7 +518,10 @@ fn json_encode_and_decode_honor_depths_above_512() {
     let nesting = 513;
     let json = format!("{}0{}", "[".repeat(nesting), "]".repeat(nesting));
     let source = format!("<?php $value = json_decode('{json}', depth: 514); $encoded = json_encode($value, depth: 514); echo json_last_error(), ':', strlen($encoded), \"\\n\";");
-    assert_eq!(compile_source(&source).unwrap().execute().unwrap(), "0:1027\n");
+    assert_eq!(
+        compile_source(&source).unwrap().execute().unwrap(),
+        "0:1027\n"
+    );
 }
 
 #[test]
@@ -490,7 +555,10 @@ fn json_partial_output_substitutes_nan_and_recursion_but_encodes_closures_as_obj
         $cycle = new JsonCycle(); $cycle->self = $cycle;
         echo json_encode($cycle, JSON_PARTIAL_OUTPUT_ON_ERROR), ':', json_last_error(), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:7:{}:0:{\"self\":null}:6\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:7:{}:0:{\"self\":null}:6\n"
+    );
 }
 
 #[test]
@@ -500,7 +568,10 @@ fn json_decode_bigint_flag_preserves_large_integer_spelling() {
         echo json_decode('9223372036854775808', flags: JSON_BIGINT_AS_STRING), ':';
         echo is_string(json_decode('9223372036854775808', flags: JSON_BIGINT_AS_STRING)), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:9223372036854775808:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:9223372036854775808:1\n"
+    );
 }
 
 #[test]
@@ -513,7 +584,10 @@ fn json_decode_preserves_signed_integer_boundaries() {
         $above = json_decode('9223372036854775808', flags: JSON_BIGINT_AS_STRING);
         echo gettype($min), ':', gettype($below), ':', $belowString, ':', gettype($max), ':', $above, ':', is_string($above), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "integer:double:-9223372036854775809:integer:9223372036854775808:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "integer:double:-9223372036854775809:integer:9223372036854775808:1\n"
+    );
 }
 
 #[test]
@@ -555,7 +629,10 @@ fn json_numeric_check_reports_overflow_instead_of_quoting_the_number() {
         try { json_encode('1e400', JSON_NUMERIC_CHECK | JSON_THROW_ON_ERROR); }
         catch (JsonException $error) { echo get_class($error), ':', $error->getCode(), ':', $error->getMessage(); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":7:0:7:JsonException:7:Inf and NaN cannot be JSON encoded");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        ":7:0:7:JsonException:7:Inf and NaN cannot be JSON encoded"
+    );
 }
 
 #[test]
@@ -570,7 +647,10 @@ fn json_encode_serializes_backed_enums_and_reports_pure_enum_errors() {
         catch (JsonException $error) { echo get_class($error), ':', $error->getCode(); }
         echo "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "\"ready\"::11:11:null:11:JsonException:11\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "\"ready\"::11:11:null:11:JsonException:11\n"
+    );
 }
 
 #[test]
@@ -585,7 +665,10 @@ fn json_encode_preserves_declared_and_dynamic_object_property_order() {
         echo json_encode(json_decode('{"z":1,"a":2}')), ':';
         echo json_encode((object)['z' => 1, 'a' => 2]), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"zeta\":1,\"alpha\":5,\"middle\":3,\"later\":4}\n{\"z\":1,\"a\":2}:{\"z\":1,\"a\":2}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"zeta\":1,\"alpha\":5,\"middle\":3,\"later\":4}\n{\"z\":1,\"a\":2}:{\"z\":1,\"a\":2}\n"
+    );
 }
 
 #[test]
@@ -600,7 +683,10 @@ fn json_encode_preserves_order_of_properties_created_by_reference_arguments() {
         initialize($object->a_nested['key'], 4);
         echo json_encode($object), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"zeta\":1,\"alpha\":2,\"z_nested\":{\"key\":3},\"a_nested\":{\"key\":4}}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"zeta\":1,\"alpha\":2,\"z_nested\":{\"key\":3},\"a_nested\":{\"key\":4}}\n"
+    );
 }
 
 #[test]
@@ -610,7 +696,10 @@ fn json_keeps_public_child_slot_when_it_reuses_a_private_parent_property_name() 
         class PublicShadowChild extends PrivateShadowBase { public $value = 'visible'; }
         echo json_encode(new PublicShadowChild()), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "{\"value\":\"visible\"}\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "{\"value\":\"visible\"}\n"
+    );
 }
 
 #[test]
@@ -645,5 +734,8 @@ fn json_decode_null_associative_argument_defers_to_object_as_array_flag() {
         echo is_array($null), ':', $null['value'], ':';
         echo is_object($explicitFalse), ':', $explicitFalse->value, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:7:1:8:1:9\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:7:1:8:1:9\n"
+    );
 }

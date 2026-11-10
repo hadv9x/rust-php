@@ -1,7 +1,7 @@
 //! PHP subset lexer that emits tokens with source offsets.
 
-use crate::diagnostics::format_diagnostic;
 use self::token::{Token, TokenKind};
+use crate::diagnostics::format_diagnostic;
 
 pub(super) mod token;
 
@@ -28,15 +28,18 @@ fn scan_digits(bytes: &[u8], cursor: &mut usize, radix: u8) -> bool {
         if digit < radix {
             previous_was_digit = true;
             *cursor += 1;
-        } else if byte == b'_' && previous_was_digit && bytes.get(*cursor + 1).is_some_and(|next| {
-            let next_digit = match *next {
-                b'0'..=b'9' => *next - b'0',
-                b'a'..=b'f' => *next - b'a' + 10,
-                b'A'..=b'F' => *next - b'A' + 10,
-                _ => 255,
-            };
-            next_digit < radix
-        }) {
+        } else if byte == b'_'
+            && previous_was_digit
+            && bytes.get(*cursor + 1).is_some_and(|next| {
+                let next_digit = match *next {
+                    b'0'..=b'9' => *next - b'0',
+                    b'a'..=b'f' => *next - b'a' + 10,
+                    b'A'..=b'F' => *next - b'A' + 10,
+                    _ => 255,
+                };
+                next_digit < radix
+            })
+        {
             previous_was_digit = false;
             *cursor += 1;
         } else {
@@ -56,11 +59,21 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
     while i < bytes.len() {
         if !in_php {
             let Some(relative) = source[i..].find("<?") else {
-                if i < source.len() { tokens.push(Token { kind: TokenKind::InlineHtml(source[i..].to_string()), offset: i }); }
+                if i < source.len() {
+                    tokens.push(Token {
+                        kind: TokenKind::InlineHtml(source[i..].to_string()),
+                        offset: i,
+                    });
+                }
                 break;
             };
             let open = i + relative;
-            if open > i { tokens.push(Token { kind: TokenKind::InlineHtml(source[i..open].to_string()), offset: i }); }
+            if open > i {
+                tokens.push(Token {
+                    kind: TokenKind::InlineHtml(source[i..open].to_string()),
+                    offset: i,
+                });
+            }
             i = open;
             in_php = true;
         }
@@ -71,24 +84,35 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
             continue;
         }
         if ch == '/' && bytes.get(i + 1) == Some(&b'/') {
-            while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         if ch == '/' && bytes.get(i + 1) == Some(&b'*') {
             let comment_body_start = i + 2;
             let Some(comment_end) = source[comment_body_start..].find("*/") else {
-                return Err(format_diagnostic(source, token_start, "Unterminated block comment"));
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Unterminated block comment",
+                ));
             };
             i = comment_body_start + comment_end + 2;
             continue;
         }
         if ch == '#' && bytes.get(i + 1) == Some(&b'[') {
-            tokens.push(Token { kind: TokenKind::AttributeStart, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::AttributeStart,
+                offset: token_start,
+            });
             i += 2;
             continue;
         }
         if ch == '#' {
-            while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         if ch == '<' && bytes.get(i + 1) == Some(&b'?') {
@@ -96,84 +120,179 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
             i += 2;
             if short_echo {
                 i += 1;
-                tokens.push(Token { kind: TokenKind::Word("echo".into()), offset: token_start });
+                tokens.push(Token {
+                    kind: TokenKind::Word("echo".into()),
+                    offset: token_start,
+                });
             }
-            while !short_echo && i < bytes.len() && (bytes[i] as char).is_whitespace() { i += 1; }
-            if source.get(i..).unwrap_or("").starts_with("php") { i += 3; }
+            while !short_echo && i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                i += 1;
+            }
+            if source.get(i..).unwrap_or("").starts_with("php") {
+                i += 3;
+            }
             in_php = true;
             continue;
         }
         if ch == '?' && bytes.get(i + 1) == Some(&b'>') {
             i += 2;
-            tokens.push(Token { kind: TokenKind::Semi, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::Semi,
+                offset: token_start,
+            });
             in_php = false;
             continue;
         }
         if ch == '$' {
             if bytes.get(i + 1) == Some(&b'{') {
                 i += 2;
-                tokens.push(Token { kind: TokenKind::DynamicExprStart, offset: token_start });
+                tokens.push(Token {
+                    kind: TokenKind::DynamicExprStart,
+                    offset: token_start,
+                });
                 continue;
             }
             if bytes.get(i + 1) == Some(&b'$') {
                 i += 2;
                 let start = i;
-                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_') { i += 1; }
-                if start == i { return Err(format_diagnostic(source, token_start, "Expected variable name after $$")); }
-                tokens.push(Token { kind: TokenKind::DynamicVar(source[start..i].into()), offset: token_start });
+                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                if start == i {
+                    return Err(format_diagnostic(
+                        source,
+                        token_start,
+                        "Expected variable name after $$",
+                    ));
+                }
+                tokens.push(Token {
+                    kind: TokenKind::DynamicVar(source[start..i].into()),
+                    offset: token_start,
+                });
                 continue;
             }
             i += 1;
             let start = i;
-            while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_') { i += 1; }
-            if start == i { return Err(format_diagnostic(source, token_start, "Expected variable name after $")); }
-            tokens.push(Token { kind: TokenKind::Var(source[start..i].into()), offset: token_start });
+            while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if start == i {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Expected variable name after $",
+                ));
+            }
+            tokens.push(Token {
+                kind: TokenKind::Var(source[start..i].into()),
+                offset: token_start,
+            });
             continue;
         }
-        if ch == '\\' && bytes.get(i + 1).is_some_and(|next| (*next as char).is_alphabetic() || *next == b'_') {
+        if ch == '\\'
+            && bytes
+                .get(i + 1)
+                .is_some_and(|next| (*next as char).is_alphabetic() || *next == b'_')
+        {
             let start = i;
             i += 1;
-            while i < bytes.len() && (
-                (bytes[i] as char).is_alphanumeric()
-                || bytes[i] == b'_'
-                || (bytes[i] == b'\\' && bytes.get(i + 1).is_some_and(|next| (*next as char).is_alphabetic() || *next == b'{'))
-            ) { i += 1; }
-            tokens.push(Token { kind: TokenKind::Word(source[start..i].to_ascii_lowercase()), offset: token_start });
+            while i < bytes.len()
+                && ((bytes[i] as char).is_alphanumeric()
+                    || bytes[i] == b'_'
+                    || (bytes[i] == b'\\'
+                        && bytes
+                            .get(i + 1)
+                            .is_some_and(|next| (*next as char).is_alphabetic() || *next == b'{')))
+            {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Word(source[start..i].to_ascii_lowercase()),
+                offset: token_start,
+            });
             continue;
         }
         if ch == '.' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
             let start = i;
             i += 1;
-            if !scan_digits(bytes, &mut i, 10) { return Err(format_diagnostic(source, token_start, "Invalid numeric literal")); }
+            if !scan_digits(bytes, &mut i, 10) {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Invalid numeric literal",
+                ));
+            }
             if bytes.get(i).is_some_and(|byte| matches!(byte, b'e' | b'E')) {
                 i += 1;
-                if bytes.get(i).is_some_and(|byte| matches!(byte, b'+' | b'-')) { i += 1; }
-                if !scan_digits(bytes, &mut i, 10) { return Err(format_diagnostic(source, token_start, "Invalid numeric exponent")); }
+                if bytes.get(i).is_some_and(|byte| matches!(byte, b'+' | b'-')) {
+                    i += 1;
+                }
+                if !scan_digits(bytes, &mut i, 10) {
+                    return Err(format_diagnostic(
+                        source,
+                        token_start,
+                        "Invalid numeric exponent",
+                    ));
+                }
             }
             let spelling = source[start..i].replace('_', "");
-            let number = spelling.parse().map_err(|_| format_diagnostic(source, token_start, "Invalid number"))?;
-            tokens.push(Token { kind: TokenKind::Num(number, None), offset: token_start });
+            let number = spelling
+                .parse()
+                .map_err(|_| format_diagnostic(source, token_start, "Invalid number"))?;
+            tokens.push(Token {
+                kind: TokenKind::Num(number, None),
+                offset: token_start,
+            });
             continue;
         }
         if ch.is_ascii_digit() {
             let start = i;
-            let base = if bytes.get(i..i + 2).is_some_and(|prefix| matches!(prefix, b"0x" | b"0X")) { Some((16, 2)) }
-                else if bytes.get(i..i + 2).is_some_and(|prefix| matches!(prefix, b"0b" | b"0B")) { Some((2, 2)) }
-                else if bytes.get(i..i + 2).is_some_and(|prefix| matches!(prefix, b"0o" | b"0O")) { Some((8, 2)) }
-                else { None };
+            let base = if bytes
+                .get(i..i + 2)
+                .is_some_and(|prefix| matches!(prefix, b"0x" | b"0X"))
+            {
+                Some((16, 2))
+            } else if bytes
+                .get(i..i + 2)
+                .is_some_and(|prefix| matches!(prefix, b"0b" | b"0B"))
+            {
+                Some((2, 2))
+            } else if bytes
+                .get(i..i + 2)
+                .is_some_and(|prefix| matches!(prefix, b"0o" | b"0O"))
+            {
+                Some((8, 2))
+            } else {
+                None
+            };
             if let Some((radix, prefix_width)) = base {
                 i += prefix_width;
                 let digits_start = i;
                 if !scan_digits(bytes, &mut i, radix) {
-                    return Err(format_diagnostic(source, token_start, "Invalid base-prefixed integer literal"));
+                    return Err(format_diagnostic(
+                        source,
+                        token_start,
+                        "Invalid base-prefixed integer literal",
+                    ));
                 }
                 let digits = source[digits_start..i].replace('_', "");
-                let value = u64::from_str_radix(&digits, u32::from(radix))
-                    .map_err(|_| format_diagnostic(source, token_start, "Integer literal is out of range"))? as i64;
-                tokens.push(Token { kind: TokenKind::Num(value as f64, Some(value)), offset: token_start });
+                let value = u64::from_str_radix(&digits, u32::from(radix)).map_err(|_| {
+                    format_diagnostic(source, token_start, "Integer literal is out of range")
+                })? as i64;
+                tokens.push(Token {
+                    kind: TokenKind::Num(value as f64, Some(value)),
+                    offset: token_start,
+                });
                 continue;
             }
-            if !scan_digits(bytes, &mut i, 10) { return Err(format_diagnostic(source, token_start, "Invalid numeric literal")); }
+            if !scan_digits(bytes, &mut i, 10) {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Invalid numeric literal",
+                ));
+            }
             let mut is_float = false;
             if bytes.get(i) == Some(&b'.') {
                 is_float = true;
@@ -183,13 +302,30 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
             if bytes.get(i).is_some_and(|byte| matches!(byte, b'e' | b'E')) {
                 is_float = true;
                 i += 1;
-                if bytes.get(i).is_some_and(|byte| matches!(byte, b'+' | b'-')) { i += 1; }
-                if !scan_digits(bytes, &mut i, 10) { return Err(format_diagnostic(source, token_start, "Invalid numeric exponent")); }
+                if bytes.get(i).is_some_and(|byte| matches!(byte, b'+' | b'-')) {
+                    i += 1;
+                }
+                if !scan_digits(bytes, &mut i, 10) {
+                    return Err(format_diagnostic(
+                        source,
+                        token_start,
+                        "Invalid numeric exponent",
+                    ));
+                }
             }
             let spelling = source[start..i].replace('_', "");
-            let number = spelling.parse().map_err(|_| format_diagnostic(source, token_start, "Invalid number"))?;
-            let integer = if is_float { None } else { spelling.parse::<i64>().ok() };
-            tokens.push(Token { kind: TokenKind::Num(number, integer), offset: token_start });
+            let number = spelling
+                .parse()
+                .map_err(|_| format_diagnostic(source, token_start, "Invalid number"))?;
+            let integer = if is_float {
+                None
+            } else {
+                spelling.parse::<i64>().ok()
+            };
+            tokens.push(Token {
+                kind: TokenKind::Num(number, integer),
+                offset: token_start,
+            });
             continue;
         }
         if ch == '\'' || ch == '"' {
@@ -280,7 +416,10 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                             b'f' => value.push('\x0c'),
                             b'\\' => value.push('\\'),
                             b'"' => value.push('"'),
-                            b'$' => { value.push('\\'); value.push('$'); },
+                            b'$' => {
+                                value.push('\\');
+                                value.push('$');
+                            }
                             _ => {
                                 value.push('\\');
                                 let width = utf8_width(escaped);
@@ -297,43 +436,100 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                     i += width;
                 }
             }
-            if i == bytes.len() { return Err(format_diagnostic(source, token_start, "Unterminated string")); }
+            if i == bytes.len() {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Unterminated string",
+                ));
+            }
             i += 1;
-            let kind = if quote == b'"' { TokenKind::InterpolatedStr(value) } else { TokenKind::Str(value) };
-            tokens.push(Token { kind, offset: token_start });
+            let kind = if quote == b'"' {
+                TokenKind::InterpolatedStr(value)
+            } else {
+                TokenKind::Str(value)
+            };
+            tokens.push(Token {
+                kind,
+                offset: token_start,
+            });
             continue;
         }
 
         if bytes.get(i..i + 3) == Some(&b"<<<"[..]) {
-            let header_end = source[i..].find('\n').map(|offset| i + offset).ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc header"))?;
-            let header = source[i + 3..header_end].trim().trim_end_matches('\r').trim();
+            let header_end = source[i..]
+                .find('\n')
+                .map(|offset| i + offset)
+                .ok_or_else(|| {
+                    format_diagnostic(source, token_start, "Unterminated heredoc header")
+                })?;
+            let header = source[i + 3..header_end]
+                .trim()
+                .trim_end_matches('\r')
+                .trim();
             let nowdoc = header.starts_with('\'');
             let label = header.trim_matches(['\'', '"']);
-            if label.is_empty() || !label.chars().enumerate().all(|(index, ch)| ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())) {
-                return Err(format_diagnostic(source, token_start, "Invalid heredoc label"));
+            if label.is_empty()
+                || !label.chars().enumerate().all(|(index, ch)| {
+                    ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+                })
+            {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    "Invalid heredoc label",
+                ));
             }
             let body_start = (header_end + 1).min(source.len());
             let mut line_start = body_start;
             let mut closing = None;
             while line_start < source.len() {
-                let line_end = source[line_start..].find('\n').map(|offset| line_start + offset).unwrap_or(source.len());
+                let line_end = source[line_start..]
+                    .find('\n')
+                    .map(|offset| line_start + offset)
+                    .unwrap_or(source.len());
                 let line = source[line_start..line_end].trim_end_matches('\r');
                 let trimmed = line.trim_start();
                 if let Some(rest) = trimmed.strip_prefix(label) {
-                    if rest.trim().is_empty() || rest.trim_start().chars().next().is_some_and(|ch| matches!(ch, ';' | ',' | ')' | ']' | '}')) {
+                    if rest.trim().is_empty()
+                        || rest
+                            .trim_start()
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| matches!(ch, ';' | ',' | ')' | ']' | '}'))
+                    {
                         let indentation = &line[..line.len() - line.trim_start().len()];
                         if !indentation.bytes().all(|byte| matches!(byte, b' ' | b'\t')) {
-                            return Err(format_diagnostic(source, line_start, "Invalid body indentation level"));
+                            return Err(format_diagnostic(
+                                source,
+                                line_start,
+                                "Invalid body indentation level",
+                            ));
                         }
-                        closing = Some((line_start, line_start + indentation.len() + label.len(), indentation.to_string()));
+                        closing = Some((
+                            line_start,
+                            line_start + indentation.len() + label.len(),
+                            indentation.to_string(),
+                        ));
                         break;
                     }
                 }
                 line_start = line_end + usize::from(line_end < source.len());
             }
-            let (body_end, after_end, indentation) = closing.ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc"))?;
-            let body_end = if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\n') { body_end - 1 } else { body_end };
-            let body_end = if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\r') { body_end - 1 } else { body_end };
+            let (body_end, after_end, indentation) = closing
+                .ok_or_else(|| format_diagnostic(source, token_start, "Unterminated heredoc"))?;
+            let body_end =
+                if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\n') {
+                    body_end - 1
+                } else {
+                    body_end
+                };
+            let body_end =
+                if body_end > body_start && source.as_bytes().get(body_end - 1) == Some(&b'\r') {
+                    body_end - 1
+                } else {
+                    body_end
+                };
             let body = &source[body_start..body_end];
             let body = if indentation.is_empty() {
                 body.to_string()
@@ -346,83 +542,137 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                         continue;
                     }
                     if !line.starts_with(&indentation) {
-                        return Err(format_diagnostic(source, body_start, "Invalid body indentation level"));
+                        return Err(format_diagnostic(
+                            source,
+                            body_start,
+                            "Invalid body indentation level",
+                        ));
                     }
                     let remainder = &line[indentation.len()..];
                     lines.push(remainder.to_string());
                 }
                 lines.join("\n")
             };
-            let kind = if nowdoc { TokenKind::Str(body) } else { TokenKind::InterpolatedStr(body) };
-            tokens.push(Token { kind, offset: token_start });
+            let kind = if nowdoc {
+                TokenKind::Str(body)
+            } else {
+                TokenKind::InterpolatedStr(body)
+            };
+            tokens.push(Token {
+                kind,
+                offset: token_start,
+            });
             i = after_end;
             continue;
         }
 
         let next = bytes.get(i + 1).copied();
         if ch == '=' && bytes.get(i + 1..i + 3) == Some(&b"=="[..]) {
-            tokens.push(Token { kind: TokenKind::StrictEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::StrictEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '!' && bytes.get(i + 1..i + 3) == Some(&b"=="[..]) {
-            tokens.push(Token { kind: TokenKind::StrictNotEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::StrictNotEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '?' && bytes.get(i + 1..i + 3) == Some(&b"?="[..]) {
-            tokens.push(Token { kind: TokenKind::CoalesceEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::CoalesceEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '?' && bytes.get(i + 1..i + 3) == Some(&b"->"[..]) {
-            tokens.push(Token { kind: TokenKind::NullsafeArrow, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::NullsafeArrow,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '*' && bytes.get(i + 1..i + 3) == Some(&b"*="[..]) {
-            tokens.push(Token { kind: TokenKind::PowerEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::PowerEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '<' && bytes.get(i + 1..i + 3) == Some(&b"<="[..]) {
-            tokens.push(Token { kind: TokenKind::ShiftLeftEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::ShiftLeftEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '>' && bytes.get(i + 1..i + 3) == Some(&b">="[..]) {
-            tokens.push(Token { kind: TokenKind::ShiftRightEq, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::ShiftRightEq,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if matches!(ch, '&' | '|' | '^') && bytes.get(i + 1) == Some(&b'=') {
-            let kind = match ch { '&' => TokenKind::AmpersandEq, '|' => TokenKind::PipeEq, _ => TokenKind::CaretEq };
-            tokens.push(Token { kind, offset: token_start });
+            let kind = match ch {
+                '&' => TokenKind::AmpersandEq,
+                '|' => TokenKind::PipeEq,
+                _ => TokenKind::CaretEq,
+            };
+            tokens.push(Token {
+                kind,
+                offset: token_start,
+            });
             i += 2;
             continue;
         }
         if ch == '*' && bytes.get(i + 1) == Some(&b'*') {
-            tokens.push(Token { kind: TokenKind::Power, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::Power,
+                offset: token_start,
+            });
             i += 2;
             continue;
         }
         if ch == '<' && bytes.get(i + 1..i + 3) == Some(&b"=>"[..]) {
-            tokens.push(Token { kind: TokenKind::Spaceship, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::Spaceship,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
         if ch == '<' && bytes.get(i + 1) == Some(&b'<') {
-            tokens.push(Token { kind: TokenKind::ShiftLeft, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::ShiftLeft,
+                offset: token_start,
+            });
             i += 2;
             continue;
         }
         if ch == '>' && bytes.get(i + 1) == Some(&b'>') {
-            tokens.push(Token { kind: TokenKind::ShiftRight, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::ShiftRight,
+                offset: token_start,
+            });
             i += 2;
             continue;
         }
         if ch == '.' && bytes.get(i + 1..i + 3) == Some(&b".."[..]) {
-            tokens.push(Token { kind: TokenKind::Ellipsis, offset: token_start });
+            tokens.push(Token {
+                kind: TokenKind::Ellipsis,
+                offset: token_start,
+            });
             i += 3;
             continue;
         }
@@ -473,20 +723,40 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
             _ if ch.is_alphabetic() || ch == '_' => {
                 let start = i;
                 i += 1;
-                while i < bytes.len() && (
-                    (bytes[i] as char).is_alphanumeric()
-                    || bytes[i] == b'_'
-                    || (bytes[i] == b'\\' && bytes.get(i + 1).is_some_and(|next| (*next as char).is_alphabetic() || *next == b'{'))
-                ) { i += 1; }
-                tokens.push(Token { kind: TokenKind::Word(source[start..i].to_ascii_lowercase()), offset: token_start });
+                while i < bytes.len()
+                    && ((bytes[i] as char).is_alphanumeric()
+                        || bytes[i] == b'_'
+                        || (bytes[i] == b'\\'
+                            && bytes.get(i + 1).is_some_and(|next| {
+                                (*next as char).is_alphabetic() || *next == b'{'
+                            })))
+                {
+                    i += 1;
+                }
+                tokens.push(Token {
+                    kind: TokenKind::Word(source[start..i].to_ascii_lowercase()),
+                    offset: token_start,
+                });
                 continue;
             }
-            _ => return Err(format_diagnostic(source, token_start, &format!("Unexpected character: {ch}"))),
+            _ => {
+                return Err(format_diagnostic(
+                    source,
+                    token_start,
+                    &format!("Unexpected character: {ch}"),
+                ))
+            }
         };
-        tokens.push(Token { kind: token, offset: token_start });
+        tokens.push(Token {
+            kind: token,
+            offset: token_start,
+        });
         i += width;
     }
 
-    tokens.push(Token { kind: TokenKind::Eof, offset: source.len() });
+    tokens.push(Token {
+        kind: TokenKind::Eof,
+        offset: source.len(),
+    });
     Ok(tokens)
 }

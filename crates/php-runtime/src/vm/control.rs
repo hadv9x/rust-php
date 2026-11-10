@@ -2,8 +2,8 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{bytecode::Op, ArrayKey, PhpGenerator, Value};
 use super::{read_variable, remove_variable, write_variable, GlobalVariables, VariableBinding};
+use crate::{bytecode::Op, ArrayKey, PhpGenerator, Value};
 
 /// Active foreach iterators keyed by the bytecode instruction that created them.
 pub(super) type Iterators = HashMap<usize, ForeachIterator>;
@@ -12,13 +12,19 @@ pub(super) type Iterators = HashMap<usize, ForeachIterator>;
 pub(super) enum ForeachIterator {
     Array(Vec<(ArrayKey, Value)>, usize),
     Generator(Rc<RefCell<PhpGenerator>>, bool),
-    UserIterator { object: Value, advance_pending: bool },
+    UserIterator {
+        object: Value,
+        advance_pending: bool,
+    },
 }
 
 fn report_invalid_foreach_argument(value: &Value, globals: &mut GlobalVariables) {
     globals.report_diagnostic(crate::RuntimeDiagnostic {
         level: crate::DiagnosticLevel::Warning,
-        message: format!("foreach() argument must be of type array|object, {} given", value.type_name()),
+        message: format!(
+            "foreach() argument must be of type array|object, {} given",
+            value.type_name()
+        ),
         source_file: None,
         source_line: None,
         output_offset: 0,
@@ -42,10 +48,32 @@ pub(super) fn call_iterator_method(
 ) -> Result<Value, String> {
     use crate::bytecode::Op;
     stack.push(object);
-    let instruction = Op::CallMethod(method.into(), 0, Vec::new(), Vec::new(), Vec::new(), None, false);
-    super::functions::execute_instruction(&instruction, stack, variables, bindings, globals, global_scope,
-        frame_id, functions, classes, static_properties, output, steps)?;
-    stack.pop().ok_or_else(|| "Iterator method returned no value".into())
+    let instruction = Op::CallMethod(
+        method.into(),
+        0,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        false,
+    );
+    super::functions::execute_instruction(
+        &instruction,
+        stack,
+        variables,
+        bindings,
+        globals,
+        global_scope,
+        frame_id,
+        functions,
+        classes,
+        static_properties,
+        output,
+        steps,
+    )?;
+    stack
+        .pop()
+        .ok_or_else(|| "Iterator method returned no value".into())
 }
 
 /// Execute branches, foreach state, and local-variable removal instructions.
@@ -71,73 +99,228 @@ pub(super) fn execute_instruction(
             let mut aggregate_depth = 0usize;
             while let Value::Object(object) = value.dereference() {
                 let class_name = object.borrow().class_name.clone();
-                if !super::is_a_type(&class_name.to_ascii_lowercase(), "iteratoraggregate", classes, &mut std::collections::HashSet::new()) { break; }
-                if aggregate_depth >= 32 { return Err("IteratorAggregate nesting is too deep".into()); }
-                value = call_iterator_method(Value::Object(object), "getiterator", stack, variables, bindings, globals,
-                    global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                if !super::is_a_type(
+                    &class_name.to_ascii_lowercase(),
+                    "iteratoraggregate",
+                    classes,
+                    &mut std::collections::HashSet::new(),
+                ) {
+                    break;
+                }
+                if aggregate_depth >= 32 {
+                    return Err("IteratorAggregate nesting is too deep".into());
+                }
+                value = call_iterator_method(
+                    Value::Object(object),
+                    "getiterator",
+                    stack,
+                    variables,
+                    bindings,
+                    globals,
+                    global_scope,
+                    frame_id,
+                    functions,
+                    classes,
+                    static_properties,
+                    output,
+                    steps,
+                )?;
                 aggregate_depth += 1;
             }
             if aggregate_depth > 0 && matches!(value.dereference(), Value::Array(_)) {
-                return Err("IteratorAggregate::getIterator() must return a Traversable object".into());
+                return Err(
+                    "IteratorAggregate::getIterator() must return a Traversable object".into(),
+                );
             }
             let iterator = match value {
                 Value::Array(entries) => ForeachIterator::Array(entries.into_iter().collect(), 0),
                 Value::Generator(generator) => {
                     let has_current = super::rewind_generator(
-                        &generator, functions, classes, static_properties, globals, output, steps,
+                        &generator,
+                        functions,
+                        classes,
+                        static_properties,
+                        globals,
+                        output,
+                        steps,
                     )?;
                     ForeachIterator::Generator(generator, has_current)
                 }
-                Value::Object(object) if object.borrow().class_name.eq_ignore_ascii_case("PDOStatement") => {
-                    let rows = super::functions::pdo_iterator_rows(&Value::Object(object), variables, bindings, globals,
-                        global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                Value::Object(object)
+                    if object
+                        .borrow()
+                        .class_name
+                        .eq_ignore_ascii_case("PDOStatement") =>
+                {
+                    let rows = super::functions::pdo_iterator_rows(
+                        &Value::Object(object),
+                        variables,
+                        bindings,
+                        globals,
+                        global_scope,
+                        frame_id,
+                        functions,
+                        classes,
+                        static_properties,
+                        output,
+                        steps,
+                    )?;
                     ForeachIterator::Array(rows, 0)
                 }
                 Value::Object(object) => {
                     let class_name = object.borrow().class_name.clone();
                     let normalized_class = class_name.to_ascii_lowercase();
-                    if !super::is_a_type(&normalized_class, "traversable", classes, &mut std::collections::HashSet::new()) {
-                        ForeachIterator::Array(super::objects::foreach_entries(&object, classes, access_scope.as_deref(), false), 0)
-                    } else if super::is_a_type(&normalized_class, "iteratoraggregate", classes, &mut std::collections::HashSet::new()) {
-                        let iterator = call_iterator_method(Value::Object(object), "getiterator", stack, variables, bindings, globals,
-                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                    if !super::is_a_type(
+                        &normalized_class,
+                        "traversable",
+                        classes,
+                        &mut std::collections::HashSet::new(),
+                    ) {
+                        ForeachIterator::Array(
+                            super::objects::foreach_entries(
+                                &object,
+                                classes,
+                                access_scope.as_deref(),
+                                false,
+                            ),
+                            0,
+                        )
+                    } else if super::is_a_type(
+                        &normalized_class,
+                        "iteratoraggregate",
+                        classes,
+                        &mut std::collections::HashSet::new(),
+                    ) {
+                        let iterator = call_iterator_method(
+                            Value::Object(object),
+                            "getiterator",
+                            stack,
+                            variables,
+                            bindings,
+                            globals,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?;
                         match iterator {
-                            Value::Array(_) => return Err("IteratorAggregate::getIterator() must return a Traversable object".into()),
+                            Value::Array(_) => return Err(
+                                "IteratorAggregate::getIterator() must return a Traversable object"
+                                    .into(),
+                            ),
                             Value::Generator(generator) => {
-                                let has_current = super::rewind_generator(&generator, functions, classes, static_properties, globals, output, steps)?;
+                                let has_current = super::rewind_generator(
+                                    &generator,
+                                    functions,
+                                    classes,
+                                    static_properties,
+                                    globals,
+                                    output,
+                                    steps,
+                                )?;
                                 ForeachIterator::Generator(generator, has_current)
                             }
-                            Value::Object(iterator_object) if iterator_object.borrow().class_name.eq_ignore_ascii_case("PDOStatement") => {
-                                let rows = super::functions::pdo_iterator_rows(&Value::Object(iterator_object), variables, bindings, globals,
-                                    global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                            Value::Object(iterator_object)
+                                if iterator_object
+                                    .borrow()
+                                    .class_name
+                                    .eq_ignore_ascii_case("PDOStatement") =>
+                            {
+                                let rows = super::functions::pdo_iterator_rows(
+                                    &Value::Object(iterator_object),
+                                    variables,
+                                    bindings,
+                                    globals,
+                                    global_scope,
+                                    frame_id,
+                                    functions,
+                                    classes,
+                                    static_properties,
+                                    output,
+                                    steps,
+                                )?;
                                 ForeachIterator::Array(rows, 0)
                             }
                             Value::Object(iterator_object) => {
                                 let iterator_class = iterator_object.borrow().class_name.clone();
                                 let required = ["rewind", "valid", "current", "key", "next"];
-                                if !super::is_a_type(&iterator_class.to_ascii_lowercase(), "iterator", classes, &mut std::collections::HashSet::new())
-                                    || required.iter().any(|method| super::objects::find_method(&iterator_class, method, classes).is_none()) {
+                                if !super::is_a_type(
+                                    &iterator_class.to_ascii_lowercase(),
+                                    "iterator",
+                                    classes,
+                                    &mut std::collections::HashSet::new(),
+                                ) || required.iter().any(|method| {
+                                    super::objects::find_method(&iterator_class, method, classes)
+                                        .is_none()
+                                }) {
                                     return Err("IteratorAggregate::getIterator() must return a Traversable object".into());
                                 }
                                 let iterator = Value::Object(iterator_object);
-                                let _ = call_iterator_method(iterator.clone(), "rewind", stack, variables, bindings, globals,
-                                    global_scope, frame_id, functions, classes, static_properties, output, steps)?;
-                                ForeachIterator::UserIterator { object: iterator, advance_pending: false }
+                                let _ = call_iterator_method(
+                                    iterator.clone(),
+                                    "rewind",
+                                    stack,
+                                    variables,
+                                    bindings,
+                                    globals,
+                                    global_scope,
+                                    frame_id,
+                                    functions,
+                                    classes,
+                                    static_properties,
+                                    output,
+                                    steps,
+                                )?;
+                                ForeachIterator::UserIterator {
+                                    object: iterator,
+                                    advance_pending: false,
+                                }
                             }
-                            _ => return Err("IteratorAggregate::getIterator() must return a Traversable object".into()),
+                            _ => return Err(
+                                "IteratorAggregate::getIterator() must return a Traversable object"
+                                    .into(),
+                            ),
                         }
                     } else {
-                        if !super::is_a_type(&normalized_class, "iterator", classes, &mut std::collections::HashSet::new()) {
+                        if !super::is_a_type(
+                            &normalized_class,
+                            "iterator",
+                            classes,
+                            &mut std::collections::HashSet::new(),
+                        ) {
                             return Err(format!("Object of type {class_name} is not an Iterator"));
                         }
                         let required = ["rewind", "valid", "current", "key", "next"];
-                        if required.iter().any(|method| super::objects::find_method(&class_name, method, classes).is_none()) {
-                            return Err(format!("Object of type {class_name} does not provide the Iterator methods"));
+                        if required.iter().any(|method| {
+                            super::objects::find_method(&class_name, method, classes).is_none()
+                        }) {
+                            return Err(format!(
+                                "Object of type {class_name} does not provide the Iterator methods"
+                            ));
                         }
-                    let iterator = Value::Object(object);
-                    let _ = call_iterator_method(iterator.clone(), "rewind", stack, variables, bindings, globals,
-                        global_scope, frame_id, functions, classes, static_properties, output, steps)?;
-                    ForeachIterator::UserIterator { object: iterator, advance_pending: false }
+                        let iterator = Value::Object(object);
+                        let _ = call_iterator_method(
+                            iterator.clone(),
+                            "rewind",
+                            stack,
+                            variables,
+                            bindings,
+                            globals,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?;
+                        ForeachIterator::UserIterator {
+                            object: iterator,
+                            advance_pending: false,
+                        }
                     }
                 }
                 Value::Null => {
@@ -152,9 +335,14 @@ pub(super) fn execute_instruction(
             iterators.insert(*id, iterator);
         }
         Op::IterStartReference(id, variable, key_count, access_scope) => {
-            if stack.len() < key_count + 1 { return Err("Invalid bytecode stack".into()); }
+            if stack.len() < key_count + 1 {
+                return Err("Invalid bytecode stack".into());
+            }
             let raw_keys = stack.split_off(stack.len() - key_count);
-            let offsets = raw_keys.into_iter().map(|key| key.array_key()).collect::<Result<Vec<_>, _>>()?;
+            let offsets = raw_keys
+                .into_iter()
+                .map(|key| key.array_key())
+                .collect::<Result<Vec<_>, _>>()?;
             let root = stack.pop().ok_or("Invalid bytecode stack")?;
             let value = root.array_get_path(&offsets)?;
             if offsets.is_empty() {
@@ -204,9 +392,24 @@ pub(super) fn execute_instruction(
                         }
                     }
                     Value::Generator(generator) => {
-                        let allowed = generator.try_borrow().map_err(|_| "Generator is already running")?.by_reference;
-                        if !allowed { return Err("Cannot iterate a non-referenceable generator by reference".into()); }
-                        super::rewind_generator(&generator, functions, classes, static_properties, globals, output, steps)?;
+                        let allowed = generator
+                            .try_borrow()
+                            .map_err(|_| "Generator is already running")?
+                            .by_reference;
+                        if !allowed {
+                            return Err(
+                                "Cannot iterate a non-referenceable generator by reference".into(),
+                            );
+                        }
+                        super::rewind_generator(
+                            &generator,
+                            functions,
+                            classes,
+                            static_properties,
+                            globals,
+                            output,
+                            steps,
+                        )?;
                         iterators.insert(*id, ForeachIterator::Generator(generator, true));
                         return Ok(true);
                     }
@@ -229,15 +432,26 @@ pub(super) fn execute_instruction(
             for (key, _) in &initial_entries {
                 let mut path = offsets.clone();
                 path.push(key.clone());
-                let root = super::read_variable(variable, variables, bindings, globals, global_scope);
+                let root =
+                    super::read_variable(variable, variables, bindings, globals, global_scope);
                 let (updated, _) = root.ensure_array_reference(&path)?;
-                write_variable(variable.clone(), updated, variables, bindings, globals, global_scope)?;
+                write_variable(
+                    variable.clone(),
+                    updated,
+                    variables,
+                    bindings,
+                    globals,
+                    global_scope,
+                )?;
             }
-            let entries = match super::read_variable(variable, variables, bindings, globals, global_scope).array_get_path(&offsets)? {
-                Value::Array(entries) => entries.into_iter().collect(),
-                Value::Null => Vec::new(),
-                _ => return Err("foreach expects an array".into()),
-            };
+            let entries =
+                match super::read_variable(variable, variables, bindings, globals, global_scope)
+                    .array_get_path(&offsets)?
+                {
+                    Value::Array(entries) => entries.into_iter().collect(),
+                    Value::Null => Vec::new(),
+                    _ => return Err("foreach expects an array".into()),
+                };
             iterators.insert(*id, ForeachIterator::Array(entries, 0));
         }
         Op::IterNext(id, key_name, value_name, by_reference, target) => {
@@ -246,13 +460,16 @@ pub(super) fn execute_instruction(
                     let (key, value) = entries[*index].clone();
                     *index += 1;
                     let value = if *by_reference {
-                        if let Value::Reference(_) = value { value }
-                        else {
+                        if let Value::Reference(_) = value {
+                            value
+                        } else {
                             let reference = Rc::new(RefCell::new(value));
                             entries[*index - 1].1 = Value::Reference(reference.clone());
                             Value::Reference(reference)
                         }
-                    } else { value };
+                    } else {
+                        value
+                    };
                     Some((array_key_value(key), value))
                 }
                 ForeachIterator::Array(_, _) => None,
@@ -261,22 +478,85 @@ pub(super) fn execute_instruction(
                     super::current_generator_entry(generator)?
                 }
                 ForeachIterator::Generator(generator, _) => super::advance_generator(
-                    generator, functions, classes, static_properties, globals, output, steps, Value::Null,
+                    generator,
+                    functions,
+                    classes,
+                    static_properties,
+                    globals,
+                    output,
+                    steps,
+                    Value::Null,
                 )?,
-                ForeachIterator::UserIterator { object, advance_pending } => {
+                ForeachIterator::UserIterator {
+                    object,
+                    advance_pending,
+                } => {
                     if *advance_pending {
-                        let _ = call_iterator_method(object.clone(), "next", stack, variables, bindings, globals,
-                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                        let _ = call_iterator_method(
+                            object.clone(),
+                            "next",
+                            stack,
+                            variables,
+                            bindings,
+                            globals,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?;
                         *advance_pending = false;
                     }
-                    let valid = call_iterator_method(object.clone(), "valid", stack, variables, bindings, globals,
-                        global_scope, frame_id, functions, classes, static_properties, output, steps)?;
-                    if !valid.truthy() { None }
-                    else {
-                        let value = call_iterator_method(object.clone(), "current", stack, variables, bindings, globals,
-                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
-                        let key = call_iterator_method(object.clone(), "key", stack, variables, bindings, globals,
-                            global_scope, frame_id, functions, classes, static_properties, output, steps)?;
+                    let valid = call_iterator_method(
+                        object.clone(),
+                        "valid",
+                        stack,
+                        variables,
+                        bindings,
+                        globals,
+                        global_scope,
+                        frame_id,
+                        functions,
+                        classes,
+                        static_properties,
+                        output,
+                        steps,
+                    )?;
+                    if !valid.truthy() {
+                        None
+                    } else {
+                        let value = call_iterator_method(
+                            object.clone(),
+                            "current",
+                            stack,
+                            variables,
+                            bindings,
+                            globals,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?;
+                        let key = call_iterator_method(
+                            object.clone(),
+                            "key",
+                            stack,
+                            variables,
+                            bindings,
+                            globals,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?;
                         *advance_pending = true;
                         Some((key, value))
                     }
@@ -286,52 +566,104 @@ pub(super) fn execute_instruction(
                 if *by_reference
                     && matches!(iterators.get(id), Some(ForeachIterator::Generator(_, _)))
                     && !matches!(value, Value::Reference(_))
-                { return Err("Error:Cannot use a non-referenceable value with foreach by reference".into()); }
+                {
+                    return Err(
+                        "Error:Cannot use a non-referenceable value with foreach by reference"
+                            .into(),
+                    );
+                }
                 if *by_reference
-                    && matches!(iterators.get(id), Some(ForeachIterator::UserIterator { .. }))
-                    && !matches!(value, Value::Reference(_)) {
+                    && matches!(
+                        iterators.get(id),
+                        Some(ForeachIterator::UserIterator { .. })
+                    )
+                    && !matches!(value, Value::Reference(_))
+                {
                     return Err("Error:An iterator cannot be used with foreach by reference".into());
                 }
                 if let Some(name) = key_name {
-                    write_variable(name.clone(), key, variables, bindings, globals, global_scope)?;
+                    write_variable(
+                        name.clone(),
+                        key,
+                        variables,
+                        bindings,
+                        globals,
+                        global_scope,
+                    )?;
                 }
                 if *by_reference {
-                    let Value::Reference(reference) = &value else { return Err("Invalid by-reference foreach entry".into()); };
+                    let Value::Reference(reference) = &value else {
+                        return Err("Invalid by-reference foreach entry".into());
+                    };
                     let storage_key = globals.store_reference(reference.clone());
                     match bindings.get(value_name).cloned() {
-                        Some(VariableBinding::Global(name)) | Some(VariableBinding::Static(name)) => globals.bind_alias(name, storage_key),
+                        Some(VariableBinding::Global(name))
+                        | Some(VariableBinding::Static(name)) => {
+                            globals.bind_alias(name, storage_key)
+                        }
                         None if global_scope => globals.bind_alias(value_name.clone(), storage_key),
                         _ => {
                             variables.remove(value_name);
-                            bindings.insert(value_name.clone(), VariableBinding::Reference(storage_key));
+                            bindings.insert(
+                                value_name.clone(),
+                                VariableBinding::Reference(storage_key),
+                            );
                         }
                     }
                 } else {
-                    write_variable(value_name.clone(), value.dereference(), variables, bindings, globals, global_scope)?;
+                    write_variable(
+                        value_name.clone(),
+                        value.dereference(),
+                        variables,
+                        bindings,
+                        globals,
+                        global_scope,
+                    )?;
                 }
             } else {
                 *program_counter = *target;
             }
         }
         Op::UnsetVariable(name) => {
-            let old_value = read_variable(name, variables, bindings, globals, global_scope).dereference();
+            let old_value =
+                read_variable(name, variables, bindings, globals, global_scope).dereference();
             remove_variable(name, variables, bindings, globals, global_scope)?;
-            super::objects::run_destructors_removed_from_value(old_value, &Value::Null, functions, classes, static_properties, globals, output, steps)?;
+            super::objects::run_destructors_removed_from_value(
+                old_value,
+                &Value::Null,
+                functions,
+                classes,
+                static_properties,
+                globals,
+                output,
+                steps,
+            )?;
         }
         Op::Jump(target) => *program_counter = *target,
-        Op::DynamicLoopJump { targets, is_break: _ } => {
+        Op::DynamicLoopJump {
+            targets,
+            is_break: _,
+        } => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?;
             let level = value.number();
-            if !level.is_finite() || level < 1.0 || level.fract() != 0.0 || level > targets.len() as f64 {
+            if !level.is_finite()
+                || level < 1.0
+                || level.fract() != 0.0
+                || level > targets.len() as f64
+            {
                 return Err("break/continue level must be a positive integer not exceeding the active loop/switch depth".into());
             }
             let target = targets[level as usize - 1];
-            if target == usize::MAX { return Err("Invalid break/continue target".into()); }
+            if target == usize::MAX {
+                return Err("Invalid break/continue target".into());
+            }
             *program_counter = target;
         }
         Op::JumpFalse(target) => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?;
-            if !value.truthy() { *program_counter = *target; }
+            if !value.truthy() {
+                *program_counter = *target;
+            }
         }
         _ => return Ok(false),
     }

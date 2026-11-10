@@ -6,32 +6,115 @@ use crate::Value;
 /// through the dedicated replacement implementation.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "strtolower", "strtoupper", "strlen", "ucfirst", "lcfirst", "strrev", "str_shuffle", "chr", "crc32", "md5", "sha1", "hash", "hash_algos", "hash_hmac_algos", "hash_pbkdf2", "hash_hkdf",
-        "str_rot13", "addslashes", "addcslashes", "stripslashes", "stripcslashes", "bin2hex", "hex2bin", "base64_encode", "base64_decode", "ord", "number_format",
-        "str_increment", "str_decrement", "count_chars", "ucwords", "trim", "ltrim", "rtrim", "str_repeat",
-        "str_split", "htmlspecialchars", "htmlspecialchars_decode", "htmlentities", "html_entity_decode", "get_html_translation_table", "hash_equals", "hash_hmac", "str_word_count", "strspn",
-        "strcspn", "strpbrk", "str_pad", "str_replace", "str_ireplace", "str_contains",
-        "str_starts_with", "str_ends_with", "strstr", "strchr", "stristr", "strcmp", "strcasecmp",
-        "strnatcmp", "strnatcasecmp", "strncmp", "strncasecmp", "strtr", "strpos", "stripos",
-        "strrpos", "strripos", "substr", "explode", "substr_count", "substr_compare", "strtok", "levenshtein", "similar_text", "implode", "str_getcsv", "nl2br", "wordwrap",
+        "strtolower",
+        "strtoupper",
+        "strlen",
+        "ucfirst",
+        "lcfirst",
+        "strrev",
+        "str_shuffle",
+        "chr",
+        "crc32",
+        "md5",
+        "sha1",
+        "hash",
+        "hash_algos",
+        "hash_hmac_algos",
+        "hash_pbkdf2",
+        "hash_hkdf",
+        "str_rot13",
+        "addslashes",
+        "addcslashes",
+        "stripslashes",
+        "stripcslashes",
+        "bin2hex",
+        "hex2bin",
+        "base64_encode",
+        "base64_decode",
+        "ord",
+        "number_format",
+        "str_increment",
+        "str_decrement",
+        "count_chars",
+        "ucwords",
+        "trim",
+        "ltrim",
+        "rtrim",
+        "str_repeat",
+        "str_split",
+        "htmlspecialchars",
+        "htmlspecialchars_decode",
+        "htmlentities",
+        "html_entity_decode",
+        "get_html_translation_table",
+        "hash_equals",
+        "hash_hmac",
+        "str_word_count",
+        "strspn",
+        "strcspn",
+        "strpbrk",
+        "str_pad",
+        "str_replace",
+        "str_ireplace",
+        "str_contains",
+        "str_starts_with",
+        "str_ends_with",
+        "strstr",
+        "strchr",
+        "stristr",
+        "strcmp",
+        "strcasecmp",
+        "strnatcmp",
+        "strnatcasecmp",
+        "strncmp",
+        "strncasecmp",
+        "strtr",
+        "strpos",
+        "stripos",
+        "strrpos",
+        "strripos",
+        "substr",
+        "explode",
+        "substr_count",
+        "substr_compare",
+        "strtok",
+        "levenshtein",
+        "similar_text",
+        "implode",
+        "str_getcsv",
+        "nl2br",
+        "wordwrap",
         "substr_replace",
-        "basename", "dirname", "pathinfo",
-        "strip_tags", "sprintf", "parse_str", "printf", "vprintf", "vsprintf", "fprintf",
-        "urlencode", "urldecode", "rawurlencode", "rawurldecode",
+        "basename",
+        "dirname",
+        "pathinfo",
+        "strip_tags",
+        "sprintf",
+        "parse_str",
+        "printf",
+        "vprintf",
+        "vsprintf",
+        "fprintf",
+        "urlencode",
+        "urldecode",
+        "rawurlencode",
+        "rawurldecode",
     ]
 }
 
 pub(crate) fn is_supported(name: &str) -> bool {
-    supported_names().iter().any(|function| function.eq_ignore_ascii_case(name))
+    supported_names()
+        .iter()
+        .any(|function| function.eq_ignore_ascii_case(name))
 }
 
 /// Return positions whose PHP builtin parameters accept strings or stringable objects.
 pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
     match name.to_ascii_lowercase().as_str() {
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" | "strncmp" | "strncasecmp"
-        | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr"
-        | "strpos" | "stripos" | "strrpos" | "strripos" | "strspn" | "strcspn" | "strpbrk"
-        | "substr_count" | "substr_compare" | "explode" | "str_getcsv" => &[0, 1, 2, 3],
+        | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr"
+        | "stristr" | "strpos" | "stripos" | "strrpos" | "strripos" | "strspn" | "strcspn"
+        | "strpbrk" | "substr_count" | "substr_compare" | "explode" | "str_getcsv" => &[0, 1, 2, 3],
         "strtok" => &[0, 1],
         "levenshtein" => &[0, 1],
         "similar_text" => &[0, 1],
@@ -51,15 +134,34 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "dirname" => &[0],
         "pathinfo" => &[0],
         "strip_tags" => &[0, 1],
-        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "sprintf" | "parse_str" | "printf" | "vprintf" | "vsprintf" => &[0],
+        "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "sprintf" | "parse_str"
+        | "printf" | "vprintf" | "vsprintf" => &[0],
         "fprintf" => &[1],
         "addcslashes" => &[0, 1],
         "str_pad" => &[0, 2],
         "htmlspecialchars" | "htmlentities" | "html_entity_decode" => &[0, 2],
-        "str_repeat" | "str_split" | "substr" | "implode" | "htmlspecialchars_decode"
-        | "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13"
-        | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment" | "str_decrement"
-        | "str_shuffle" | "nl2br" => &[0],
+        "str_repeat"
+        | "str_split"
+        | "substr"
+        | "implode"
+        | "htmlspecialchars_decode"
+        | "strtolower"
+        | "strtoupper"
+        | "strlen"
+        | "ucfirst"
+        | "lcfirst"
+        | "strrev"
+        | "str_rot13"
+        | "addslashes"
+        | "stripslashes"
+        | "stripcslashes"
+        | "bin2hex"
+        | "hex2bin"
+        | "ord"
+        | "str_increment"
+        | "str_decrement"
+        | "str_shuffle"
+        | "nl2br" => &[0],
         _ => &[],
     }
 }
@@ -74,12 +176,16 @@ fn charlist_contains(character: char, charlist: &str) -> bool {
                 characters.next();
                 characters.next();
                 if let Some(end) = characters.next() {
-                    if start <= end && (start..=end).contains(&character) { return true; }
+                    if start <= end && (start..=end).contains(&character) {
+                        return true;
+                    }
                     continue;
                 }
             }
         }
-        if character == start { return true; }
+        if character == start {
+            return true;
+        }
     }
     false
 }
@@ -87,13 +193,27 @@ fn charlist_contains(character: char, charlist: &str) -> bool {
 fn add_cslashes(input: &str, charlist: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for character in input.chars() {
-        if !charlist_contains(character, charlist) { output.push(character); continue; }
+        if !charlist_contains(character, charlist) {
+            output.push(character);
+            continue;
+        }
         match character {
-            '\0' => output.push_str("\\0"), '\n' => output.push_str("\\n"), '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"), '\u{000b}' => output.push_str("\\v"), '\u{000c}' => output.push_str("\\f"),
-            '\u{0007}' => output.push_str("\\a"), '\u{001b}' => output.push_str("\\e"), '\\' => output.push_str("\\\\"),
-            character if character.is_control() => output.push_str(&format!("\\{:03o}", character as u32)),
-            character => { output.push('\\'); output.push(character); }
+            '\0' => output.push_str("\\0"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '\u{000b}' => output.push_str("\\v"),
+            '\u{000c}' => output.push_str("\\f"),
+            '\u{0007}' => output.push_str("\\a"),
+            '\u{001b}' => output.push_str("\\e"),
+            '\\' => output.push_str("\\\\"),
+            character if character.is_control() => {
+                output.push_str(&format!("\\{:03o}", character as u32))
+            }
+            character => {
+                output.push('\\');
+                output.push(character);
+            }
         }
     }
     output
@@ -103,7 +223,9 @@ fn url_encode(input: &str, form: bool) -> String {
     let mut output = String::with_capacity(input.len());
     for byte in input.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => output.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                output.push(byte as char)
+            }
             b'~' if !form => output.push('~'),
             b' ' if form => output.push('+'),
             _ => output.push_str(&format!("%{byte:02X}")),
@@ -118,7 +240,10 @@ fn url_decode(input: &str, form: bool) -> String {
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
-            b'+' if form => { output.push(b' '); index += 1; }
+            b'+' if form => {
+                output.push(b' ');
+                index += 1;
+            }
             b'%' if index + 2 < bytes.len() => {
                 let hex = |byte: u8| match byte {
                     b'0'..=b'9' => Some(byte - b'0'),
@@ -134,7 +259,10 @@ fn url_decode(input: &str, form: bool) -> String {
                     index += 1;
                 }
             }
-            byte => { output.push(byte); index += 1; }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
         }
     }
     String::from_utf8_lossy(&output).into_owned()
@@ -396,7 +524,9 @@ const HTML4_ENTITY_TABLE: &[(char, &str)] = &[
 ];
 
 fn html4_entity_name(character: char) -> Option<&'static str> {
-    HTML4_ENTITY_TABLE.iter().find_map(|(candidate, name)| (*candidate == character).then_some(*name))
+    HTML4_ENTITY_TABLE
+        .iter()
+        .find_map(|(candidate, name)| (*candidate == character).then_some(*name))
 }
 
 fn known_entity_length(input: &str) -> Option<usize> {
@@ -405,7 +535,9 @@ fn known_entity_length(input: &str) -> Option<usize> {
     let body = entity.strip_prefix('&')?.strip_suffix(';')?;
     let valid = match body {
         "amp" | "lt" | "gt" | "quot" | "apos" | "#039" => true,
-        _ if body.starts_with("#x") || body.starts_with("#X") => u32::from_str_radix(&body[2..], 16).is_ok(),
+        _ if body.starts_with("#x") || body.starts_with("#X") => {
+            u32::from_str_radix(&body[2..], 16).is_ok()
+        }
         _ if body.starts_with('#') => body[1..].parse::<u32>().is_ok(),
         _ => HTML4_ENTITY_TABLE.iter().any(|(_, name)| body == *name),
     };
@@ -417,7 +549,10 @@ fn escape_html(input: &str, flags: i64, double_encode: bool) -> String {
     let mut result = String::with_capacity(input.len());
     let mut cursor = 0;
     while cursor < input.len() {
-        let character = input[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+        let character = input[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is on a UTF-8 boundary");
         if character == '&' && !double_encode {
             if let Some(length) = known_entity_length(&input[cursor..]) {
                 result.push_str(&input[cursor..cursor + length]);
@@ -443,7 +578,10 @@ fn escape_html_entities(input: &str, flags: i64, double_encode: bool) -> String 
     let mut result = String::with_capacity(input.len());
     let mut cursor = 0;
     while cursor < input.len() {
-        let character = input[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+        let character = input[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is on a UTF-8 boundary");
         if character == '&' && !double_encode {
             if let Some(length) = known_entity_length(&input[cursor..]) {
                 result.push_str(&input[cursor..cursor + length]);
@@ -460,7 +598,11 @@ fn escape_html_entities(input: &str, flags: i64, double_encode: bool) -> String 
             '\'' if quote_mode & 1 != 0 => result.push_str("&#039;"),
             '\'' => result.push('\''),
             _ => match html4_entity_name(character) {
-                Some(name) => { result.push('&'); result.push_str(name); result.push(';'); }
+                Some(name) => {
+                    result.push('&');
+                    result.push_str(name);
+                    result.push(';');
+                }
                 None => result.push(character),
             },
         }
@@ -478,11 +620,22 @@ fn decode_html(input: &str, flags: i64) -> String {
             if let Some(length) = known_entity_length(&input[cursor..]) {
                 let entity = &input[cursor..cursor + length];
                 let decoded = match entity {
-                    "&amp;" => Some('&'), "&lt;" => Some('<'), "&gt;" => Some('>'),
+                    "&amp;" => Some('&'),
+                    "&lt;" => Some('<'),
+                    "&gt;" => Some('>'),
                     "&quot;" if quote_mode & 2 != 0 => Some('"'),
                     "&#039;" | "&apos;" if quote_mode & 1 != 0 => Some('\''),
-                    _ if entity.starts_with("&#x") || entity.starts_with("&#X") => entity[3..entity.len() - 1].chars().try_fold(0u32, |value, digit| value.checked_mul(16)?.checked_add(digit.to_digit(16)?)).and_then(char::from_u32),
-                    _ if entity.starts_with("&#") => entity[2..entity.len() - 1].parse::<u32>().ok().and_then(char::from_u32),
+                    _ if entity.starts_with("&#x") || entity.starts_with("&#X") => entity
+                        [3..entity.len() - 1]
+                        .chars()
+                        .try_fold(0u32, |value, digit| {
+                            value.checked_mul(16)?.checked_add(digit.to_digit(16)?)
+                        })
+                        .and_then(char::from_u32),
+                    _ if entity.starts_with("&#") => entity[2..entity.len() - 1]
+                        .parse::<u32>()
+                        .ok()
+                        .and_then(char::from_u32),
                     _ => None,
                 };
                 if let Some(decoded) = decoded {
@@ -492,7 +645,10 @@ fn decode_html(input: &str, flags: i64) -> String {
                 }
             }
         }
-        let character = input[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+        let character = input[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is on a UTF-8 boundary");
         result.push(character);
         cursor += character.len_utf8();
     }
@@ -509,13 +665,23 @@ fn decode_html_entities(input: &str, flags: i64) -> String {
                 let entity = &input[cursor..cursor + length];
                 let body = &entity[1..entity.len() - 1];
                 let decoded = match body {
-                    "amp" => Some('&'), "lt" => Some('<'), "gt" => Some('>'),
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
                     "quot" if quote_mode & 2 != 0 => Some('"'),
                     "quot" => None,
                     "#039" if quote_mode & 1 != 0 => Some('\''),
-                    _ if body.starts_with("#x") || body.starts_with("#X") => u32::from_str_radix(&body[2..], 16).ok().and_then(char::from_u32),
-                    _ if body.starts_with('#') => body[1..].parse::<u32>().ok().and_then(char::from_u32),
-                    _ => HTML4_ENTITY_TABLE.iter().find_map(|(character, name)| (*name == body).then_some(*character)),
+                    _ if body.starts_with("#x") || body.starts_with("#X") => {
+                        u32::from_str_radix(&body[2..], 16)
+                            .ok()
+                            .and_then(char::from_u32)
+                    }
+                    _ if body.starts_with('#') => {
+                        body[1..].parse::<u32>().ok().and_then(char::from_u32)
+                    }
+                    _ => HTML4_ENTITY_TABLE
+                        .iter()
+                        .find_map(|(character, name)| (*name == body).then_some(*character)),
                 };
                 if let Some(decoded) = decoded {
                     result.push(decoded);
@@ -524,16 +690,28 @@ fn decode_html_entities(input: &str, flags: i64) -> String {
                 }
             }
         }
-        let character = input[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+        let character = input[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is on a UTF-8 boundary");
         result.push(character);
         cursor += character.len_utf8();
     }
     result
 }
 
-fn wordwrap(input: &str, width: i64, break_string: &str, cut_long_words: bool) -> Result<String, String> {
-    if input.is_empty() { return Ok(String::new()); }
-    if break_string.is_empty() { return Err("ValueError:wordwrap(): Argument #3 ($break) must not be empty".into()); }
+fn wordwrap(
+    input: &str,
+    width: i64,
+    break_string: &str,
+    cut_long_words: bool,
+) -> Result<String, String> {
+    if input.is_empty() {
+        return Ok(String::new());
+    }
+    if break_string.is_empty() {
+        return Err("ValueError:wordwrap(): Argument #3 ($break) must not be empty".into());
+    }
     if width == 0 && cut_long_words {
         return Err("ValueError:wordwrap(): Argument #4 ($cut_long_words) cannot be true when argument #2 ($width) is 0".into());
     }
@@ -580,7 +758,9 @@ fn wordwrap(input: &str, width: i64, break_string: &str, cut_long_words: bool) -
             }
         }
         output.push(character);
-        if character == b' ' { last_space = Some(output.len() - 1); }
+        if character == b' ' {
+            last_space = Some(output.len() - 1);
+        }
         line_length += 1;
         current += 1;
     }
@@ -590,7 +770,11 @@ fn wordwrap(input: &str, width: i64, break_string: &str, cut_long_words: bool) -
 fn replace_substring(input: &str, replacement: &str, offset: i64, length: Option<i64>) -> String {
     let original = input.as_bytes();
     let original_length = original.len() as i64;
-    let start = if offset < 0 { original_length.saturating_add(offset).max(0) } else { offset.min(original_length) } as usize;
+    let start = if offset < 0 {
+        original_length.saturating_add(offset).max(0)
+    } else {
+        offset.min(original_length)
+    } as usize;
     let remaining = original.len().saturating_sub(start) as i64;
     let replace_length = match length {
         None => remaining,
@@ -607,16 +791,25 @@ fn replace_substring(input: &str, replacement: &str, offset: i64, length: Option
 
 fn substr_replace(arguments: &[Value]) -> Result<Value, String> {
     if !(3..=4).contains(&arguments.len()) {
-        return Err(format!("ArgumentCountError:substr_replace() expects between 3 and 4 arguments, {} given", arguments.len()));
+        return Err(format!(
+            "ArgumentCountError:substr_replace() expects between 3 and 4 arguments, {} given",
+            arguments.len()
+        ));
     }
     let original = arguments[0].dereference();
     let replacement = arguments[1].dereference();
     let offset = arguments[2].dereference();
-    let length = arguments.get(3).map(Value::dereference).unwrap_or(Value::Null);
+    let length = arguments
+        .get(3)
+        .map(Value::dereference)
+        .unwrap_or(Value::Null);
 
     let replacement_at = |index: usize| -> String {
         match &replacement {
-            Value::Array(values) => values.get(index).map(|(_, value)| value.show()).unwrap_or_default(),
+            Value::Array(values) => values
+                .get(index)
+                .map(|(_, value)| value.show())
+                .unwrap_or_default(),
             value => value.show(),
         }
     };
@@ -630,7 +823,10 @@ fn substr_replace(arguments: &[Value]) -> Result<Value, String> {
                 let string = string.dereference().show();
                 let current_offset = match &offset {
                     Value::Array(values) => {
-                        let value = values.get(offset_index).map(|(_, value)| value.number() as i64).unwrap_or(0);
+                        let value = values
+                            .get(offset_index)
+                            .map(|(_, value)| value.number() as i64)
+                            .unwrap_or(0);
                         offset_index = offset_index.saturating_add(1);
                         value
                     }
@@ -639,7 +835,9 @@ fn substr_replace(arguments: &[Value]) -> Result<Value, String> {
                 let current_length = match &length {
                     Value::Null => None,
                     Value::Array(values) => {
-                        let value = values.get(length_index).map(|(_, value)| value.number() as i64);
+                        let value = values
+                            .get(length_index)
+                            .map(|(_, value)| value.number() as i64);
                         length_index = length_index.saturating_add(1);
                         value.or(Some(string.len() as i64))
                     }
@@ -647,13 +845,24 @@ fn substr_replace(arguments: &[Value]) -> Result<Value, String> {
                 };
                 let current_replacement = match &replacement {
                     Value::Array(values) => {
-                        let value = values.get(replacement_index).map(|(_, value)| value.dereference().show()).unwrap_or_default();
+                        let value = values
+                            .get(replacement_index)
+                            .map(|(_, value)| value.dereference().show())
+                            .unwrap_or_default();
                         replacement_index = replacement_index.saturating_add(1);
                         value
                     }
                     value => value.show(),
                 };
-                result.push((key, Value::String(replace_substring(&string, &current_replacement, current_offset, current_length))));
+                result.push((
+                    key,
+                    Value::String(replace_substring(
+                        &string,
+                        &current_replacement,
+                        current_offset,
+                        current_length,
+                    )),
+                ));
             }
             Ok(Value::from_array_entries(result))
         }
@@ -668,7 +877,12 @@ fn substr_replace(arguments: &[Value]) -> Result<Value, String> {
                 Value::Array(_) => return Err("TypeError:substr_replace(): Argument #4 ($length) cannot be an array when working on a single string".into()),
                 value => Some(value.number() as i64),
             };
-            Ok(Value::String(replace_substring(&string, &replacement_at(0), offset, length)))
+            Ok(Value::String(replace_substring(
+                &string,
+                &replacement_at(0),
+                offset,
+                length,
+            )))
         }
     }
 }
@@ -684,22 +898,32 @@ fn basename(path: &str, suffix: &str) -> String {
 }
 
 fn dirname_once(path: &str) -> String {
-    if path.is_empty() { return ".".into(); }
+    if path.is_empty() {
+        return ".".into();
+    }
     let path = path.trim_end_matches('/');
-    if path.is_empty() { return "/".into(); }
+    if path.is_empty() {
+        return "/".into();
+    }
     match path.rfind('/') {
         None => ".".into(),
         Some(0) => "/".into(),
         Some(index) => {
             let parent = path[..index].trim_end_matches('/');
-            if parent.is_empty() { "/".into() } else { parent.to_string() }
+            if parent.is_empty() {
+                "/".into()
+            } else {
+                parent.to_string()
+            }
         }
     }
 }
 
 fn dirname(path: &str, levels: i64) -> String {
     let mut result = path.to_string();
-    for _ in 0..levels { result = dirname_once(&result); }
+    for _ in 0..levels {
+        result = dirname_once(&result);
+    }
     result
 }
 
@@ -708,17 +932,32 @@ fn pathinfo(path: &str) -> Value {
     let directory = dirname_once(path);
     let extension_start = base.rfind('.');
     let (filename, extension) = match extension_start {
-        Some(index) => (base[..index].to_string(), Some(base[index + 1..].to_string())),
+        Some(index) => (
+            base[..index].to_string(),
+            Some(base[index + 1..].to_string()),
+        ),
         None => (base.clone(), None),
     };
     let mut entries = vec![
-        (crate::ArrayKey::String("dirname".into()), Value::String(directory)),
-        (crate::ArrayKey::String("basename".into()), Value::String(base)),
+        (
+            crate::ArrayKey::String("dirname".into()),
+            Value::String(directory),
+        ),
+        (
+            crate::ArrayKey::String("basename".into()),
+            Value::String(base),
+        ),
     ];
     if let Some(extension) = extension {
-        entries.push((crate::ArrayKey::String("extension".into()), Value::String(extension)));
+        entries.push((
+            crate::ArrayKey::String("extension".into()),
+            Value::String(extension),
+        ));
     }
-    entries.push((crate::ArrayKey::String("filename".into()), Value::String(filename)));
+    entries.push((
+        crate::ArrayKey::String("filename".into()),
+        Value::String(filename),
+    ));
     Value::from_array_entries(entries)
 }
 
@@ -727,27 +966,50 @@ fn strip_tags(input: &str, allowed: &str) -> String {
     let mut part = allowed;
     while let Some(open) = part.find('<') {
         part = &part[open + 1..];
-        let Some(close) = part.find('>') else { break; };
-        let name = part[..close].trim().trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
-        if !name.is_empty() { allowed_names.push(name.to_ascii_lowercase()); }
+        let Some(close) = part.find('>') else {
+            break;
+        };
+        let name = part[..close]
+            .trim()
+            .trim_start_matches('/')
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .unwrap_or("");
+        if !name.is_empty() {
+            allowed_names.push(name.to_ascii_lowercase());
+        }
         part = &part[close + 1..];
     }
     let mut output = String::with_capacity(input.len());
     let mut cursor = 0;
     while cursor < input.len() {
-        let Some(relative) = input[cursor..].find('<') else { output.push_str(&input[cursor..]); break; };
+        let Some(relative) = input[cursor..].find('<') else {
+            output.push_str(&input[cursor..]);
+            break;
+        };
         let start = cursor + relative;
         output.push_str(&input[cursor..start]);
         if input[start..].starts_with("<!--") {
-            if let Some(end) = input[start + 4..].find("-->") { cursor = start + 4 + end + 3; continue; }
+            if let Some(end) = input[start + 4..].find("-->") {
+                cursor = start + 4 + end + 3;
+                continue;
+            }
         }
         if let Some(end) = input[start..].find('>') {
             let tag_end = start + end;
             let body = input[start + 1..tag_end].trim_start();
             let body = body.trim_start_matches('/').trim_start();
-            let name = body.split(|c: char| c.is_whitespace() || c == '/' || c == '>').next().unwrap_or("");
+            let name = body
+                .split(|c: char| c.is_whitespace() || c == '/' || c == '>')
+                .next()
+                .unwrap_or("");
             if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                if allowed_names.iter().any(|tag| tag.eq_ignore_ascii_case(name)) { output.push_str(&input[start..=tag_end]); }
+                if allowed_names
+                    .iter()
+                    .any(|tag| tag.eq_ignore_ascii_case(name))
+                {
+                    output.push_str(&input[start..=tag_end]);
+                }
                 cursor = tag_end + 1;
                 continue;
             }
@@ -770,27 +1032,43 @@ fn strip_cslashes(input: &str) -> String {
         }
         cursor += 1;
         match bytes[cursor] {
-            b'a' => output.push(0x07), b'b' => output.push(0x08), b'e' => output.push(0x1b),
-            b'f' => output.push(0x0c), b'n' => output.push(b'\n'), b'r' => output.push(b'\r'),
-            b't' => output.push(b'\t'), b'v' => output.push(0x0b), b'\\' => output.push(b'\\'),
-            b'\'' => output.push(b'\''), b'"' => output.push(b'"'), b'$' => output.push(b'$'),
+            b'a' => output.push(0x07),
+            b'b' => output.push(0x08),
+            b'e' => output.push(0x1b),
+            b'f' => output.push(0x0c),
+            b'n' => output.push(b'\n'),
+            b'r' => output.push(b'\r'),
+            b't' => output.push(b'\t'),
+            b'v' => output.push(0x0b),
+            b'\\' => output.push(b'\\'),
+            b'\'' => output.push(b'\''),
+            b'"' => output.push(b'"'),
+            b'$' => output.push(b'$'),
             b'x' | b'X' => {
                 cursor += 1;
                 let start = cursor;
                 let mut value = 0u8;
                 while cursor < bytes.len() && cursor - start < 2 {
-                    let Some(digit) = (bytes[cursor] as char).to_digit(16) else { break; };
+                    let Some(digit) = (bytes[cursor] as char).to_digit(16) else {
+                        break;
+                    };
                     value = value.wrapping_mul(16).wrapping_add(digit as u8);
                     cursor += 1;
                 }
-                if cursor == start { output.extend_from_slice(b"\\x"); }
-                else { output.push(value); }
+                if cursor == start {
+                    output.extend_from_slice(b"\\x");
+                } else {
+                    output.push(value);
+                }
                 continue;
             }
             b'0'..=b'7' => {
                 let start = cursor;
                 let mut value = 0u8;
-                while cursor < bytes.len() && cursor - start < 3 && (b'0'..=b'7').contains(&bytes[cursor]) {
+                while cursor < bytes.len()
+                    && cursor - start < 3
+                    && (b'0'..=b'7').contains(&bytes[cursor])
+                {
                     value = value.wrapping_mul(8).wrapping_add(bytes[cursor] - b'0');
                     cursor += 1;
                 }
@@ -805,32 +1083,53 @@ fn strip_cslashes(input: &str) -> String {
 }
 
 fn number_format(args: &[Value]) -> Result<Value, String> {
-    let number = args.first().ok_or("number_format() expects at least 1 argument")?.number();
-    if !number.is_finite() { return Err("number_format(): Number must be finite".into()); }
+    let number = args
+        .first()
+        .ok_or("number_format() expects at least 1 argument")?
+        .number();
+    if !number.is_finite() {
+        return Err("number_format(): Number must be finite".into());
+    }
     let decimals = args.get(1).map_or(0, |value| value.number() as i32);
-    if decimals.unsigned_abs() > 100 { return Err("number_format(): Number of decimals must be between -100 and 100".into()); }
+    if decimals.unsigned_abs() > 100 {
+        return Err("number_format(): Number of decimals must be between -100 and 100".into());
+    }
     let precision = decimals.max(0) as usize;
     let factor = 10_f64.powi(decimals.unsigned_abs() as i32);
-    let rounded = if decimals >= 0 { (number * factor).round() / factor } else { (number / factor).round() * factor };
+    let rounded = if decimals >= 0 {
+        (number * factor).round() / factor
+    } else {
+        (number / factor).round() * factor
+    };
     let negative = rounded.is_sign_negative() && rounded != 0.0;
     let formatted = format!("{:.*}", precision, rounded.abs());
     let (integer, fraction) = formatted.split_once('.').unwrap_or((&formatted, ""));
     let decimal_separator = args.get(2).map_or(".".to_string(), Value::show);
     let thousands_separator = args.get(3).map_or(",".to_string(), Value::show);
-    let mut grouped = String::with_capacity(integer.len() + integer.len() / 3 * thousands_separator.len());
+    let mut grouped =
+        String::with_capacity(integer.len() + integer.len() / 3 * thousands_separator.len());
     for (index, character) in integer.chars().enumerate() {
-        if index > 0 && (integer.len() - index).is_multiple_of(3) { grouped.push_str(&thousands_separator); }
+        if index > 0 && (integer.len() - index).is_multiple_of(3) {
+            grouped.push_str(&thousands_separator);
+        }
         grouped.push(character);
     }
     let mut result = String::new();
-    if negative { result.push('-'); }
+    if negative {
+        result.push('-');
+    }
     result.push_str(&grouped);
-    if precision > 0 { result.push_str(&decimal_separator); result.push_str(fraction); }
+    if precision > 0 {
+        result.push_str(&decimal_separator);
+        result.push_str(fraction);
+    }
     Ok(Value::String(result))
 }
 
 fn increment_string(input: &str) -> Result<String, String> {
-    if input.is_empty() { return Err("ValueError:str_increment(): Argument #1 ($string) must not be empty".into()); }
+    if input.is_empty() {
+        return Err("ValueError:str_increment(): Argument #1 ($string) must not be empty".into());
+    }
     if !input.is_ascii() || !input.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return Err("ValueError:str_increment(): Argument #1 ($string) must be an alphanumeric ASCII string".into());
     }
@@ -838,16 +1137,23 @@ fn increment_string(input: &str) -> Result<String, String> {
 }
 
 fn decrement_string(input: &str) -> Result<String, String> {
-    if input.is_empty() { return Err("ValueError:str_decrement(): Argument #1 ($string) must not be empty".into()); }
+    if input.is_empty() {
+        return Err("ValueError:str_decrement(): Argument #1 ($string) must not be empty".into());
+    }
     if !input.is_ascii() || !input.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return Err("ValueError:str_decrement(): Argument #1 ($string) must be an alphanumeric ASCII string".into());
     }
     let mut bytes = input.as_bytes().to_vec();
     let mut carry = true;
     for byte in bytes.iter_mut().rev() {
-        if !carry { break; }
+        if !carry {
+            break;
+        }
         match *byte {
-            b'1'..=b'9' | b'b'..=b'z' | b'B'..=b'Z' => { *byte -= 1; carry = false; }
+            b'1'..=b'9' | b'b'..=b'z' | b'B'..=b'Z' => {
+                *byte -= 1;
+                carry = false;
+            }
             b'0' => *byte = b'9',
             b'a' => *byte = b'z',
             b'A' => *byte = b'Z',
@@ -858,7 +1164,9 @@ fn decrement_string(input: &str) -> Result<String, String> {
         if bytes.iter().all(|byte| *byte == b'0') {
             return Err("ValueError:str_decrement(): String cannot be decremented".into());
         }
-        if bytes.len() == 1 { return Err("ValueError:str_decrement(): String cannot be decremented".into()); }
+        if bytes.len() == 1 {
+            return Err("ValueError:str_decrement(): String cannot be decremented".into());
+        }
         bytes.remove(0);
     }
     Ok(String::from_utf8(bytes).expect("ASCII string remains valid UTF-8"))
@@ -866,56 +1174,107 @@ fn decrement_string(input: &str) -> Result<String, String> {
 
 fn span(args: &[Value], invert: bool) -> Result<Value, String> {
     let name = if invert { "strcspn" } else { "strspn" };
-    if !(2..=4).contains(&args.len()) { return Err(format!("{name}() expects between 2 and 4 arguments")); }
+    if !(2..=4).contains(&args.len()) {
+        return Err(format!("{name}() expects between 2 and 4 arguments"));
+    }
     let string = args[0].show();
     let characters = args[1].show();
     let bytes = string.as_bytes();
     let raw_offset = args.get(2).map(|value| value.number() as i64).unwrap_or(0);
-    let start = if raw_offset < 0 { ((bytes.len() as i64).saturating_add(raw_offset)).max(0) as usize } else { raw_offset as usize }.min(bytes.len());
-    let end = match args.get(3).filter(|value| !matches!(value, Value::Null)).map(|value| value.number() as i64) {
+    let start = if raw_offset < 0 {
+        ((bytes.len() as i64).saturating_add(raw_offset)).max(0) as usize
+    } else {
+        raw_offset as usize
+    }
+    .min(bytes.len());
+    let end = match args
+        .get(3)
+        .filter(|value| !matches!(value, Value::Null))
+        .map(|value| value.number() as i64)
+    {
         None => bytes.len(),
         Some(length) if length >= 0 => start.saturating_add(length as usize).min(bytes.len()),
         Some(length) => ((bytes.len() as i64).saturating_add(length)).max(start as i64) as usize,
     };
-    let count = bytes[start..end].iter().take_while(|byte| {
-        charlist_contains(**byte as char, &characters) != invert
-    }).count();
+    let count = bytes[start..end]
+        .iter()
+        .take_while(|byte| charlist_contains(**byte as char, &characters) != invert)
+        .count();
     Ok(Value::Integer(count as i64))
 }
 
 fn word_count(args: &[Value]) -> Result<Value, String> {
-    if !(1..=3).contains(&args.len()) { return Err("str_word_count() expects between 1 and 3 arguments".into()); }
+    if !(1..=3).contains(&args.len()) {
+        return Err("str_word_count() expects between 1 and 3 arguments".into());
+    }
     let string = args[0].show();
     let format = args.get(1).map(|value| value.number() as i64).unwrap_or(0);
-    if !(0..=2).contains(&format) { return Err("str_word_count(): Argument #2 ($format) must be 0, 1, or 2".into()); }
+    if !(0..=2).contains(&format) {
+        return Err("str_word_count(): Argument #2 ($format) must be 0, 1, or 2".into());
+    }
     let extra = args.get(2).map(Value::show).unwrap_or_default();
     let chars: Vec<(usize, char)> = string.char_indices().collect();
-    let is_word = |character: char| character.is_alphabetic() || charlist_contains(character, &extra);
+    let is_word =
+        |character: char| character.is_alphabetic() || charlist_contains(character, &extra);
     let mut words = Vec::new();
     let mut index = 0;
     while index < chars.len() {
-        if !is_word(chars[index].1) { index += 1; continue; }
+        if !is_word(chars[index].1) {
+            index += 1;
+            continue;
+        }
         let start = index;
         index += 1;
         while index < chars.len() {
-            if is_word(chars[index].1) { index += 1; continue; }
-            if matches!(chars[index].1, '\'' | '’') && index + 1 < chars.len() && is_word(chars[index + 1].1) { index += 1; continue; }
+            if is_word(chars[index].1) {
+                index += 1;
+                continue;
+            }
+            if matches!(chars[index].1, '\'' | '’')
+                && index + 1 < chars.len()
+                && is_word(chars[index + 1].1)
+            {
+                index += 1;
+                continue;
+            }
             break;
         }
         let byte_start = chars[start].0;
-        let byte_end = if index < chars.len() { chars[index].0 } else { string.len() };
+        let byte_end = if index < chars.len() {
+            chars[index].0
+        } else {
+            string.len()
+        };
         words.push((byte_start, string[byte_start..byte_end].to_owned()));
     }
     match format {
         0 => Ok(Value::Integer(words.len() as i64)),
-        1 => Ok(Value::from_array_entries(words.into_iter().enumerate().map(|(i, (_, word))| (crate::ArrayKey::Integer(i as i64), Value::String(word))).collect())),
-        _ => Ok(Value::from_array_entries(words.into_iter().map(|(position, word)| (crate::ArrayKey::Integer(position as i64), Value::String(word))).collect())),
+        1 => Ok(Value::from_array_entries(
+            words
+                .into_iter()
+                .enumerate()
+                .map(|(i, (_, word))| (crate::ArrayKey::Integer(i as i64), Value::String(word)))
+                .collect(),
+        )),
+        _ => Ok(Value::from_array_entries(
+            words
+                .into_iter()
+                .map(|(position, word)| {
+                    (
+                        crate::ArrayKey::Integer(position as i64),
+                        Value::String(word),
+                    )
+                })
+                .collect(),
+        )),
     }
 }
 
 /// Execute one of the string builtins implemented by this runtime.
 fn parse_csv(input: &str, separator: u8, enclosure: u8, escape: Option<u8>) -> Vec<Value> {
-    if input.is_empty() { return vec![Value::Null]; }
+    if input.is_empty() {
+        return vec![Value::Null];
+    }
     let bytes = input.as_bytes();
     let mut fields = Vec::new();
     let mut field = Vec::new();
@@ -962,56 +1321,106 @@ fn parse_csv(input: &str, separator: u8, enclosure: u8, escape: Option<u8>) -> V
 /// Execute one of the string builtins implemented by this runtime.
 fn substr_compare(arguments: &[Value]) -> Result<Value, String> {
     if arguments.len() < 3 || arguments.len() > 5 {
-        return Err(format!("substr_compare() expects between 3 and 5 arguments, {} given", arguments.len()));
+        return Err(format!(
+            "substr_compare() expects between 3 and 5 arguments, {} given",
+            arguments.len()
+        ));
     }
     let haystack = arguments[0].show().into_bytes();
     let needle = arguments[1].show().into_bytes();
     let offset = arguments[2].number() as i64;
-    let length = arguments.get(3).filter(|value| !matches!(value.dereference(), Value::Null)).map(|value| value.number() as i64);
+    let length = arguments
+        .get(3)
+        .filter(|value| !matches!(value.dereference(), Value::Null))
+        .map(|value| value.number() as i64);
     let insensitive = arguments.get(4).is_some_and(Value::truthy);
     if length.is_some_and(|length| length < 0) {
-        return Err("ValueError:substr_compare(): Argument #4 ($length) must be greater than or equal to 0".into());
+        return Err(
+            "ValueError:substr_compare(): Argument #4 ($length) must be greater than or equal to 0"
+                .into(),
+        );
     }
     let haystack_len = i64::try_from(haystack.len()).unwrap_or(i64::MAX);
-    let normalized = if offset < 0 { haystack_len.saturating_add(offset) } else { offset };
+    let normalized = if offset < 0 {
+        haystack_len.saturating_add(offset)
+    } else {
+        offset
+    };
     if normalized < 0 || (normalized > haystack_len && length != Some(0)) {
-        return Err("ValueError:substr_compare(): Argument #3 ($offset) must be contained within string".into());
+        return Err(
+            "ValueError:substr_compare(): Argument #3 ($offset) must be contained within string"
+                .into(),
+        );
     }
     let start = normalized.clamp(0, haystack_len) as usize;
     let remaining = haystack.len().saturating_sub(start);
-    let compare_len = length.map(|length| usize::try_from(length).unwrap_or(usize::MAX))
+    let compare_len = length
+        .map(|length| usize::try_from(length).unwrap_or(usize::MAX))
         .unwrap_or_else(|| remaining.max(needle.len()));
     let left = &haystack[start..haystack.len().min(start.saturating_add(compare_len))];
     let right = &needle[..needle.len().min(compare_len)];
     let ordering = if insensitive {
-        left.iter().map(u8::to_ascii_lowercase).cmp(right.iter().map(u8::to_ascii_lowercase))
+        left.iter()
+            .map(u8::to_ascii_lowercase)
+            .cmp(right.iter().map(u8::to_ascii_lowercase))
     } else {
         left.cmp(right)
     };
-    Ok(Value::Integer(match ordering { std::cmp::Ordering::Less => -1, std::cmp::Ordering::Equal => 0, std::cmp::Ordering::Greater => 1 }))
+    Ok(Value::Integer(match ordering {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }))
 }
 
 fn levenshtein(arguments: &[Value]) -> Result<Value, String> {
     if arguments.len() < 2 || arguments.len() > 5 {
-        return Err(format!("levenshtein() expects between 2 and 5 arguments, {} given", arguments.len()));
+        return Err(format!(
+            "levenshtein() expects between 2 and 5 arguments, {} given",
+            arguments.len()
+        ));
     }
     let mut first = arguments[0].show().into_bytes();
     let mut second = arguments[1].show().into_bytes();
-    let insertion = arguments.get(2).map(|value| value.number() as i64).unwrap_or(1);
-    let replacement = arguments.get(3).map(|value| value.number() as i64).unwrap_or(1);
-    let deletion = arguments.get(4).map(|value| value.number() as i64).unwrap_or(1);
-    if first.is_empty() { return Ok(Value::Integer((second.len() as i64).saturating_mul(insertion))); }
-    if second.is_empty() { return Ok(Value::Integer((first.len() as i64).saturating_mul(deletion))); }
+    let insertion = arguments
+        .get(2)
+        .map(|value| value.number() as i64)
+        .unwrap_or(1);
+    let replacement = arguments
+        .get(3)
+        .map(|value| value.number() as i64)
+        .unwrap_or(1);
+    let deletion = arguments
+        .get(4)
+        .map(|value| value.number() as i64)
+        .unwrap_or(1);
+    if first.is_empty() {
+        return Ok(Value::Integer(
+            (second.len() as i64).saturating_mul(insertion),
+        ));
+    }
+    if second.is_empty() {
+        return Ok(Value::Integer(
+            (first.len() as i64).saturating_mul(deletion),
+        ));
+    }
     if first.len() < second.len() && insertion == replacement && replacement == deletion {
         std::mem::swap(&mut first, &mut second);
     }
-    let mut previous = (0..=second.len()).map(|index| (index as i64).saturating_mul(insertion)).collect::<Vec<_>>();
+    let mut previous = (0..=second.len())
+        .map(|index| (index as i64).saturating_mul(insertion))
+        .collect::<Vec<_>>();
     let mut current = vec![0i64; second.len() + 1];
     for first_byte in &first {
         current[0] = previous[0].saturating_add(deletion);
         for (second_index, second_byte) in second.iter().enumerate() {
-            let replace_cost = if first_byte == second_byte { 0 } else { replacement };
-            current[second_index + 1] = previous[second_index].saturating_add(replace_cost)
+            let replace_cost = if first_byte == second_byte {
+                0
+            } else {
+                replacement
+            };
+            current[second_index + 1] = previous[second_index]
+                .saturating_add(replace_cost)
                 .min(previous[second_index + 1].saturating_add(deletion))
                 .min(current[second_index].saturating_add(insertion));
         }
@@ -1040,27 +1449,42 @@ fn similar_text_recursive(first: &[u8], second: &[u8]) -> usize {
             }
         }
     }
-    if longest == 0 { return 0; }
+    if longest == 0 {
+        return 0;
+    }
     longest
         + similar_text_recursive(&first[..first_start], &second[..second_start])
-        + similar_text_recursive(&first[first_start + longest..], &second[second_start + longest..])
+        + similar_text_recursive(
+            &first[first_start + longest..],
+            &second[second_start + longest..],
+        )
 }
 
 pub(crate) fn similar_text_with_percent(arguments: &[Value]) -> Result<(Value, f64), String> {
     if arguments.len() < 2 || arguments.len() > 3 {
-        return Err(format!("similar_text() expects 2 or 3 arguments, {} given", arguments.len()));
+        return Err(format!(
+            "similar_text() expects 2 or 3 arguments, {} given",
+            arguments.len()
+        ));
     }
     let first = arguments[0].show();
     let second = arguments[1].show();
     let matches = similar_text_recursive(first.as_bytes(), second.as_bytes());
     let total_length = first.len() + second.len();
-    let percent = if total_length == 0 { 0.0 } else { matches as f64 * 200.0 / total_length as f64 };
+    let percent = if total_length == 0 {
+        0.0
+    } else {
+        matches as f64 * 200.0 / total_length as f64
+    };
     Ok((Value::Integer(matches as i64), percent))
 }
 
 fn md5(arguments: &[Value]) -> Result<Value, String> {
     if arguments.is_empty() || arguments.len() > 2 {
-        return Err(format!("md5() expects exactly 1 argument, {} given", arguments.len()));
+        return Err(format!(
+            "md5() expects exactly 1 argument, {} given",
+            arguments.len()
+        ));
     }
     let raw_output = arguments.get(1).is_some_and(Value::truthy);
     let input = arguments[0].show();
@@ -1077,13 +1501,14 @@ pub(crate) fn md5_digest(input: &[u8]) -> Vec<u8> {
     let mut bytes = input.to_vec();
     let bit_length = (bytes.len() as u64).wrapping_mul(8);
     bytes.push(0x80);
-    while bytes.len() % 64 != 56 { bytes.push(0); }
+    while bytes.len() % 64 != 56 {
+        bytes.push(0);
+    }
     bytes.extend_from_slice(&bit_length.to_le_bytes());
     let shifts: [u32; 64] = [
-        7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
-        5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
-        4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
-        6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21,
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
     let mut state = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476];
     for block in bytes.chunks_exact(64) {
@@ -1100,21 +1525,35 @@ pub(crate) fn md5_digest(input: &[u8]) -> Vec<u8> {
                 _ => (c ^ (b | !d), (7 * index) % 16),
             };
             let constant = ((1u64 << 32) as f64 * ((index + 1) as f64).sin().abs()).floor() as u32;
-            let next = b.wrapping_add(a.wrapping_add(f).wrapping_add(constant).wrapping_add(words[g]).rotate_left(shifts[index]));
-            a = d; d = c; c = b; b = next;
+            let next = b.wrapping_add(
+                a.wrapping_add(f)
+                    .wrapping_add(constant)
+                    .wrapping_add(words[g])
+                    .rotate_left(shifts[index]),
+            );
+            a = d;
+            d = c;
+            c = b;
+            b = next;
         }
         state[0] = state[0].wrapping_add(a);
         state[1] = state[1].wrapping_add(b);
         state[2] = state[2].wrapping_add(c);
         state[3] = state[3].wrapping_add(d);
     }
-    let digest = state.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>();
+    let digest = state
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect::<Vec<_>>();
     digest
 }
 
 fn sha1(arguments: &[Value]) -> Result<Value, String> {
     if arguments.is_empty() || arguments.len() > 2 {
-        return Err(format!("sha1() expects 1 or 2 arguments, {} given", arguments.len()));
+        return Err(format!(
+            "sha1() expects 1 or 2 arguments, {} given",
+            arguments.len()
+        ));
     }
     let raw_output = arguments.get(1).is_some_and(Value::truthy);
     let input = arguments[0].show();
@@ -1131,15 +1570,27 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
     let mut bytes = input.to_vec();
     let bit_length = (bytes.len() as u64).wrapping_mul(8);
     bytes.push(0x80);
-    while bytes.len() % 64 != 56 { bytes.push(0); }
+    while bytes.len() % 64 != 56 {
+        bytes.push(0);
+    }
     bytes.extend_from_slice(&bit_length.to_be_bytes());
-    let mut state = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+    let mut state = [
+        0x67452301u32,
+        0xefcdab89,
+        0x98badcfe,
+        0x10325476,
+        0xc3d2e1f0,
+    ];
     for block in bytes.chunks_exact(64) {
         let mut words = [0u32; 80];
         for (index, word) in words.iter_mut().take(16).enumerate() {
             *word = u32::from_be_bytes(block[index * 4..index * 4 + 4].try_into().unwrap());
         }
-        for index in 16..80 { words[index] = (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16]).rotate_left(1); }
+        for index in 16..80 {
+            words[index] =
+                (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16])
+                    .rotate_left(1);
+        }
         let [mut a, mut b, mut c, mut d, mut e] = state;
         for (index, word) in words.into_iter().enumerate() {
             let (function, constant) = match index {
@@ -1148,8 +1599,17 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
                 40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
                 _ => (b ^ c ^ d, 0xca62c1d6),
             };
-            let next = a.rotate_left(5).wrapping_add(function).wrapping_add(e).wrapping_add(constant).wrapping_add(word);
-            e = d; d = c; c = b.rotate_left(30); b = a; a = next;
+            let next = a
+                .rotate_left(5)
+                .wrapping_add(function)
+                .wrapping_add(e)
+                .wrapping_add(constant)
+                .wrapping_add(word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = next;
         }
         state[0] = state[0].wrapping_add(a);
         state[1] = state[1].wrapping_add(b);
@@ -1157,35 +1617,54 @@ pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
         state[3] = state[3].wrapping_add(d);
         state[4] = state[4].wrapping_add(e);
     }
-    let digest = state.iter().flat_map(|word| word.to_be_bytes()).collect::<Vec<_>>();
+    let digest = state
+        .iter()
+        .flat_map(|word| word.to_be_bytes())
+        .collect::<Vec<_>>();
     digest
 }
 
 pub(crate) fn sha256_digest(input: &[u8]) -> Vec<u8> {
-    sha256_digest_with_state(input, [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19])
+    sha256_digest_with_state(
+        input,
+        [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+            0x5be0cd19,
+        ],
+    )
 }
 
 pub(crate) fn sha224_digest(input: &[u8]) -> Vec<u8> {
-    let mut digest = sha256_digest_with_state(input, [0xc1059ed8,0x367cd507,0x3070dd17,0xf70e5939,0xffc00b31,0x68581511,0x64f98fa7,0xbefa4fa4]);
+    let mut digest = sha256_digest_with_state(
+        input,
+        [
+            0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7,
+            0xbefa4fa4,
+        ],
+    );
     digest.truncate(28);
     digest
 }
 
 fn sha256_digest_with_state(input: &[u8], mut state: [u32; 8]) -> Vec<u8> {
     const K: [u32; 64] = [
-        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
     let mut bytes = input.to_vec();
     let bit_length = (bytes.len() as u64).wrapping_mul(8);
     bytes.push(0x80);
-    while bytes.len() % 64 != 56 { bytes.push(0); }
+    while bytes.len() % 64 != 56 {
+        bytes.push(0);
+    }
     bytes.extend_from_slice(&bit_length.to_be_bytes());
     for block in bytes.chunks_exact(64) {
         let mut words = [0u32; 64];
@@ -1197,53 +1676,124 @@ fn sha256_digest_with_state(input: &[u8], mut state: [u32; 8]) -> Vec<u8> {
             let y = words[index - 2];
             let sigma0 = x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3);
             let sigma1 = y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10);
-            words[index] = words[index - 16].wrapping_add(sigma0).wrapping_add(words[index - 7]).wrapping_add(sigma1);
+            words[index] = words[index - 16]
+                .wrapping_add(sigma0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(sigma1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
         for index in 0..64 {
             let sum1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let choice = (e & f) ^ (!e & g);
-            let temp1 = h.wrapping_add(sum1).wrapping_add(choice).wrapping_add(K[index]).wrapping_add(words[index]);
+            let temp1 = h
+                .wrapping_add(sum1)
+                .wrapping_add(choice)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
             let sum0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let majority = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = sum0.wrapping_add(majority);
-            h = g; g = f; f = e; e = d.wrapping_add(temp1); d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
         }
-        for (slot, value) in state.iter_mut().zip([a,b,c,d,e,f,g,h]) { *slot = slot.wrapping_add(value); }
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
     }
     state.iter().flat_map(|word| word.to_be_bytes()).collect()
 }
 
 pub(crate) fn sha512_digest(input: &[u8]) -> Vec<u8> {
-    sha512_digest_with_state(input, [0x6a09e667f3bcc908,0xbb67ae8584caa73b,0x3c6ef372fe94f82b,0xa54ff53a5f1d36f1,0x510e527fade682d1,0x9b05688c2b3e6c1f,0x1f83d9abfb41bd6b,0x5be0cd19137e2179])
+    sha512_digest_with_state(
+        input,
+        [
+            0x6a09e667f3bcc908,
+            0xbb67ae8584caa73b,
+            0x3c6ef372fe94f82b,
+            0xa54ff53a5f1d36f1,
+            0x510e527fade682d1,
+            0x9b05688c2b3e6c1f,
+            0x1f83d9abfb41bd6b,
+            0x5be0cd19137e2179,
+        ],
+    )
 }
 
 pub(crate) fn sha384_digest(input: &[u8]) -> Vec<u8> {
-    let mut digest = sha512_digest_with_state(input, [0xcbbb9d5dc1059ed8,0x629a292a367cd507,0x9159015a3070dd17,0x152fecd8f70e5939,0x67332667ffc00b31,0x8eb44a8768581511,0xdb0c2e0d64f98fa7,0x47b5481dbefa4fa4]);
+    let mut digest = sha512_digest_with_state(
+        input,
+        [
+            0xcbbb9d5dc1059ed8,
+            0x629a292a367cd507,
+            0x9159015a3070dd17,
+            0x152fecd8f70e5939,
+            0x67332667ffc00b31,
+            0x8eb44a8768581511,
+            0xdb0c2e0d64f98fa7,
+            0x47b5481dbefa4fa4,
+        ],
+    );
     digest.truncate(48);
     digest
 }
 
-pub(crate) fn sha3_224_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 28) }
-pub(crate) fn sha3_256_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 32) }
-pub(crate) fn sha3_384_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 48) }
-pub(crate) fn sha3_512_digest(input: &[u8]) -> Vec<u8> { sha3_digest(input, 64) }
+pub(crate) fn sha3_224_digest(input: &[u8]) -> Vec<u8> {
+    sha3_digest(input, 28)
+}
+pub(crate) fn sha3_256_digest(input: &[u8]) -> Vec<u8> {
+    sha3_digest(input, 32)
+}
+pub(crate) fn sha3_384_digest(input: &[u8]) -> Vec<u8> {
+    sha3_digest(input, 48)
+}
+pub(crate) fn sha3_512_digest(input: &[u8]) -> Vec<u8> {
+    sha3_digest(input, 64)
+}
 
 fn sha3_digest(input: &[u8], output_length: usize) -> Vec<u8> {
     const ROUND_CONSTANTS: [u64; 24] = [
-        0x0000000000000001,0x0000000000008082,0x800000000000808a,0x8000000080008000,
-        0x000000000000808b,0x0000000080000001,0x8000000080008081,0x8000000000008009,
-        0x000000000000008a,0x0000000000000088,0x0000000080008009,0x000000008000000a,
-        0x000000008000808b,0x800000000000008b,0x8000000000008089,0x8000000000008003,
-        0x8000000000008002,0x8000000000000080,0x000000000000800a,0x800000008000000a,
-        0x8000000080008081,0x8000000000008080,0x0000000080000001,0x8000000080008008,
+        0x0000000000000001,
+        0x0000000000008082,
+        0x800000000000808a,
+        0x8000000080008000,
+        0x000000000000808b,
+        0x0000000080000001,
+        0x8000000080008081,
+        0x8000000000008009,
+        0x000000000000008a,
+        0x0000000000000088,
+        0x0000000080008009,
+        0x000000008000000a,
+        0x000000008000808b,
+        0x800000000000008b,
+        0x8000000000008089,
+        0x8000000000008003,
+        0x8000000000008002,
+        0x8000000000000080,
+        0x000000000000800a,
+        0x800000008000000a,
+        0x8000000080008081,
+        0x8000000000008080,
+        0x0000000080000001,
+        0x8000000080008008,
     ];
-    const ROTATION: [u32; 25] = [0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14];
+    const ROTATION: [u32; 25] = [
+        0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56,
+        14,
+    ];
     let rate = 200 - 2 * output_length;
     let mut state = [0u64; 25];
     let mut padded = input.to_vec();
     padded.push(0x06);
-    while padded.len() % rate != rate - 1 { padded.push(0); }
+    while padded.len() % rate != rate - 1 {
+        padded.push(0);
+    }
     padded.push(0x80);
     for block in padded.chunks_exact(rate) {
         for (index, bytes) in block.chunks_exact(8).enumerate() {
@@ -1251,55 +1801,127 @@ fn sha3_digest(input: &[u8], output_length: usize) -> Vec<u8> {
         }
         for round_constant in ROUND_CONSTANTS {
             let mut column = [0u64; 5];
-            for x in 0..5 { column[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20]; }
+            for x in 0..5 {
+                column[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+            }
             for x in 0..5 {
                 let delta = column[(x + 4) % 5] ^ column[(x + 1) % 5].rotate_left(1);
-                for y in 0..5 { state[x + 5 * y] ^= delta; }
+                for y in 0..5 {
+                    state[x + 5 * y] ^= delta;
+                }
             }
             let mut moved = [0u64; 25];
             for x in 0..5 {
                 for y in 0..5 {
-                    moved[y + 5 * ((2 * x + 3 * y) % 5)] = state[x + 5 * y].rotate_left(ROTATION[x + 5 * y]);
+                    moved[y + 5 * ((2 * x + 3 * y) % 5)] =
+                        state[x + 5 * y].rotate_left(ROTATION[x + 5 * y]);
                 }
             }
             for x in 0..5 {
                 for y in 0..5 {
-                    state[x + 5 * y] = moved[x + 5 * y] ^ ((!moved[(x + 1) % 5 + 5 * y]) & moved[(x + 2) % 5 + 5 * y]);
+                    state[x + 5 * y] = moved[x + 5 * y]
+                        ^ ((!moved[(x + 1) % 5 + 5 * y]) & moved[(x + 2) % 5 + 5 * y]);
                 }
             }
             state[0] ^= round_constant;
         }
     }
-    state.iter().flat_map(|lane| lane.to_le_bytes()).take(output_length).collect()
+    state
+        .iter()
+        .flat_map(|lane| lane.to_le_bytes())
+        .take(output_length)
+        .collect()
 }
 
 fn sha512_digest_with_state(input: &[u8], mut state: [u64; 8]) -> Vec<u8> {
     const K: [u64; 80] = [
-        0x428a2f98d728ae22,0x7137449123ef65cd,0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc,
-        0x3956c25bf348b538,0x59f111f1b605d019,0x923f82a4af194f9b,0xab1c5ed5da6d8118,
-        0xd807aa98a3030242,0x12835b0145706fbe,0x243185be4ee4b28c,0x550c7dc3d5ffb4e2,
-        0x72be5d74f27b896f,0x80deb1fe3b1696b1,0x9bdc06a725c71235,0xc19bf174cf692694,
-        0xe49b69c19ef14ad2,0xefbe4786384f25e3,0x0fc19dc68b8cd5b5,0x240ca1cc77ac9c65,
-        0x2de92c6f592b0275,0x4a7484aa6ea6e483,0x5cb0a9dcbd41fbd4,0x76f988da831153b5,
-        0x983e5152ee66dfab,0xa831c66d2db43210,0xb00327c898fb213f,0xbf597fc7beef0ee4,
-        0xc6e00bf33da88fc2,0xd5a79147930aa725,0x06ca6351e003826f,0x142929670a0e6e70,
-        0x27b70a8546d22ffc,0x2e1b21385c26c926,0x4d2c6dfc5ac42aed,0x53380d139d95b3df,
-        0x650a73548baf63de,0x766a0abb3c77b2a8,0x81c2c92e47edaee6,0x92722c851482353b,
-        0xa2bfe8a14cf10364,0xa81a664bbc423001,0xc24b8b70d0f89791,0xc76c51a30654be30,
-        0xd192e819d6ef5218,0xd69906245565a910,0xf40e35855771202a,0x106aa07032bbd1b8,
-        0x19a4c116b8d2d0c8,0x1e376c085141ab53,0x2748774cdf8eeb99,0x34b0bcb5e19b48a8,
-        0x391c0cb3c5c95a63,0x4ed8aa4ae3418acb,0x5b9cca4f7763e373,0x682e6ff3d6b2b8a3,
-        0x748f82ee5defb2fc,0x78a5636f43172f60,0x84c87814a1f0ab72,0x8cc702081a6439ec,
-        0x90befffa23631e28,0xa4506cebde82bde9,0xbef9a3f7b2c67915,0xc67178f2e372532b,
-        0xca273eceea26619c,0xd186b8c721c0c207,0xeada7dd6cde0eb1e,0xf57d4f7fee6ed178,
-        0x06f067aa72176fba,0x0a637dc5a2c898a6,0x113f9804bef90dae,0x1b710b35131c471b,
-        0x28db77f523047d84,0x32caab7b40c72493,0x3c9ebe0a15c9bebc,0x431d67c49c100d4c,
-        0x4cc5d4becb3e42b6,0x597f299cfc657e2a,0x5fcb6fab3ad6faec,0x6c44198c4a475817,
+        0x428a2f98d728ae22,
+        0x7137449123ef65cd,
+        0xb5c0fbcfec4d3b2f,
+        0xe9b5dba58189dbbc,
+        0x3956c25bf348b538,
+        0x59f111f1b605d019,
+        0x923f82a4af194f9b,
+        0xab1c5ed5da6d8118,
+        0xd807aa98a3030242,
+        0x12835b0145706fbe,
+        0x243185be4ee4b28c,
+        0x550c7dc3d5ffb4e2,
+        0x72be5d74f27b896f,
+        0x80deb1fe3b1696b1,
+        0x9bdc06a725c71235,
+        0xc19bf174cf692694,
+        0xe49b69c19ef14ad2,
+        0xefbe4786384f25e3,
+        0x0fc19dc68b8cd5b5,
+        0x240ca1cc77ac9c65,
+        0x2de92c6f592b0275,
+        0x4a7484aa6ea6e483,
+        0x5cb0a9dcbd41fbd4,
+        0x76f988da831153b5,
+        0x983e5152ee66dfab,
+        0xa831c66d2db43210,
+        0xb00327c898fb213f,
+        0xbf597fc7beef0ee4,
+        0xc6e00bf33da88fc2,
+        0xd5a79147930aa725,
+        0x06ca6351e003826f,
+        0x142929670a0e6e70,
+        0x27b70a8546d22ffc,
+        0x2e1b21385c26c926,
+        0x4d2c6dfc5ac42aed,
+        0x53380d139d95b3df,
+        0x650a73548baf63de,
+        0x766a0abb3c77b2a8,
+        0x81c2c92e47edaee6,
+        0x92722c851482353b,
+        0xa2bfe8a14cf10364,
+        0xa81a664bbc423001,
+        0xc24b8b70d0f89791,
+        0xc76c51a30654be30,
+        0xd192e819d6ef5218,
+        0xd69906245565a910,
+        0xf40e35855771202a,
+        0x106aa07032bbd1b8,
+        0x19a4c116b8d2d0c8,
+        0x1e376c085141ab53,
+        0x2748774cdf8eeb99,
+        0x34b0bcb5e19b48a8,
+        0x391c0cb3c5c95a63,
+        0x4ed8aa4ae3418acb,
+        0x5b9cca4f7763e373,
+        0x682e6ff3d6b2b8a3,
+        0x748f82ee5defb2fc,
+        0x78a5636f43172f60,
+        0x84c87814a1f0ab72,
+        0x8cc702081a6439ec,
+        0x90befffa23631e28,
+        0xa4506cebde82bde9,
+        0xbef9a3f7b2c67915,
+        0xc67178f2e372532b,
+        0xca273eceea26619c,
+        0xd186b8c721c0c207,
+        0xeada7dd6cde0eb1e,
+        0xf57d4f7fee6ed178,
+        0x06f067aa72176fba,
+        0x0a637dc5a2c898a6,
+        0x113f9804bef90dae,
+        0x1b710b35131c471b,
+        0x28db77f523047d84,
+        0x32caab7b40c72493,
+        0x3c9ebe0a15c9bebc,
+        0x431d67c49c100d4c,
+        0x4cc5d4becb3e42b6,
+        0x597f299cfc657e2a,
+        0x5fcb6fab3ad6faec,
+        0x6c44198c4a475817,
     ];
     let mut bytes = input.to_vec();
     let bit_length = (bytes.len() as u128).wrapping_mul(8);
     bytes.push(0x80);
-    while bytes.len() % 128 != 112 { bytes.push(0); }
+    while bytes.len() % 128 != 112 {
+        bytes.push(0);
+    }
     bytes.extend_from_slice(&bit_length.to_be_bytes());
     for block in bytes.chunks_exact(128) {
         let mut words = [0u64; 80];
@@ -1311,19 +1933,35 @@ fn sha512_digest_with_state(input: &[u8], mut state: [u64; 8]) -> Vec<u8> {
             let y = words[index - 2];
             let sigma0 = x.rotate_right(1) ^ x.rotate_right(8) ^ (x >> 7);
             let sigma1 = y.rotate_right(19) ^ y.rotate_right(61) ^ (y >> 6);
-            words[index] = words[index - 16].wrapping_add(sigma0).wrapping_add(words[index - 7]).wrapping_add(sigma1);
+            words[index] = words[index - 16]
+                .wrapping_add(sigma0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(sigma1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
         for index in 0..80 {
             let sum1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
             let choice = (e & f) ^ (!e & g);
-            let temp1 = h.wrapping_add(sum1).wrapping_add(choice).wrapping_add(K[index]).wrapping_add(words[index]);
+            let temp1 = h
+                .wrapping_add(sum1)
+                .wrapping_add(choice)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
             let sum0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
             let majority = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = sum0.wrapping_add(majority);
-            h = g; g = f; f = e; e = d.wrapping_add(temp1); d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
         }
-        for (slot, value) in state.iter_mut().zip([a,b,c,d,e,f,g,h]) { *slot = slot.wrapping_add(value); }
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
     }
     state.iter().flat_map(|word| word.to_be_bytes()).collect()
 }
@@ -1334,33 +1972,77 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
 
     if function == "hash" {
         if arguments.len() < 2 || arguments.len() > 3 {
-            return Err(format!("ArgumentCountError:hash() expects 2 or 3 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash() expects 2 or 3 arguments, {} given",
+                arguments.len()
+            ));
         }
         let algorithm = arguments[0].show().to_ascii_lowercase();
         let data = arguments[1].show();
         let binary = arguments.get(2).is_some_and(Value::truthy);
         let digest = hash_digest(&algorithm, data.as_bytes()).ok_or_else(|| format!("ValueError:hash(): Argument #1 ($algo) must be a valid hashing algorithm, {algorithm} given"))?;
-        let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        let output = if binary {
+            String::from_utf8_lossy(&digest).into_owned()
+        } else {
+            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        };
         return Ok(Value::String(output));
     }
 
     if function == "hash_algos" {
         if !arguments.is_empty() {
-            return Err(format!("ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_algos() expects exactly 0 arguments, {} given",
+                arguments.len()
+            ));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384", "sha3-512", "crc32b"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(
+            [
+                "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256",
+                "sha3-384", "sha3-512", "crc32b",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, algo)| {
+                (
+                    crate::ArrayKey::Integer(index as i64),
+                    Value::String(algo.into()),
+                )
+            })
+            .collect(),
+        ));
     }
 
     if function == "hash_hmac_algos" {
         if !arguments.is_empty() {
-            return Err(format!("ArgumentCountError:hash_hmac_algos() expects exactly 0 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_hmac_algos() expects exactly 0 arguments, {} given",
+                arguments.len()
+            ));
         }
-        return Ok(Value::from_array_entries(["md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384", "sha3-512"].into_iter().enumerate().map(|(index, algo)| (crate::ArrayKey::Integer(index as i64), Value::String(algo.into()))).collect()));
+        return Ok(Value::from_array_entries(
+            [
+                "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256",
+                "sha3-384", "sha3-512",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, algo)| {
+                (
+                    crate::ArrayKey::Integer(index as i64),
+                    Value::String(algo.into()),
+                )
+            })
+            .collect(),
+        ));
     }
 
     if function == "hash_hmac" {
         if arguments.len() < 3 || arguments.len() > 4 {
-            return Err(format!("ArgumentCountError:hash_hmac() expects 3 or 4 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_hmac() expects 3 or 4 arguments, {} given",
+                arguments.len()
+            ));
         }
         let algorithm = arguments[0].show().to_ascii_lowercase();
         let data = arguments[1].show();
@@ -1379,13 +2061,20 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             "sha3-512" => hmac_digest_bytes_with_block(key.as_bytes(), data.as_bytes(), sha3_512_digest, 72),
             _ => return Err(format!("ValueError:hash_hmac(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
-        let output = if binary { String::from_utf8_lossy(&digest).into_owned() } else { digest.iter().map(|byte| format!("{byte:02x}")).collect() };
+        let output = if binary {
+            String::from_utf8_lossy(&digest).into_owned()
+        } else {
+            digest.iter().map(|byte| format!("{byte:02x}")).collect()
+        };
         return Ok(Value::String(output));
     }
 
     if function == "hash_pbkdf2" {
         if arguments.len() < 4 || arguments.len() > 7 {
-            return Err(format!("ArgumentCountError:hash_pbkdf2() expects between 4 and 7 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_pbkdf2() expects between 4 and 7 arguments, {} given",
+                arguments.len()
+            ));
         }
         let algorithm = arguments[0].show().to_ascii_lowercase();
         let password = arguments[1].show();
@@ -1393,11 +2082,30 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         let iterations = arguments[3].number() as i64;
         let length = arguments.get(4).map_or(0, |value| value.number() as i64);
         let binary = arguments.get(5).is_some_and(Value::truthy);
-        if iterations <= 0 { return Err("ValueError:hash_pbkdf2(): Argument #4 ($iterations) must be greater than 0".into()); }
-        if length < 0 { return Err("ValueError:hash_pbkdf2(): Argument #5 ($length) must be greater than or equal to 0".into()); }
-        if iterations > 1_000_000 { return Err("ValueError:hash_pbkdf2(): Argument #4 ($iterations) exceeds the runtime limit".into()); }
-        if length > 1_048_576 { return Err("ValueError:hash_pbkdf2(): Argument #5 ($length) exceeds the runtime output limit".into()); }
-        if arguments.get(6).is_some_and(|value| !matches!(value, Value::Array(values) if values.is_empty())) {
+        if iterations <= 0 {
+            return Err(
+                "ValueError:hash_pbkdf2(): Argument #4 ($iterations) must be greater than 0".into(),
+            );
+        }
+        if length < 0 {
+            return Err("ValueError:hash_pbkdf2(): Argument #5 ($length) must be greater than or equal to 0".into());
+        }
+        if iterations > 1_000_000 {
+            return Err(
+                "ValueError:hash_pbkdf2(): Argument #4 ($iterations) exceeds the runtime limit"
+                    .into(),
+            );
+        }
+        if length > 1_048_576 {
+            return Err(
+                "ValueError:hash_pbkdf2(): Argument #5 ($length) exceeds the runtime output limit"
+                    .into(),
+            );
+        }
+        if arguments
+            .get(6)
+            .is_some_and(|value| !matches!(value, Value::Array(values) if values.is_empty()))
+        {
             return Err("ValueError:hash_pbkdf2(): non-empty options are unsupported".into());
         }
         let digest = match algorithm.as_str() {
@@ -1413,39 +2121,67 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             "sha3-512" => sha3_512_digest as fn(&[u8]) -> Vec<u8>,
             _ => return Err(format!("ValueError:hash_pbkdf2(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
-        let raw_length = if length == 0 { digest(&[]).len() } else if binary { length as usize } else { (length as usize).div_ceil(2) };
+        let raw_length = if length == 0 {
+            digest(&[]).len()
+        } else if binary {
+            length as usize
+        } else {
+            (length as usize).div_ceil(2)
+        };
         let block_size = hmac_block_size(&algorithm);
         let mut derived = Vec::with_capacity(raw_length.min(1_048_576));
         let blocks = raw_length.div_ceil(digest(&[]).len());
         for block_index in 1..=blocks {
             let mut message = salt.as_bytes().to_vec();
             message.extend_from_slice(&(block_index as u32).to_be_bytes());
-            let mut u = hmac_digest_bytes_with_block(password.as_bytes(), &message, digest, block_size);
+            let mut u =
+                hmac_digest_bytes_with_block(password.as_bytes(), &message, digest, block_size);
             let mut accumulator = u.clone();
             for _ in 1..iterations {
                 u = hmac_digest_bytes_with_block(password.as_bytes(), &u, digest, block_size);
-                for (value, next) in accumulator.iter_mut().zip(&u) { *value ^= *next; }
+                for (value, next) in accumulator.iter_mut().zip(&u) {
+                    *value ^= *next;
+                }
             }
             derived.extend_from_slice(&accumulator);
         }
         derived.truncate(raw_length);
-        if binary { return Ok(Value::String(String::from_utf8_lossy(&derived).into_owned())); }
-        let mut hex = derived.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-        if length != 0 { hex.truncate(length as usize); }
+        if binary {
+            return Ok(Value::String(
+                String::from_utf8_lossy(&derived).into_owned(),
+            ));
+        }
+        let mut hex = derived
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if length != 0 {
+            hex.truncate(length as usize);
+        }
         return Ok(Value::String(hex));
     }
 
     if function == "hash_hkdf" {
         if arguments.len() < 2 || arguments.len() > 5 {
-            return Err(format!("ArgumentCountError:hash_hkdf() expects between 2 and 5 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_hkdf() expects between 2 and 5 arguments, {} given",
+                arguments.len()
+            ));
         }
         let algorithm = arguments[0].show().to_ascii_lowercase();
         let key = arguments[1].show();
         let length = arguments.get(2).map_or(0, |value| value.number() as i64);
         let info = arguments.get(3).map(Value::show).unwrap_or_default();
         let salt = arguments.get(4).map(Value::show).unwrap_or_default();
-        if key.is_empty() { return Err("ValueError:hash_hkdf(): Argument #2 ($key) cannot be empty".into()); }
-        if length < 0 { return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be greater than or equal to 0".into()); }
+        if key.is_empty() {
+            return Err("ValueError:hash_hkdf(): Argument #2 ($key) cannot be empty".into());
+        }
+        if length < 0 {
+            return Err(
+                "ValueError:hash_hkdf(): Argument #3 ($length) must be greater than or equal to 0"
+                    .into(),
+            );
+        }
         let digest = match algorithm.as_str() {
             "md5" => md5_digest as fn(&[u8]) -> Vec<u8>,
             "sha1" => sha1_digest as fn(&[u8]) -> Vec<u8>,
@@ -1460,17 +2196,33 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             _ => return Err(format!("ValueError:hash_hkdf(): Argument #1 ($algo) must be a valid cryptographic hashing algorithm, {algorithm} given")),
         };
         let hash_length = digest(&[]).len();
-        let output_length = if length == 0 { hash_length } else { length as usize };
-        if output_length > 255 * hash_length { return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be less than or equal to 255 times the hash length".into()); }
-        let effective_salt = if salt.is_empty() { String::from_utf8(vec![0; hash_length]).unwrap() } else { salt };
-        let prk = hmac_digest_bytes_with_block(effective_salt.as_bytes(), key.as_bytes(), digest, hmac_block_size(&algorithm));
+        let output_length = if length == 0 {
+            hash_length
+        } else {
+            length as usize
+        };
+        if output_length > 255 * hash_length {
+            return Err("ValueError:hash_hkdf(): Argument #3 ($length) must be less than or equal to 255 times the hash length".into());
+        }
+        let effective_salt = if salt.is_empty() {
+            String::from_utf8(vec![0; hash_length]).unwrap()
+        } else {
+            salt
+        };
+        let prk = hmac_digest_bytes_with_block(
+            effective_salt.as_bytes(),
+            key.as_bytes(),
+            digest,
+            hmac_block_size(&algorithm),
+        );
         let mut output = Vec::with_capacity(output_length);
         let mut previous = Vec::new();
         for counter in 1..=output_length.div_ceil(hash_length) {
             let mut message = previous;
             message.extend_from_slice(info.as_bytes());
             message.push(counter as u8);
-            previous = hmac_digest_bytes_with_block(&prk, &message, digest, hmac_block_size(&algorithm));
+            previous =
+                hmac_digest_bytes_with_block(&prk, &message, digest, hmac_block_size(&algorithm));
             output.extend_from_slice(&previous);
         }
         output.truncate(output_length);
@@ -1479,81 +2231,182 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
 
     if function == "hash_equals" {
         if arguments.len() != 2 {
-            return Err(format!("ArgumentCountError:hash_equals() expects exactly 2 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "ArgumentCountError:hash_equals() expects exactly 2 arguments, {} given",
+                arguments.len()
+            ));
         }
         let known = arguments[0].show();
         let user = arguments[1].show();
-        if known.len() != user.len() { return Ok(Value::Bool(false)); }
-        let difference = known.as_bytes().iter().zip(user.as_bytes()).fold(0u8, |difference, (left, right)| difference | (left ^ right));
+        if known.len() != user.len() {
+            return Ok(Value::Bool(false));
+        }
+        let difference = known
+            .as_bytes()
+            .iter()
+            .zip(user.as_bytes())
+            .fold(0u8, |difference, (left, right)| difference | (left ^ right));
         return Ok(Value::Bool(difference == 0));
     }
 
     if function == "get_html_translation_table" {
         if arguments.len() > 3 {
-            return Err(format!("get_html_translation_table() expects at most 3 arguments, {} given", arguments.len()));
+            return Err(format!(
+                "get_html_translation_table() expects at most 3 arguments, {} given",
+                arguments.len()
+            ));
         }
-        let table = arguments.first().map(|value| value.number() as i64).unwrap_or(0);
+        let table = arguments
+            .first()
+            .map(|value| value.number() as i64)
+            .unwrap_or(0);
         if table != 0 && table != 1 {
             return Err("ValueError:get_html_translation_table(): Argument #1 ($table) must be one of HTML_SPECIALCHARS or HTML_ENTITIES".into());
         }
         if let Some(Value::String(encoding)) = arguments.get(2) {
             if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
-                return Err("get_html_translation_table(): only UTF-8 encoding is supported".into());
+                return Err(
+                    "get_html_translation_table(): only UTF-8 encoding is supported".into(),
+                );
             }
         }
-        let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+        let flags = arguments
+            .get(1)
+            .map(|value| value.number() as i64)
+            .unwrap_or(11);
         if flags & 48 != 0 {
             return Err("ValueError:get_html_translation_table(): only the HTML 4.01 document type is supported".into());
         }
         let mut entries = Vec::new();
         if table == 1 {
             for (character, entity) in HTML4_ENTITY_TABLE {
-                if matches!(*character, '\'' | '"') { continue; }
-                entries.push((crate::ArrayKey::String(character.to_string()), Value::String(format!("&{entity};"))));
+                if matches!(*character, '\'' | '"') {
+                    continue;
+                }
+                entries.push((
+                    crate::ArrayKey::String(character.to_string()),
+                    Value::String(format!("&{entity};")),
+                ));
             }
-            if flags & 3 != 0 { entries.push((crate::ArrayKey::String('"'.to_string()), Value::String("&quot;".into()))); }
-            if flags & 3 == 3 { entries.push((crate::ArrayKey::String('\''.to_string()), Value::String("&#039;".into()))); }
-        } else {
-            entries.extend([('&', "&amp;"), ('<', "&lt;"), ('>', "&gt;")].into_iter().map(|(character, entity)| (crate::ArrayKey::String(character.to_string()), Value::String(entity.into()))));
             if flags & 3 != 0 {
-                entries.push((crate::ArrayKey::String('"'.to_string()), Value::String("&quot;".into())));
+                entries.push((
+                    crate::ArrayKey::String('"'.to_string()),
+                    Value::String("&quot;".into()),
+                ));
             }
             if flags & 3 == 3 {
-                entries.push((crate::ArrayKey::String('\''.to_string()), Value::String("&#039;".into())));
+                entries.push((
+                    crate::ArrayKey::String('\''.to_string()),
+                    Value::String("&#039;".into()),
+                ));
+            }
+        } else {
+            entries.extend(
+                [('&', "&amp;"), ('<', "&lt;"), ('>', "&gt;")]
+                    .into_iter()
+                    .map(|(character, entity)| {
+                        (
+                            crate::ArrayKey::String(character.to_string()),
+                            Value::String(entity.into()),
+                        )
+                    }),
+            );
+            if flags & 3 != 0 {
+                entries.push((
+                    crate::ArrayKey::String('"'.to_string()),
+                    Value::String("&quot;".into()),
+                ));
+            }
+            if flags & 3 == 3 {
+                entries.push((
+                    crate::ArrayKey::String('\''.to_string()),
+                    Value::String("&#039;".into()),
+                ));
             }
         }
         return Ok(Value::from_array_entries(entries));
     }
-    if function == "md5" { return md5(arguments); }
-    if function == "sha1" { return sha1(arguments); }
-    if function == "base64_encode" { return base64_encode(arguments); }
-    if function == "base64_decode" { return base64_decode(arguments); }
-    if function == "sprintf" { return sprintf(arguments); }
+    if function == "md5" {
+        return md5(arguments);
+    }
+    if function == "sha1" {
+        return sha1(arguments);
+    }
+    if function == "base64_encode" {
+        return base64_encode(arguments);
+    }
+    if function == "base64_decode" {
+        return base64_decode(arguments);
+    }
+    if function == "sprintf" {
+        return sprintf(arguments);
+    }
     if function == "vsprintf" {
-        if arguments.len() != 2 { return Err(format!("vsprintf() expects exactly 2 arguments, {} given", arguments.len())); }
+        if arguments.len() != 2 {
+            return Err(format!(
+                "vsprintf() expects exactly 2 arguments, {} given",
+                arguments.len()
+            ));
+        }
         let values = unpack_values(&arguments[1])?;
         return Ok(Value::String(format_values(&arguments[0].show(), &values)?));
     }
-    if function == "parse_str" { return parse_str(arguments); }
-    if function == "substr_replace" { return substr_replace(arguments); }
-    if function == "substr_compare" { return substr_compare(arguments); }
-    if function == "levenshtein" { return levenshtein(arguments); }
-    if function == "similar_text" { return similar_text_with_percent(arguments).map(|(matches, _)| matches); }
+    if function == "parse_str" {
+        return parse_str(arguments);
+    }
+    if function == "substr_replace" {
+        return substr_replace(arguments);
+    }
+    if function == "substr_compare" {
+        return substr_compare(arguments);
+    }
+    if function == "levenshtein" {
+        return levenshtein(arguments);
+    }
+    if function == "similar_text" {
+        return similar_text_with_percent(arguments).map(|(matches, _)| matches);
+    }
     if function == "basename" {
-        if arguments.is_empty() || arguments.len() > 2 { return Err(format!("basename() expects 1 or 2 arguments, {} given", arguments.len())); }
+        if arguments.is_empty() || arguments.len() > 2 {
+            return Err(format!(
+                "basename() expects 1 or 2 arguments, {} given",
+                arguments.len()
+            ));
+        }
         let suffix = arguments.get(1).map(Value::show).unwrap_or_default();
         return Ok(Value::String(basename(&arguments[0].show(), &suffix)));
     }
     if function == "dirname" {
-        if arguments.is_empty() || arguments.len() > 2 { return Err(format!("dirname() expects 1 or 2 arguments, {} given", arguments.len())); }
-        let levels = arguments.get(1).map(|value| value.number() as i64).unwrap_or(1);
-        if levels < 1 { return Err("ValueError:dirname(): Argument #2 ($levels) must be greater than or equal to 1".into()); }
+        if arguments.is_empty() || arguments.len() > 2 {
+            return Err(format!(
+                "dirname() expects 1 or 2 arguments, {} given",
+                arguments.len()
+            ));
+        }
+        let levels = arguments
+            .get(1)
+            .map(|value| value.number() as i64)
+            .unwrap_or(1);
+        if levels < 1 {
+            return Err(
+                "ValueError:dirname(): Argument #2 ($levels) must be greater than or equal to 1"
+                    .into(),
+            );
+        }
         return Ok(Value::String(dirname(&arguments[0].show(), levels)));
     }
     if function == "pathinfo" {
-        if arguments.is_empty() || arguments.len() > 2 { return Err(format!("pathinfo() expects 1 or 2 arguments, {} given", arguments.len())); }
+        if arguments.is_empty() || arguments.len() > 2 {
+            return Err(format!(
+                "pathinfo() expects 1 or 2 arguments, {} given",
+                arguments.len()
+            ));
+        }
         let path = arguments[0].show();
-        let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(15);
+        let flags = arguments
+            .get(1)
+            .map(|value| value.number() as i64)
+            .unwrap_or(15);
         let info = pathinfo(&path);
         let component = match flags {
             15 => return Ok(info),
@@ -1563,16 +2416,70 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             8 => "filename",
             _ => return Err("ValueError:pathinfo(): Argument #2 ($flags) must be one of PATHINFO_DIRNAME, PATHINFO_BASENAME, PATHINFO_EXTENSION, or PATHINFO_FILENAME".into()),
         };
-        let values = match info { Value::Array(values) => values, _ => unreachable!() };
-        return Ok(values.into_iter().find_map(|(key, value)| matches!(key, crate::ArrayKey::String(ref name) if name == component).then_some(value)).unwrap_or(Value::String(String::new())));
+        let values = match info {
+            Value::Array(values) => values,
+            _ => unreachable!(),
+        };
+        return Ok(values
+            .into_iter()
+            .find_map(|(key, value)| {
+                matches!(key, crate::ArrayKey::String(ref name) if name == component)
+                    .then_some(value)
+            })
+            .unwrap_or(Value::String(String::new())));
     }
     if function == "strip_tags" {
-        if arguments.is_empty() || arguments.len() > 2 { return Err(format!("strip_tags() expects 1 or 2 arguments, {} given", arguments.len())); }
+        if arguments.is_empty() || arguments.len() > 2 {
+            return Err(format!(
+                "strip_tags() expects 1 or 2 arguments, {} given",
+                arguments.len()
+            ));
+        }
         let allowed = arguments.get(1).map(Value::show).unwrap_or_default();
         return Ok(Value::String(strip_tags(&arguments[0].show(), &allowed)));
     }
     let required = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "addcslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "base64_decode" | "chr" | "ord" | "crc32" | "md5" | "number_format" | "str_increment" | "str_decrement" | "count_chars" | "ucwords" | "trim" | "ltrim" | "rtrim" | "str_repeat" | "str_split" | "htmlspecialchars" | "htmlentities" | "html_entity_decode" | "htmlspecialchars_decode" | "str_getcsv" | "nl2br" | "wordwrap" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower"
+        | "strtoupper"
+        | "strlen"
+        | "ucfirst"
+        | "lcfirst"
+        | "strrev"
+        | "str_shuffle"
+        | "str_rot13"
+        | "addslashes"
+        | "addcslashes"
+        | "stripslashes"
+        | "stripcslashes"
+        | "bin2hex"
+        | "hex2bin"
+        | "base64_encode"
+        | "base64_decode"
+        | "chr"
+        | "ord"
+        | "crc32"
+        | "md5"
+        | "number_format"
+        | "str_increment"
+        | "str_decrement"
+        | "count_chars"
+        | "ucwords"
+        | "trim"
+        | "ltrim"
+        | "rtrim"
+        | "str_repeat"
+        | "str_split"
+        | "htmlspecialchars"
+        | "htmlentities"
+        | "html_entity_decode"
+        | "htmlspecialchars_decode"
+        | "str_getcsv"
+        | "nl2br"
+        | "wordwrap"
+        | "urlencode"
+        | "urldecode"
+        | "rawurlencode"
+        | "rawurldecode" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -1589,7 +2496,11 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported string function: {name}")),
     };
     let maximum = match function.as_str() {
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes" | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5" | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => 1,
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev"
+        | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes"
+        | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5"
+        | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode"
+        | "rawurldecode" => 1,
         "base64_decode" => 2,
         "html_entity_decode" => 3,
         "addcslashes" => 2,
@@ -1625,28 +2536,50 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         _ => unreachable!(),
     };
     if arguments.len() < required || arguments.len() > maximum {
-        return Err(format!("{function}() expects between {required} and {maximum} arguments"));
+        return Err(format!(
+            "{function}() expects between {required} and {maximum} arguments"
+        ));
     }
 
-    if function == "number_format" { return number_format(arguments); }
-    if function == "strspn" { return span(arguments, false); }
-    if function == "strcspn" { return span(arguments, true); }
+    if function == "number_format" {
+        return number_format(arguments);
+    }
+    if function == "strspn" {
+        return span(arguments, false);
+    }
+    if function == "strcspn" {
+        return span(arguments, true);
+    }
     if function == "strpbrk" {
         let string = arguments[0].show();
         let characters = arguments[1].show();
-        if characters.is_empty() { return Ok(Value::Bool(false)); }
-        let position = string.as_bytes().iter().position(|byte| characters.as_bytes().contains(byte));
-        return Ok(position.map_or(Value::Bool(false), |index| Value::String(String::from_utf8_lossy(&string.as_bytes()[index..]).into_owned())));
+        if characters.is_empty() {
+            return Ok(Value::Bool(false));
+        }
+        let position = string
+            .as_bytes()
+            .iter()
+            .position(|byte| characters.as_bytes().contains(byte));
+        return Ok(position.map_or(Value::Bool(false), |index| {
+            Value::String(String::from_utf8_lossy(&string.as_bytes()[index..]).into_owned())
+        }));
     }
-    if function == "str_word_count" { return word_count(arguments); }
+    if function == "str_word_count" {
+        return word_count(arguments);
+    }
 
-    let string = arguments.first().ok_or_else(|| format!("{function}() expects a string"))?.show();
+    let string = arguments
+        .first()
+        .ok_or_else(|| format!("{function}() expects a string"))?
+        .show();
     let value = match function.as_str() {
         "crc32" => {
             let mut crc = !0u32;
             for byte in string.as_bytes() {
                 crc ^= *byte as u32;
-                for _ in 0..8 { crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1))); }
+                for _ in 0..8 {
+                    crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1)));
+                }
             }
             Value::Integer((!crc) as i64)
         }
@@ -1656,7 +2589,10 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "urldecode" => Value::String(url_decode(&string, true)),
         "rawurldecode" => Value::String(url_decode(&string, false)),
         "strtoupper" => Value::String(string.to_ascii_uppercase()),
-        "strrev" => Value::String(String::from_utf8_lossy(&string.as_bytes().iter().rev().copied().collect::<Vec<_>>()).into_owned()),
+        "strrev" => Value::String(
+            String::from_utf8_lossy(&string.as_bytes().iter().rev().copied().collect::<Vec<_>>())
+                .into_owned(),
+        ),
         "str_shuffle" => {
             let mut bytes = string.into_bytes();
             let mut entropy = std::fs::File::open("/dev/urandom")
@@ -1667,18 +2603,26 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             }
             Value::String(String::from_utf8_lossy(&bytes).into_owned())
         }
-        "str_rot13" => Value::String(string.chars().map(|character| match character {
-            'a'..='m' | 'A'..='M' => char::from(character as u8 + 13),
-            'n'..='z' | 'N'..='Z' => char::from(character as u8 - 13),
-            _ => character,
-        }).collect()),
+        "str_rot13" => Value::String(
+            string
+                .chars()
+                .map(|character| match character {
+                    'a'..='m' | 'A'..='M' => char::from(character as u8 + 13),
+                    'n'..='z' | 'N'..='Z' => char::from(character as u8 - 13),
+                    _ => character,
+                })
+                .collect(),
+        ),
         "addcslashes" => Value::String(add_cslashes(&string, &arguments[1].show())),
         "addslashes" => {
             let mut output = String::with_capacity(string.len());
             for character in string.chars() {
                 match character {
                     '\0' => output.push_str("\\0"),
-                    '\\' | '\'' | '"' => { output.push('\\'); output.push(character); }
+                    '\\' | '\'' | '"' => {
+                        output.push('\\');
+                        output.push(character);
+                    }
                     _ => output.push(character),
                 }
             }
@@ -1695,20 +2639,32 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
                         Some(next) => output.push(next),
                         None => output.push('\\'),
                     }
-                } else { output.push(character); }
+                } else {
+                    output.push(character);
+                }
             }
             Value::String(output)
         }
-        "bin2hex" => Value::String(string.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join("")),
+        "bin2hex" => Value::String(
+            string
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(""),
+        ),
         "hex2bin" => {
             let bytes = string.as_bytes();
             if bytes.len() % 2 != 0 || !bytes.iter().all(u8::is_ascii_hexdigit) {
                 Value::Bool(false)
             } else {
-                let decoded = bytes.chunks_exact(2).map(|pair| {
-                    (pair[0] as char).to_digit(16).unwrap() as u8 * 16
-                        + (pair[1] as char).to_digit(16).unwrap() as u8
-                }).collect::<Vec<_>>();
+                let decoded = bytes
+                    .chunks_exact(2)
+                    .map(|pair| {
+                        (pair[0] as char).to_digit(16).unwrap() as u8 * 16
+                            + (pair[1] as char).to_digit(16).unwrap() as u8
+                    })
+                    .collect::<Vec<_>>();
                 Value::String(String::from_utf8_lossy(&decoded).into_owned())
             }
         }
@@ -1719,18 +2675,35 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
                 return Err("ValueError:count_chars(): Argument #2 ($mode) must be between 0 and 4 (inclusive)".into());
             }
             let mut counts = [0_i64; 256];
-            for byte in string.as_bytes() { counts[*byte as usize] += 1; }
+            for byte in string.as_bytes() {
+                counts[*byte as usize] += 1;
+            }
             if mode <= 2 {
-                let entries = counts.iter().enumerate().filter_map(|(byte, count)| {
-                    let include = match mode { 0 => true, 1 => *count > 0, _ => *count == 0 };
-                    include.then_some((crate::ArrayKey::Integer(byte as i64), Value::Integer(*count)))
-                }).collect();
+                let entries = counts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(byte, count)| {
+                        let include = match mode {
+                            0 => true,
+                            1 => *count > 0,
+                            _ => *count == 0,
+                        };
+                        include.then_some((
+                            crate::ArrayKey::Integer(byte as i64),
+                            Value::Integer(*count),
+                        ))
+                    })
+                    .collect();
                 Value::from_array_entries(entries)
             } else {
-                let bytes = counts.iter().enumerate().filter_map(|(byte, count)| {
-                    let include = if mode == 3 { *count > 0 } else { *count == 0 };
-                    include.then_some(byte as u8)
-                }).collect::<Vec<_>>();
+                let bytes = counts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(byte, count)| {
+                        let include = if mode == 3 { *count > 0 } else { *count == 0 };
+                        include.then_some(byte as u8)
+                    })
+                    .collect::<Vec<_>>();
                 Value::String(String::from_utf8_lossy(&bytes).into_owned())
             }
         }
@@ -1777,30 +2750,62 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "strcmp" | "strcasecmp" | "strncmp" | "strncasecmp" => {
             let other = arguments[1].show();
             let insensitive = function.ends_with("casecmp");
-            let left = if insensitive { string.to_ascii_lowercase() } else { string.clone() };
-            let right = if insensitive { other.to_ascii_lowercase() } else { other };
+            let left = if insensitive {
+                string.to_ascii_lowercase()
+            } else {
+                string.clone()
+            };
+            let right = if insensitive {
+                other.to_ascii_lowercase()
+            } else {
+                other
+            };
             let limit = if function == "strncmp" || function == "strncasecmp" {
                 let length = arguments[2].number() as i64;
-                if length < 0 { return Err(format!("{function}(): Argument #3 ($length) must be greater than or equal to 0")); }
+                if length < 0 {
+                    return Err(format!(
+                        "{function}(): Argument #3 ($length) must be greater than or equal to 0"
+                    ));
+                }
                 Some(usize::try_from(length).unwrap_or(usize::MAX))
-            } else { None };
+            } else {
+                None
+            };
             let left = left.as_bytes();
             let right = right.as_bytes();
             let common = left.len().min(right.len()).min(limit.unwrap_or(usize::MAX));
             let ordering = left[..common].cmp(&right[..common]).then_with(|| {
-                if limit.is_some_and(|limit| common >= limit) { std::cmp::Ordering::Equal }
-                else { left.len().cmp(&right.len()) }
+                if limit.is_some_and(|limit| common >= limit) {
+                    std::cmp::Ordering::Equal
+                } else {
+                    left.len().cmp(&right.len())
+                }
             });
-            Value::Integer(match ordering { std::cmp::Ordering::Less => -1, std::cmp::Ordering::Equal => 0, std::cmp::Ordering::Greater => 1 })
+            Value::Integer(match ordering {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            })
         }
         "strnatcmp" | "strnatcasecmp" => {
-            let ordering = crate::array_builtins::natural_string_order(&string, &arguments[1].show(), function == "strnatcasecmp");
-            Value::Integer(match ordering { std::cmp::Ordering::Less => -1, std::cmp::Ordering::Equal => 0, std::cmp::Ordering::Greater => 1 })
+            let ordering = crate::array_builtins::natural_string_order(
+                &string,
+                &arguments[1].show(),
+                function == "strnatcasecmp",
+            );
+            Value::Integer(match ordering {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            })
         }
         "ucfirst" => Value::String(change_first_ascii_case(&string, true)),
         "lcfirst" => Value::String(change_first_ascii_case(&string, false)),
         "ucwords" => {
-            let separators = arguments.get(1).map(Value::show).unwrap_or_else(|| " \t\r\n\x0c\x0b".into());
+            let separators = arguments
+                .get(1)
+                .map(Value::show)
+                .unwrap_or_else(|| " \t\r\n\x0c\x0b".into());
             let mut capitalize = true;
             let mut result = String::with_capacity(string.len());
             for character in string.chars() {
@@ -1810,7 +2815,9 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
                 } else {
                     result.push(character);
                 }
-                if separators.contains(character) { capitalize = true; }
+                if separators.contains(character) {
+                    capitalize = true;
+                }
             }
             Value::String(result)
         }
@@ -1820,19 +2827,33 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "str_ends_with" => Value::Bool(string.ends_with(&arguments[1].show())),
         "strstr" | "strchr" | "stristr" => {
             let needle = arguments[1].show();
-            if needle.is_empty() { return Err(format!("{function}(): Argument #2 ($needle) cannot be empty")); }
+            if needle.is_empty() {
+                return Err(format!(
+                    "{function}(): Argument #2 ($needle) cannot be empty"
+                ));
+            }
             let index = if function == "stristr" {
-                string.as_bytes().windows(needle.len()).position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-            } else { string.find(&needle) };
+                string
+                    .as_bytes()
+                    .windows(needle.len())
+                    .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+            } else {
+                string.find(&needle)
+            };
             match index {
-                Some(index) if arguments.get(2).is_some_and(Value::truthy) => Value::String(string[..index].into()),
+                Some(index) if arguments.get(2).is_some_and(Value::truthy) => {
+                    Value::String(string[..index].into())
+                }
                 Some(index) => Value::String(string[index..].into()),
                 None => Value::Bool(false),
             }
         }
         "trim" | "ltrim" | "rtrim" => {
-            let characters = arguments.get(1).filter(|value| !matches!(value, Value::Null))
-                .map(Value::show).unwrap_or_else(|| " \n\r\t\0\x0b".into());
+            let characters = arguments
+                .get(1)
+                .filter(|value| !matches!(value, Value::Null))
+                .map(Value::show)
+                .unwrap_or_else(|| " \n\r\t\0\x0b".into());
             let contains = |character: char| charlist_contains(character, &characters);
             let trimmed = match function.as_str() {
                 "ltrim" => string.trim_start_matches(contains),
@@ -1842,53 +2863,126 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             Value::String(trimmed.to_string())
         }
         "str_repeat" => {
-            let times = arguments.get(1).ok_or("str_repeat() expects a repetition count")?.number() as i64;
-            if times < 0 { return Err("str_repeat(): Argument #2 ($times) must be greater than or equal to 0".into()); }
-            if string.is_empty() || times == 0 { return Ok(Value::String(String::new())); }
-            let repetitions = usize::try_from(times).map_err(|_| "str_repeat(): result is too large")?;
-            let total_length = string.len().checked_mul(repetitions).ok_or("str_repeat(): result is too large")?;
-            if total_length > 16 * 1024 * 1024 { return Err("str_repeat(): result exceeds the 16 MiB string limit".into()); }
+            let times = arguments
+                .get(1)
+                .ok_or("str_repeat() expects a repetition count")?
+                .number() as i64;
+            if times < 0 {
+                return Err(
+                    "str_repeat(): Argument #2 ($times) must be greater than or equal to 0".into(),
+                );
+            }
+            if string.is_empty() || times == 0 {
+                return Ok(Value::String(String::new()));
+            }
+            let repetitions =
+                usize::try_from(times).map_err(|_| "str_repeat(): result is too large")?;
+            let total_length = string
+                .len()
+                .checked_mul(repetitions)
+                .ok_or("str_repeat(): result is too large")?;
+            if total_length > 16 * 1024 * 1024 {
+                return Err("str_repeat(): result exceeds the 16 MiB string limit".into());
+            }
             let mut result = String::new();
-            result.try_reserve_exact(total_length).map_err(|_| "str_repeat(): unable to allocate result")?;
-            for _ in 0..times { result.push_str(&string); }
+            result
+                .try_reserve_exact(total_length)
+                .map_err(|_| "str_repeat(): unable to allocate result")?;
+            for _ in 0..times {
+                result.push_str(&string);
+            }
             Value::String(result)
         }
         "str_pad" => {
-            let length = arguments.get(1).ok_or("str_pad() expects a target length")?.number() as i64;
-            if length <= string.len() as i64 { return Ok(Value::String(string)); }
-            let target_length = usize::try_from(length).map_err(|_| "str_pad(): result is too large")?;
-            if target_length > 16 * 1024 * 1024 { return Err("str_pad(): result exceeds the 16 MiB string limit".into()); }
-            let pad = arguments.get(2).map(Value::show).unwrap_or_else(|| " ".into());
-            if pad.is_empty() { return Err("str_pad(): Argument #3 ($pad_string) must be non-empty".into()); }
-            let pad_type = arguments.get(3).map(|value| value.number() as i64).unwrap_or(1);
-            if !matches!(pad_type, 0..=2) { return Err(format!("str_pad(): Argument #4 ($pad_type) must be STR_PAD_LEFT, STR_PAD_RIGHT, or STR_PAD_BOTH, {pad_type} given")); }
+            let length = arguments
+                .get(1)
+                .ok_or("str_pad() expects a target length")?
+                .number() as i64;
+            if length <= string.len() as i64 {
+                return Ok(Value::String(string));
+            }
+            let target_length =
+                usize::try_from(length).map_err(|_| "str_pad(): result is too large")?;
+            if target_length > 16 * 1024 * 1024 {
+                return Err("str_pad(): result exceeds the 16 MiB string limit".into());
+            }
+            let pad = arguments
+                .get(2)
+                .map(Value::show)
+                .unwrap_or_else(|| " ".into());
+            if pad.is_empty() {
+                return Err("str_pad(): Argument #3 ($pad_string) must be non-empty".into());
+            }
+            let pad_type = arguments
+                .get(3)
+                .map(|value| value.number() as i64)
+                .unwrap_or(1);
+            if !matches!(pad_type, 0..=2) {
+                return Err(format!("str_pad(): Argument #4 ($pad_type) must be STR_PAD_LEFT, STR_PAD_RIGHT, or STR_PAD_BOTH, {pad_type} given"));
+            }
             let required = target_length - string.len();
-            let left = if pad_type == 0 { required } else if pad_type == 2 { required / 2 } else { 0 };
+            let left = if pad_type == 0 {
+                required
+            } else if pad_type == 2 {
+                required / 2
+            } else {
+                0
+            };
             let right = required - left;
             let mut bytes = Vec::new();
-            bytes.try_reserve_exact(target_length).map_err(|_| "str_pad(): unable to allocate result")?;
+            bytes
+                .try_reserve_exact(target_length)
+                .map_err(|_| "str_pad(): unable to allocate result")?;
             append_padding(&mut bytes, pad.as_bytes(), left);
             bytes.extend_from_slice(string.as_bytes());
             append_padding(&mut bytes, pad.as_bytes(), right);
             Value::String(String::from_utf8_lossy(&bytes).into_owned())
         }
         "str_split" => {
-            let chunk_length = arguments.get(1).map(|value| value.number() as i64).unwrap_or(1);
-            if chunk_length < 1 { return Err("str_split(): Argument #2 ($length) must be greater than 0".into()); }
+            let chunk_length = arguments
+                .get(1)
+                .map(|value| value.number() as i64)
+                .unwrap_or(1);
+            if chunk_length < 1 {
+                return Err("str_split(): Argument #2 ($length) must be greater than 0".into());
+            }
             let chunk_length = usize::try_from(chunk_length).unwrap_or(usize::MAX);
             let bytes = string.as_bytes();
-            if bytes.is_empty() { return Ok(Value::from_array_entries(Vec::new())); }
+            if bytes.is_empty() {
+                return Ok(Value::from_array_entries(Vec::new()));
+            }
             let chunk_count = 1 + (bytes.len() - 1) / chunk_length;
-            if chunk_count > 1_000_000 { return Err("str_split(): result exceeds the 1000000 element limit".into()); }
-            Value::from_array_entries(bytes.chunks(chunk_length).enumerate().map(|(index, chunk)| {
-                (crate::ArrayKey::Integer(index as i64), Value::String(String::from_utf8_lossy(chunk).into_owned()))
-            }).collect())
+            if chunk_count > 1_000_000 {
+                return Err("str_split(): result exceeds the 1000000 element limit".into());
+            }
+            Value::from_array_entries(
+                bytes
+                    .chunks(chunk_length)
+                    .enumerate()
+                    .map(|(index, chunk)| {
+                        (
+                            crate::ArrayKey::Integer(index as i64),
+                            Value::String(String::from_utf8_lossy(chunk).into_owned()),
+                        )
+                    })
+                    .collect(),
+            )
         }
         "strpos" | "stripos" => {
-            let needle = arguments.get(1).ok_or_else(|| format!("{function}() expects a needle"))?.show();
-            let offset = arguments.get(2).map(|value| value.number() as i64).unwrap_or(0);
+            let needle = arguments
+                .get(1)
+                .ok_or_else(|| format!("{function}() expects a needle"))?
+                .show();
+            let offset = arguments
+                .get(2)
+                .map(|value| value.number() as i64)
+                .unwrap_or(0);
             let length = string.len() as i64;
-            let start = if offset < 0 { length.saturating_add(offset) } else { offset };
+            let start = if offset < 0 {
+                length.saturating_add(offset)
+            } else {
+                offset
+            };
             if start < 0 || start > length {
                 return Err(format!("{function}(): offset is out of bounds"));
             }
@@ -1897,21 +2991,51 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
                 Value::Integer(start as i64)
             } else {
                 let case_insensitive;
-                let haystack = if function == "stripos" { case_insensitive = string.to_ascii_lowercase(); case_insensitive.as_bytes() } else { string.as_bytes() };
+                let haystack = if function == "stripos" {
+                    case_insensitive = string.to_ascii_lowercase();
+                    case_insensitive.as_bytes()
+                } else {
+                    string.as_bytes()
+                };
                 let needle_lowercase;
-                let needle = if function == "stripos" { needle_lowercase = needle.to_ascii_lowercase(); needle_lowercase.as_bytes() } else { needle.as_bytes() };
-                haystack.get(start..).and_then(|tail| tail.windows(needle.len()).position(|window| window == needle))
+                let needle = if function == "stripos" {
+                    needle_lowercase = needle.to_ascii_lowercase();
+                    needle_lowercase.as_bytes()
+                } else {
+                    needle.as_bytes()
+                };
+                haystack
+                    .get(start..)
+                    .and_then(|tail| {
+                        tail.windows(needle.len())
+                            .position(|window| window == needle)
+                    })
                     .map(|position| Value::Integer((start + position) as i64))
                     .unwrap_or(Value::Bool(false))
             }
         }
         "strrpos" | "strripos" => {
             let needle = arguments[1].show();
-            if needle.is_empty() { return Err(format!("{function}(): Argument #2 ($needle) cannot be empty")); }
-            let haystack = if function == "strripos" { string.to_ascii_lowercase() } else { string.clone() };
-            let needle = if function == "strripos" { needle.to_ascii_lowercase() } else { needle };
+            if needle.is_empty() {
+                return Err(format!(
+                    "{function}(): Argument #2 ($needle) cannot be empty"
+                ));
+            }
+            let haystack = if function == "strripos" {
+                string.to_ascii_lowercase()
+            } else {
+                string.clone()
+            };
+            let needle = if function == "strripos" {
+                needle.to_ascii_lowercase()
+            } else {
+                needle
+            };
             let bytes = haystack.as_bytes();
-            let offset = arguments.get(2).map(|value| value.number() as i64).unwrap_or(0);
+            let offset = arguments
+                .get(2)
+                .map(|value| value.number() as i64)
+                .unwrap_or(0);
             let length = bytes.len() as i64;
             let (start, end) = if offset < 0 {
                 (0, length.saturating_add(offset).max(0) as usize)
@@ -1920,27 +3044,49 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             } else {
                 (offset as usize, bytes.len())
             };
-            let found = bytes.get(start..end).and_then(|slice| slice.windows(needle.len()).rposition(|window| window == needle.as_bytes()))
-                .map(|index| Value::Integer((start + index) as i64)).unwrap_or(Value::Bool(false));
+            let found = bytes
+                .get(start..end)
+                .and_then(|slice| {
+                    slice
+                        .windows(needle.len())
+                        .rposition(|window| window == needle.as_bytes())
+                })
+                .map(|index| Value::Integer((start + index) as i64))
+                .unwrap_or(Value::Bool(false));
             found
         }
         "substr_count" => {
             let needle = arguments[1].show();
-            if needle.is_empty() { return Err("substr_count(): Argument #2 ($needle) cannot be empty".into()); }
+            if needle.is_empty() {
+                return Err("substr_count(): Argument #2 ($needle) cannot be empty".into());
+            }
             let bytes = string.as_bytes();
             let length = bytes.len() as i64;
-            let offset = arguments.get(2).map(|value| value.number() as i64).unwrap_or(0);
-            let start = if offset < 0 { length.saturating_add(offset) } else { offset };
-            if start < 0 || start > length { return Err("substr_count(): Argument #3 ($offset) must be contained in argument #1 ($haystack)".into()); }
+            let offset = arguments
+                .get(2)
+                .map(|value| value.number() as i64)
+                .unwrap_or(0);
+            let start = if offset < 0 {
+                length.saturating_add(offset)
+            } else {
+                offset
+            };
+            if start < 0 || start > length {
+                return Err("substr_count(): Argument #3 ($offset) must be contained in argument #1 ($haystack)".into());
+            }
             let end = match arguments.get(3) {
                 None | Some(Value::Null) => length,
                 Some(value) => {
                     let count = value.number() as i64;
                     if count < 0 {
                         let end = length.saturating_add(count);
-                        if end < start { return Err("substr_count(): Argument #4 ($length) must be greater than or equal to 0".into()); }
+                        if end < start {
+                            return Err("substr_count(): Argument #4 ($length) must be greater than or equal to 0".into());
+                        }
                         end
-                    } else { start.saturating_add(count).min(length) }
+                    } else {
+                        start.saturating_add(count).min(length)
+                    }
                 }
             };
             let slice = &bytes[start as usize..end as usize];
@@ -1950,16 +3096,28 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
                 if &slice[cursor..cursor + needle.len()] == needle.as_bytes() {
                     count += 1;
                     cursor += needle.len();
-                } else { cursor += 1; }
+                } else {
+                    cursor += 1;
+                }
             }
             Value::Integer(count)
         }
         "substr" => {
-            let offset = arguments.get(1).ok_or_else(|| "substr() expects an offset".to_string())?.number() as i64;
+            let offset = arguments
+                .get(1)
+                .ok_or_else(|| "substr() expects an offset".to_string())?
+                .number() as i64;
             let bytes = string.as_bytes();
             let length = bytes.len() as i64;
-            if offset > length { return Ok(Value::String(String::new())); }
-            let start = if offset < 0 { length.saturating_add(offset) } else { offset }.clamp(0, length) as usize;
+            if offset > length {
+                return Ok(Value::String(String::new()));
+            }
+            let start = if offset < 0 {
+                length.saturating_add(offset)
+            } else {
+                offset
+            }
+            .clamp(0, length) as usize;
             let end = match arguments.get(2) {
                 None | Some(Value::Null) => bytes.len(),
                 Some(length_value) => {
@@ -1975,30 +3133,81 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         }
         "explode" => {
             let separator = string;
-            if separator.is_empty() { return Err("explode(): Argument #1 ($separator) cannot be empty".into()); }
+            if separator.is_empty() {
+                return Err("explode(): Argument #1 ($separator) cannot be empty".into());
+            }
             let input = arguments.get(1).ok_or("explode() expects a string")?.show();
-            let limit = arguments.get(2).map(|value| value.number() as i64).unwrap_or(i64::MAX);
-            let mut parts = if limit > 0 { input.splitn(limit as usize, &separator).map(str::to_string).collect::<Vec<_>>() }
-                else { input.split(&separator).map(str::to_string).collect::<Vec<_>>() };
-            if limit == 0 { parts.truncate(1); }
-            else if limit < 0 { parts.truncate(parts.len().saturating_sub(limit.unsigned_abs() as usize)); }
-            Value::from_array_entries(parts.into_iter().enumerate().map(|(index, part)| (crate::ArrayKey::Integer(index as i64), Value::String(part))).collect())
+            let limit = arguments
+                .get(2)
+                .map(|value| value.number() as i64)
+                .unwrap_or(i64::MAX);
+            let mut parts = if limit > 0 {
+                input
+                    .splitn(limit as usize, &separator)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            } else {
+                input
+                    .split(&separator)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            };
+            if limit == 0 {
+                parts.truncate(1);
+            } else if limit < 0 {
+                parts.truncate(parts.len().saturating_sub(limit.unsigned_abs() as usize));
+            }
+            Value::from_array_entries(
+                parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, part)| {
+                        (crate::ArrayKey::Integer(index as i64), Value::String(part))
+                    })
+                    .collect(),
+            )
         }
         "str_getcsv" => {
-            let separator = arguments.get(1).map(Value::show).unwrap_or_else(|| ",".into());
-            let enclosure = arguments.get(2).map(Value::show).unwrap_or_else(|| "\"".into());
-            let escape = arguments.get(3).map(Value::show).unwrap_or_else(|| "\\".into());
+            let separator = arguments
+                .get(1)
+                .map(Value::show)
+                .unwrap_or_else(|| ",".into());
+            let enclosure = arguments
+                .get(2)
+                .map(Value::show)
+                .unwrap_or_else(|| "\"".into());
+            let escape = arguments
+                .get(3)
+                .map(Value::show)
+                .unwrap_or_else(|| "\\".into());
             if separator.len() != 1 {
-                return Err("ValueError:str_getcsv(): Argument #2 ($separator) must be a single character".into());
+                return Err(
+                    "ValueError:str_getcsv(): Argument #2 ($separator) must be a single character"
+                        .into(),
+                );
             }
             if enclosure.len() != 1 {
-                return Err("ValueError:str_getcsv(): Argument #3 ($enclosure) must be a single character".into());
+                return Err(
+                    "ValueError:str_getcsv(): Argument #3 ($enclosure) must be a single character"
+                        .into(),
+                );
             }
             if escape.len() > 1 {
                 return Err("ValueError:str_getcsv(): Argument #4 ($escape) must be a single character or empty".into());
             }
-            let fields = parse_csv(&string, separator.as_bytes()[0], enclosure.as_bytes()[0], escape.as_bytes().first().copied());
-            Value::from_array_entries(fields.into_iter().enumerate().map(|(index, field)| (crate::ArrayKey::Integer(index as i64), field)).collect())
+            let fields = parse_csv(
+                &string,
+                separator.as_bytes()[0],
+                enclosure.as_bytes()[0],
+                escape.as_bytes().first().copied(),
+            );
+            Value::from_array_entries(
+                fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, field)| (crate::ArrayKey::Integer(index as i64), field))
+                    .collect(),
+            )
         }
         "implode" => {
             let (separator, array) = if arguments.len() == 1 {
@@ -2006,54 +3215,84 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
             } else {
                 (string, arguments.get(1))
             };
-            let Some(Value::Array(values)) = array else { return Err("implode(): Argument must be of type array".into()); };
-            Value::String(values.iter().map(|(_, value)| value.show()).collect::<Vec<_>>().join(&separator))
+            let Some(Value::Array(values)) = array else {
+                return Err("implode(): Argument must be of type array".into());
+            };
+            Value::String(
+                values
+                    .iter()
+                    .map(|(_, value)| value.show())
+                    .collect::<Vec<_>>()
+                    .join(&separator),
+            )
         }
         "htmlspecialchars" => {
             if let Some(Value::String(encoding)) = arguments.get(2) {
-                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8")
+                {
                     return Err("htmlspecialchars(): only UTF-8 encoding is supported".into());
                 }
             }
-            let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+            let flags = arguments
+                .get(1)
+                .map(|value| value.number() as i64)
+                .unwrap_or(11);
             let double_encode = arguments.get(3).map(Value::truthy).unwrap_or(true);
             Value::String(escape_html(&string, flags, double_encode))
         }
         "htmlentities" => {
             if let Some(Value::String(encoding)) = arguments.get(2) {
-                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8")
+                {
                     return Err("htmlentities(): only UTF-8 encoding is supported".into());
                 }
             }
-            let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+            let flags = arguments
+                .get(1)
+                .map(|value| value.number() as i64)
+                .unwrap_or(11);
             let double_encode = arguments.get(3).map(Value::truthy).unwrap_or(true);
             Value::String(escape_html_entities(&string, flags, double_encode))
         }
         "html_entity_decode" => {
             if let Some(Value::String(encoding)) = arguments.get(2) {
-                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8")
+                {
                     return Err("html_entity_decode(): only UTF-8 encoding is supported".into());
                 }
             }
-            let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(11);
+            let flags = arguments
+                .get(1)
+                .map(|value| value.number() as i64)
+                .unwrap_or(11);
             if flags & 48 != 0 {
                 return Err("ValueError:html_entity_decode(): only the HTML 4.01 document type is supported".into());
             }
             Value::String(decode_html_entities(&string, flags))
         }
         "htmlspecialchars_decode" => {
-            let flags = arguments.get(1).map(|value| value.number() as i64).unwrap_or(3);
+            let flags = arguments
+                .get(1)
+                .map(|value| value.number() as i64)
+                .unwrap_or(3);
             Value::String(decode_html(&string, flags))
         }
         "nl2br" => {
-            let break_tag = if arguments.get(1).is_none_or(Value::truthy) { "<br />" } else { "<br>" };
+            let break_tag = if arguments.get(1).is_none_or(Value::truthy) {
+                "<br />"
+            } else {
+                "<br>"
+            };
             let mut output = String::with_capacity(string.len());
             let mut characters = string.chars().peekable();
             while let Some(character) = characters.next() {
                 if matches!(character, '\r' | '\n') {
                     output.push_str(break_tag);
                     output.push(character);
-                    if matches!((character, characters.peek()), ('\r', Some('\n')) | ('\n', Some('\r'))) {
+                    if matches!(
+                        (character, characters.peek()),
+                        ('\r', Some('\n')) | ('\n', Some('\r'))
+                    ) {
                         output.push(characters.next().unwrap());
                     }
                 } else {
@@ -2064,7 +3303,10 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         }
         "wordwrap" => {
             let width = arguments.get(1).map_or(75, |value| value.number() as i64);
-            let break_string = arguments.get(2).map(Value::show).unwrap_or_else(|| "\n".into());
+            let break_string = arguments
+                .get(2)
+                .map(Value::show)
+                .unwrap_or_else(|| "\n".into());
             let cut = arguments.get(3).is_some_and(Value::truthy);
             Value::String(wordwrap(&string, width, &break_string, cut)?)
         }
@@ -2089,7 +3331,9 @@ pub(crate) fn hash_digest(algorithm: &str, data: &[u8]) -> Option<Vec<u8>> {
             let mut crc = !0u32;
             for byte in data {
                 crc ^= *byte as u32;
-                for _ in 0..8 { crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1))); }
+                for _ in 0..8 {
+                    crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1)));
+                }
             }
             Some((!crc).to_be_bytes().to_vec())
         }
@@ -2117,20 +3361,38 @@ pub(crate) fn hmac_block_size(algorithm: &str) -> usize {
     }
 }
 
-pub(crate) fn hmac_digest_bytes_with_block(key: &[u8], data: &[u8], digest: fn(&[u8]) -> Vec<u8>, block_size: usize) -> Vec<u8> {
+pub(crate) fn hmac_digest_bytes_with_block(
+    key: &[u8],
+    data: &[u8],
+    digest: fn(&[u8]) -> Vec<u8>,
+    block_size: usize,
+) -> Vec<u8> {
     let mut normalized_key = key.to_vec();
-    if normalized_key.len() > block_size { normalized_key = digest(&normalized_key); }
+    if normalized_key.len() > block_size {
+        normalized_key = digest(&normalized_key);
+    }
     normalized_key.resize(block_size, 0);
-    let mut inner = normalized_key.iter().map(|byte| byte ^ 0x36).collect::<Vec<_>>();
+    let mut inner = normalized_key
+        .iter()
+        .map(|byte| byte ^ 0x36)
+        .collect::<Vec<_>>();
     inner.extend_from_slice(data);
     let inner_digest = digest(&inner);
-    let mut outer = normalized_key.iter().map(|byte| byte ^ 0x5c).collect::<Vec<_>>();
+    let mut outer = normalized_key
+        .iter()
+        .map(|byte| byte ^ 0x5c)
+        .collect::<Vec<_>>();
     outer.extend_from_slice(&inner_digest);
     digest(&outer)
 }
 
 fn base64_encode(arguments: &[Value]) -> Result<Value, String> {
-    if arguments.len() != 1 { return Err(format!("base64_encode() expects exactly 1 argument, {} given", arguments.len())); }
+    if arguments.len() != 1 {
+        return Err(format!(
+            "base64_encode() expects exactly 1 argument, {} given",
+            arguments.len()
+        ));
+    }
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = arguments[0].show();
     let bytes = bytes.as_bytes();
@@ -2141,14 +3403,27 @@ fn base64_encode(arguments: &[Value]) -> Result<Value, String> {
         let c = chunk.get(2).copied().unwrap_or(0);
         output.push(TABLE[(a >> 2) as usize] as char);
         output.push(TABLE[(((a & 0x03) << 4) | (b >> 4)) as usize] as char);
-        output.push(if chunk.len() > 1 { TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char } else { '=' });
-        output.push(if chunk.len() > 2 { TABLE[(c & 0x3f) as usize] as char } else { '=' });
+        output.push(if chunk.len() > 1 {
+            TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(c & 0x3f) as usize] as char
+        } else {
+            '='
+        });
     }
     Ok(Value::String(output))
 }
 
 fn base64_decode(arguments: &[Value]) -> Result<Value, String> {
-    if arguments.is_empty() || arguments.len() > 2 { return Err(format!("base64_decode() expects 1 or 2 arguments, {} given", arguments.len())); }
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!(
+            "base64_decode() expects 1 or 2 arguments, {} given",
+            arguments.len()
+        ));
+    }
     let input = arguments[0].show();
     let strict = arguments.get(1).is_some_and(Value::truthy);
     let mut output = Vec::with_capacity(input.len() * 3 / 4);
@@ -2156,20 +3431,30 @@ fn base64_decode(arguments: &[Value]) -> Result<Value, String> {
     let mut bits = 0u8;
     let mut padded = false;
     for byte in input.bytes() {
-        if byte.is_ascii_whitespace() { continue; }
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
         let sextet = match byte {
             b'A'..=b'Z' => Some(byte - b'A'),
             b'a'..=b'z' => Some(byte - b'a' + 26),
             b'0'..=b'9' => Some(byte - b'0' + 52),
-            b'+' => Some(62), b'/' => Some(63),
-            b'=' => { padded = true; continue; }
+            b'+' => Some(62),
+            b'/' => Some(63),
+            b'=' => {
+                padded = true;
+                continue;
+            }
             _ => {
-                if strict { return Ok(Value::Bool(false)); }
+                if strict {
+                    return Ok(Value::Bool(false));
+                }
                 continue;
             }
         };
         if padded {
-            if strict { return Ok(Value::Bool(false)); }
+            if strict {
+                return Ok(Value::Bool(false));
+            }
             continue;
         }
         accumulator = (accumulator << 6) | sextet.unwrap() as u32;
@@ -2184,31 +3469,56 @@ fn base64_decode(arguments: &[Value]) -> Result<Value, String> {
 }
 
 pub(crate) fn format_values(format: &str, values: &[Value]) -> Result<String, String> {
-    let arguments = std::iter::once(Value::String(format.to_string())).chain(values.iter().cloned()).collect::<Vec<_>>();
-    if arguments.is_empty() { return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into()); }
+    let arguments = std::iter::once(Value::String(format.to_string()))
+        .chain(values.iter().cloned())
+        .collect::<Vec<_>>();
+    if arguments.is_empty() {
+        return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into());
+    }
     let values = &arguments[1..];
     let bytes = format.as_bytes();
     let mut output = Vec::new();
     let (mut cursor, mut next_value) = (0usize, 0usize);
     while cursor < bytes.len() {
-        if bytes[cursor] != b'%' { output.push(bytes[cursor]); cursor += 1; continue; }
+        if bytes[cursor] != b'%' {
+            output.push(bytes[cursor]);
+            cursor += 1;
+            continue;
+        }
         cursor += 1;
-        if bytes.get(cursor) == Some(&b'%') { output.push(b'%'); cursor += 1; continue; }
+        if bytes.get(cursor) == Some(&b'%') {
+            output.push(b'%');
+            cursor += 1;
+            continue;
+        }
         let digits_start = cursor;
-        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+        }
         let explicit = if bytes.get(cursor) == Some(&b'$') && cursor > digits_start {
-            let position = std::str::from_utf8(&bytes[digits_start..cursor]).unwrap_or("0").parse::<usize>().unwrap_or(0);
+            let position = std::str::from_utf8(&bytes[digits_start..cursor])
+                .unwrap_or("0")
+                .parse::<usize>()
+                .unwrap_or(0);
             cursor += 1;
             Some(position.saturating_sub(1))
-        } else { cursor = digits_start; None };
+        } else {
+            cursor = digits_start;
+            None
+        };
         let mut flags = Vec::new();
         let mut custom_pad = None;
         loop {
             match bytes.get(cursor) {
-                Some(byte) if b"-+ 0#".contains(byte) => { flags.push(*byte); cursor += 1; }
+                Some(byte) if b"-+ 0#".contains(byte) => {
+                    flags.push(*byte);
+                    cursor += 1;
+                }
                 Some(b'\'') => {
                     cursor += 1;
-                    custom_pad = Some(*bytes.get(cursor).ok_or_else(|| "ValueError:sprintf(): Unterminated padding flag".to_string())?);
+                    custom_pad = Some(*bytes.get(cursor).ok_or_else(|| {
+                        "ValueError:sprintf(): Unterminated padding flag".to_string()
+                    })?);
                     cursor += 1;
                 }
                 _ => break,
@@ -2216,37 +3526,74 @@ pub(crate) fn format_values(format: &str, values: &[Value]) -> Result<String, St
         }
         let width = if bytes.get(cursor) == Some(&b'*') {
             cursor += 1;
-            let width_value = values.get(next_value).ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
+            let width_value = values
+                .get(next_value)
+                .ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
             next_value += 1;
             let raw_width = width_value.dereference().number() as i64;
-            if raw_width < 0 { flags.push(b'-'); raw_width.unsigned_abs().min(1_000_000) as usize }
-            else { (raw_width as u64).min(1_000_000) as usize }
+            if raw_width < 0 {
+                flags.push(b'-');
+                raw_width.unsigned_abs().min(1_000_000) as usize
+            } else {
+                (raw_width as u64).min(1_000_000) as usize
+            }
         } else {
             let width_start = cursor;
-            while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
-            std::str::from_utf8(&bytes[width_start..cursor]).ok().and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(1_000_000)
+            while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+                cursor += 1;
+            }
+            std::str::from_utf8(&bytes[width_start..cursor])
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0)
+                .min(1_000_000)
         };
         let precision = if bytes.get(cursor) == Some(&b'.') {
             cursor += 1;
             if bytes.get(cursor) == Some(&b'*') {
                 cursor += 1;
-                let precision_value = values.get(next_value).ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
+                let precision_value = values
+                    .get(next_value)
+                    .ok_or_else(|| "ArgumentCountError:sprintf(): Too few arguments".to_string())?;
                 next_value += 1;
                 let raw_precision = precision_value.dereference().number() as i64;
                 (raw_precision >= 0).then_some((raw_precision as u64).min(1_000_000) as usize)
             } else {
                 let precision_start = cursor;
-                while bytes.get(cursor).is_some_and(u8::is_ascii_digit) { cursor += 1; }
-                Some(std::str::from_utf8(&bytes[precision_start..cursor]).ok().and_then(|value| value.parse::<usize>().ok()).unwrap_or(0).min(1_000_000))
+                while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+                    cursor += 1;
+                }
+                Some(
+                    std::str::from_utf8(&bytes[precision_start..cursor])
+                        .ok()
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(0)
+                        .min(1_000_000),
+                )
             }
-        } else { None };
-        let conversion = *bytes.get(cursor).ok_or_else(|| "ValueError:sprintf(): Unterminated format specifier".to_string())?;
+        } else {
+            None
+        };
+        let conversion = *bytes
+            .get(cursor)
+            .ok_or_else(|| "ValueError:sprintf(): Unterminated format specifier".to_string())?;
         cursor += 1;
-        let index = explicit.unwrap_or_else(|| { let index = next_value; next_value += 1; index });
-        let value = values.get(index).ok_or_else(|| format!("ArgumentCountError:sprintf(): Too few arguments"))?;
+        let index = explicit.unwrap_or_else(|| {
+            let index = next_value;
+            next_value += 1;
+            index
+        });
+        let value = values
+            .get(index)
+            .ok_or_else(|| format!("ArgumentCountError:sprintf(): Too few arguments"))?;
         let dereferenced = value.dereference();
         let mut rendered = match conversion {
-            b's' => { let text = dereferenced.show(); precision.map_or(text.clone(), |limit| String::from_utf8_lossy(&text.as_bytes()[..text.len().min(limit)]).into_owned()) }
+            b's' => {
+                let text = dereferenced.show();
+                precision.map_or(text.clone(), |limit| {
+                    String::from_utf8_lossy(&text.as_bytes()[..text.len().min(limit)]).into_owned()
+                })
+            }
             b'd' | b'i' => (dereferenced.number() as i64).to_string(),
             b'u' => (dereferenced.number() as i64 as u64).to_string(),
             b'x' => format!("{:x}", dereferenced.number() as i64 as u64),
@@ -2257,58 +3604,114 @@ pub(crate) fn format_values(format: &str, values: &[Value]) -> Result<String, St
             b'f' | b'F' => format!("{:.*}", precision.unwrap_or(6), dereferenced.number()),
             b'e' | b'E' => {
                 let text = format!("{:.*e}", precision.unwrap_or(6), dereferenced.number());
-                if conversion == b'E' { text.to_ascii_uppercase() } else { text }
+                if conversion == b'E' {
+                    text.to_ascii_uppercase()
+                } else {
+                    text
+                }
             }
             b'g' | b'G' => format!("{:.*}", precision.unwrap_or(6), dereferenced.number()),
-            _ => return Err(format!("ValueError:sprintf(): Unknown format specifier \"{}\"", conversion as char)),
+            _ => {
+                return Err(format!(
+                    "ValueError:sprintf(): Unknown format specifier \"{}\"",
+                    conversion as char
+                ))
+            }
         };
-        if matches!(conversion, b'd' | b'i' | b'f' | b'F' | b'e' | b'E' | b'g' | b'G') && !rendered.starts_with('-') {
-            if flags.contains(&b'+') { rendered.insert(0, '+'); }
-            else if flags.contains(&b' ') { rendered.insert(0, ' '); }
+        if matches!(
+            conversion,
+            b'd' | b'i' | b'f' | b'F' | b'e' | b'E' | b'g' | b'G'
+        ) && !rendered.starts_with('-')
+        {
+            if flags.contains(&b'+') {
+                rendered.insert(0, '+');
+            } else if flags.contains(&b' ') {
+                rendered.insert(0, ' ');
+            }
         }
-        if flags.contains(&b'#') && !rendered.starts_with("0x") && matches!(conversion, b'x' | b'X') {
+        if flags.contains(&b'#') && !rendered.starts_with("0x") && matches!(conversion, b'x' | b'X')
+        {
             rendered.insert_str(0, if conversion == b'X' { "0X" } else { "0x" });
         }
-        let padding = if conversion == b'c' { 0 } else { width.saturating_sub(rendered.len()) };
-        let pad_byte = custom_pad.unwrap_or(if flags.contains(&b'0') && precision.is_none() { b'0' } else { b' ' });
-        if flags.contains(&b'-') { output.extend_from_slice(rendered.as_bytes()); output.extend(std::iter::repeat_n(pad_byte, padding)); }
-        else if pad_byte == b'0' {
-            let prefix_len = if rendered.starts_with("0x") || rendered.starts_with("0X") { 2 }
-                else if matches!(rendered.as_bytes().first(), Some(b'+' | b'-' | b' ')) { 1 } else { 0 };
+        let padding = if conversion == b'c' {
+            0
+        } else {
+            width.saturating_sub(rendered.len())
+        };
+        let pad_byte = custom_pad.unwrap_or(if flags.contains(&b'0') && precision.is_none() {
+            b'0'
+        } else {
+            b' '
+        });
+        if flags.contains(&b'-') {
+            output.extend_from_slice(rendered.as_bytes());
+            output.extend(std::iter::repeat_n(pad_byte, padding));
+        } else if pad_byte == b'0' {
+            let prefix_len = if rendered.starts_with("0x") || rendered.starts_with("0X") {
+                2
+            } else if matches!(rendered.as_bytes().first(), Some(b'+' | b'-' | b' ')) {
+                1
+            } else {
+                0
+            };
             output.extend_from_slice(&rendered.as_bytes()[..prefix_len]);
             output.extend(std::iter::repeat_n(b'0', padding));
             output.extend_from_slice(&rendered.as_bytes()[prefix_len..]);
+        } else {
+            output.extend(std::iter::repeat_n(pad_byte, padding));
+            output.extend_from_slice(rendered.as_bytes());
         }
-        else { output.extend(std::iter::repeat_n(pad_byte, padding)); output.extend_from_slice(rendered.as_bytes()); }
     }
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 fn sprintf(arguments: &[Value]) -> Result<Value, String> {
-    if arguments.is_empty() { return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into()); }
-    Ok(Value::String(format_values(&arguments[0].show(), &arguments[1..])?))
+    if arguments.is_empty() {
+        return Err("ArgumentCountError:sprintf() expects at least 1 argument, 0 given".into());
+    }
+    Ok(Value::String(format_values(
+        &arguments[0].show(),
+        &arguments[1..],
+    )?))
 }
 
 fn unpack_values(value: &Value) -> Result<Vec<Value>, String> {
-    let Value::Array(array) = value.dereference() else { return Err(format!("TypeError:values must be of type array, {} given", value.type_name())); };
+    let Value::Array(array) = value.dereference() else {
+        return Err(format!(
+            "TypeError:values must be of type array, {} given",
+            value.type_name()
+        ));
+    };
     Ok(array.iter().map(|(_, value)| value.clone()).collect())
 }
 
 fn parse_str(arguments: &[Value]) -> Result<Value, String> {
-    if arguments.len() != 2 { return Err(format!("ArgumentCountError:parse_str() expects exactly 2 arguments, {} given", arguments.len())); }
+    if arguments.len() != 2 {
+        return Err(format!(
+            "ArgumentCountError:parse_str() expects exactly 2 arguments, {} given",
+            arguments.len()
+        ));
+    }
     let input = arguments[0].show();
     let mut result = Value::Null;
     for field in input.split('&') {
-        if field.is_empty() { continue; }
+        if field.is_empty() {
+            continue;
+        }
         let (raw_key, raw_value) = field.split_once('=').unwrap_or((field, ""));
         let decoded_key = url_decode(raw_key, true);
         let value = Value::String(url_decode(raw_value, true));
         let (root, mut path) = match decoded_key.find('[') {
-            Some(index) => (&decoded_key[..index], parse_query_path(&decoded_key[index..])),
+            Some(index) => (
+                &decoded_key[..index],
+                parse_query_path(&decoded_key[index..]),
+            ),
             None => (decoded_key.as_str(), Vec::new()),
         };
         let root = root.trim_start().replace(['.', ' '], "_");
-        if root.is_empty() { continue; }
+        if root.is_empty() {
+            continue;
+        }
         let root_key = Value::String(root).array_key()?;
         path.insert(0, Some(root_key));
         result = set_query_path(result, &path, value)?;
@@ -2320,17 +3723,36 @@ fn parse_query_path(suffix: &str) -> Vec<Option<crate::ArrayKey>> {
     let mut path = Vec::new();
     let mut rest = suffix;
     while let Some(after_open) = rest.strip_prefix('[') {
-        let Some(close) = after_open.find(']') else { return Vec::new(); };
+        let Some(close) = after_open.find(']') else {
+            return Vec::new();
+        };
         let key = &after_open[..close];
-        path.push(if key.is_empty() { None } else { Value::String(key.to_string()).array_key().ok() });
+        path.push(if key.is_empty() {
+            None
+        } else {
+            Value::String(key.to_string()).array_key().ok()
+        });
         rest = &after_open[close + 1..];
     }
-    if !rest.is_empty() { Vec::new() } else { path }
+    if !rest.is_empty() {
+        Vec::new()
+    } else {
+        path
+    }
 }
 
-fn set_query_path(root: Value, path: &[Option<crate::ArrayKey>], value: Value) -> Result<Value, String> {
-    let Some((segment, rest)) = path.split_first() else { return Ok(value); };
-    let root = match root.dereference() { Value::Array(_) | Value::Null => root, _ => Value::Null };
+fn set_query_path(
+    root: Value,
+    path: &[Option<crate::ArrayKey>],
+    value: Value,
+) -> Result<Value, String> {
+    let Some((segment, rest)) = path.split_first() else {
+        return Ok(value);
+    };
+    let root = match root.dereference() {
+        Value::Array(_) | Value::Null => root,
+        _ => Value::Null,
+    };
     match segment {
         Some(key) if rest.is_empty() => root.array_set(key.clone(), value),
         Some(key) => {
@@ -2340,8 +3762,14 @@ fn set_query_path(root: Value, path: &[Option<crate::ArrayKey>], value: Value) -
         None if rest.is_empty() => root.array_append(value),
         None => {
             let appended = root.array_append(Value::Null)?;
-            let Value::Array(array) = appended.dereference() else { return Err("parse_str(): failed to append query value".into()); };
-            let key = array.iter().last().map(|(key, _)| key.clone()).ok_or("parse_str(): failed to resolve appended key")?;
+            let Value::Array(array) = appended.dereference() else {
+                return Err("parse_str(): failed to append query value".into());
+            };
+            let key = array
+                .iter()
+                .last()
+                .map(|(key, _)| key.clone())
+                .ok_or("parse_str(): failed to resolve appended key")?;
             let child = set_query_path(Value::Null, rest, value)?;
             appended.array_set(key, child)
         }
@@ -2349,20 +3777,33 @@ fn set_query_path(root: Value, path: &[Option<crate::ArrayKey>], value: Value) -
 }
 
 fn random_index(random: &mut impl std::io::Read, upper_exclusive: usize) -> Result<usize, String> {
-    let upper = u64::try_from(upper_exclusive).map_err(|_| "string is too long to shuffle".to_string())?;
-    if upper == 0 { return Err("random bound must be positive".into()); }
+    let upper =
+        u64::try_from(upper_exclusive).map_err(|_| "string is too long to shuffle".to_string())?;
+    if upper == 0 {
+        return Err("random bound must be positive".into());
+    }
     let reject_below = upper.wrapping_neg() % upper;
     loop {
         let mut bytes = [0_u8; 8];
-        random.read_exact(&mut bytes).map_err(|error| format!("secure random source failed: {error}"))?;
+        random
+            .read_exact(&mut bytes)
+            .map_err(|error| format!("secure random source failed: {error}"))?;
         let sample = u64::from_ne_bytes(bytes);
-        if sample >= reject_below { return Ok((sample % upper) as usize); }
+        if sample >= reject_below {
+            return Ok((sample % upper) as usize);
+        }
     }
 }
 
 fn change_first_ascii_case(input: &str, uppercase: bool) -> String {
-    let Some(first) = input.chars().next() else { return String::new(); };
-    let changed = if uppercase { first.to_ascii_uppercase() } else { first.to_ascii_lowercase() };
+    let Some(first) = input.chars().next() else {
+        return String::new();
+    };
+    let changed = if uppercase {
+        first.to_ascii_uppercase()
+    } else {
+        first.to_ascii_lowercase()
+    };
     let mut result = String::with_capacity(input.len());
     result.push(changed);
     result.push_str(&input[first.len_utf8()..]);
@@ -2384,8 +3825,15 @@ fn replacement_values(value: &Value) -> Vec<String> {
     }
 }
 
-fn replace_in_string(subject: &str, search: &str, replacement: &str, insensitive: bool) -> (String, usize) {
-    if search.is_empty() { return (subject.to_string(), 0); }
+fn replace_in_string(
+    subject: &str,
+    search: &str,
+    replacement: &str,
+    insensitive: bool,
+) -> (String, usize) {
+    if search.is_empty() {
+        return (subject.to_string(), 0);
+    }
     if !insensitive {
         let count = subject.matches(search).count();
         return (subject.replace(search, replacement), count);
@@ -2402,7 +3850,10 @@ fn replace_in_string(subject: &str, search: &str, replacement: &str, insensitive
             cursor += search_bytes.len();
             count += 1;
         } else {
-            let character = subject[cursor..].chars().next().expect("cursor is on a UTF-8 boundary");
+            let character = subject[cursor..]
+                .chars()
+                .next()
+                .expect("cursor is on a UTF-8 boundary");
             output.push(character);
             cursor += character.len_utf8();
         }
@@ -2428,14 +3879,18 @@ pub(crate) fn replace(name: &str, arguments: &[Value]) -> Result<(Value, usize),
         return Err(format!("{function}(): Argument #2 ($replace) must be of type string when argument #1 ($search) is a string"));
     }
     let insensitive = function == "str_ireplace";
-    let replacement_pairs = searches.into_iter().enumerate().map(|(index, search)| {
-        let replacement = match (search_is_array, replacement_is_array) {
-            (true, true) => replacements.get(index).cloned().unwrap_or_default(),
-            (_, true) => replacements.first().cloned().unwrap_or_default(),
-            _ => replacements.first().cloned().unwrap_or_default(),
-        };
-        (search, replacement)
-    }).collect::<Vec<_>>();
+    let replacement_pairs = searches
+        .into_iter()
+        .enumerate()
+        .map(|(index, search)| {
+            let replacement = match (search_is_array, replacement_is_array) {
+                (true, true) => replacements.get(index).cloned().unwrap_or_default(),
+                (_, true) => replacements.first().cloned().unwrap_or_default(),
+                _ => replacements.first().cloned().unwrap_or_default(),
+            };
+            (search, replacement)
+        })
+        .collect::<Vec<_>>();
     let mut total = 0;
     let subject = arguments[2].dereference();
     let result = match subject {
@@ -2444,7 +3899,8 @@ pub(crate) fn replace(name: &str, arguments: &[Value]) -> Result<(Value, usize),
             for (key, value) in subjects {
                 let mut text = value.show();
                 for (search, replacement) in &replacement_pairs {
-                    let (updated, count) = replace_in_string(&text, search, replacement, insensitive);
+                    let (updated, count) =
+                        replace_in_string(&text, search, replacement, insensitive);
                     text = updated;
                     total += count;
                 }
@@ -2452,7 +3908,11 @@ pub(crate) fn replace(name: &str, arguments: &[Value]) -> Result<(Value, usize),
             }
             Value::array(result)
         }
-        subject @ (Value::String(_) | Value::Integer(_) | Value::Number(_) | Value::Bool(_) | Value::Null) => {
+        subject @ (Value::String(_)
+        | Value::Integer(_)
+        | Value::Number(_)
+        | Value::Bool(_)
+        | Value::Null) => {
             let mut text = subject.show();
             for (search, replacement) in &replacement_pairs {
                 let (updated, count) = replace_in_string(&text, search, replacement, insensitive);
@@ -2461,7 +3921,11 @@ pub(crate) fn replace(name: &str, arguments: &[Value]) -> Result<(Value, usize),
             }
             Value::String(text)
         }
-        _ => return Err(format!("{function}(): Argument #3 ($subject) must be of type string|array")),
+        _ => {
+            return Err(format!(
+                "{function}(): Argument #3 ($subject) must be of type string|array"
+            ))
+        }
     };
     Ok((result, total))
 }

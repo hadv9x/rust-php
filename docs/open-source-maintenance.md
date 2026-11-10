@@ -12,10 +12,10 @@ This page records what repository automation provides and which GitHub settings 
 
 ## Not yet enforced by CI
 
-- [ ] `rustfmt` formatting check and Clippy lint gate. Establish a clean baseline and choose the warning policy before making these required checks; the current development environment did not have either tool installed when this checklist was written.
-- [ ] Run every `examples/*.php` file in CI. Some examples need server state, environment setup, or external services; first make the runnable subset explicit and deterministic.
+- [x] `rustfmt` formatting check and Clippy CI gate. Formatting passes with Rust 1.93.1. Clippy runs on all workspace targets; its 173 emitted warning entries on the initial Rust 1.93.1 baseline are informational, while command/compilation failures fail CI.
+- [x] Run every top-level `examples/*.php` file in CI using the release CLI in a fresh process. Live database and application-server integration checks remain separate because they need external services or setup.
 - [ ] Cross-platform build/test matrix. The release package currently targets Linux x86_64; support targets should be selected and tested before advertising them.
-- [ ] A declared and tested MSRV. `Cargo.toml` does not currently set `rust-version`.
+- [x] MSRV decision: 0.2.0 does not promise a minimum Rust version; CI and release builds pin Rust 1.93.1 for reproducibility. Revisit MSRV before making a stable 1.0 compatibility promise.
 - [ ] Provenance attestations and releases for targets beyond Linux x86_64.
 
 ## GitHub repository settings for maintainers
@@ -23,7 +23,7 @@ This page records what repository automation provides and which GitHub settings 
 In **Settings → Rules → Rulesets**, protect `master` (and `main` if that becomes the default branch):
 
 1. Require pull requests before merging and require at least one approval when the project has multiple maintainers.
-2. Require the `Test workspace (stable)` and `Audit Rust dependencies` checks when applicable. The dependency audit check is only emitted for dependency changes or its scheduled/manual run, so avoid making a conditional check permanently required unless the workflow is adjusted to always emit it.
+2. Require the `Test workspace (Rust 1.93.1)` and `Audit Rust dependencies` checks when applicable. The dependency audit check is only emitted for dependency changes or its scheduled/manual run, so avoid making a conditional check permanently required unless the workflow is adjusted to always emit it.
 3. Block force pushes and branch deletion on the protected branch.
 4. Enable Dependabot security updates and dependency graph. Enable secret scanning and push protection when available for the repository plan.
 5. Review **Settings → Actions → General** and keep workflow token permissions read-only by default.

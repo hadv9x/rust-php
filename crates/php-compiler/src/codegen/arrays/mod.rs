@@ -1,8 +1,8 @@
 //! Bytecode generation for PHP array literals and indexed reads.
 
+use super::CodeGenerator;
 use php_runtime::bytecode::{ArrayEntryKind, Op};
 use php_syntax::Expr;
-use super::CodeGenerator;
 
 fn reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
     match expression {
@@ -18,7 +18,9 @@ fn reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
 
 fn property_reference_path(expression: &Expr) -> Option<(Expr, String, Vec<&Expr>)> {
     match expression {
-        Expr::Property(receiver, property) => Some(((**receiver).clone(), property.clone(), Vec::new())),
+        Expr::Property(receiver, property) => {
+            Some(((**receiver).clone(), property.clone(), Vec::new()))
+        }
         Expr::Index(array, key) => {
             let (receiver, property, mut keys) = property_reference_path(array)?;
             keys.push(key);
@@ -40,17 +42,35 @@ impl CodeGenerator<'_> {
                         entry_kinds.push(ArrayEntryKind::Unpack);
                     } else if item.by_reference {
                         if let Some((variable, keys)) = reference_path(&item.value) {
-                            if let Some(key) = &item.key { self.expression(key); }
-                            for key in &keys { self.expression(key); }
-                            self.instructions.push(Op::LoadReference(variable, keys.len()));
-                        } else if let Some((receiver, property, keys)) = property_reference_path(&item.value) {
-                            if let Some(key) = &item.key { self.expression(key); }
+                            if let Some(key) = &item.key {
+                                self.expression(key);
+                            }
+                            for key in &keys {
+                                self.expression(key);
+                            }
+                            self.instructions
+                                .push(Op::LoadReference(variable, keys.len()));
+                        } else if let Some((receiver, property, keys)) =
+                            property_reference_path(&item.value)
+                        {
+                            if let Some(key) = &item.key {
+                                self.expression(key);
+                            }
                             self.expression(&receiver);
                             if keys.is_empty() {
-                                self.instructions.push(Op::LoadPropertyReference(property, self.current_class.clone()));
+                                self.instructions.push(Op::LoadPropertyReference(
+                                    property,
+                                    self.current_class.clone(),
+                                ));
                             } else {
-                                for key in &keys { self.expression(key); }
-                                self.instructions.push(Op::LoadPropertyArrayReference(property, keys.len(), self.current_class.clone()));
+                                for key in &keys {
+                                    self.expression(key);
+                                }
+                                self.instructions.push(Op::LoadPropertyArrayReference(
+                                    property,
+                                    keys.len(),
+                                    self.current_class.clone(),
+                                ));
                             }
                         } else {
                             self.errors.push("Array reference values must be variables, array elements, or property array elements".into());

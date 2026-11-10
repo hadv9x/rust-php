@@ -19,7 +19,10 @@ fn by_reference_array_mutators_detach_copied_slots_and_preserve_embedded_referen
         $reference_copy[0] = 9;
         echo $shared, ':', $with_reference[0], ':', $reference_copy[0];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1,2|1,2,3|1:2|0,1,2|9:9:9");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1,2|1,2,3|1:2|0,1,2|9:9:9"
+    );
 }
 
 #[test]
@@ -36,7 +39,10 @@ fn array_shift_and_splice_detach_copied_arrays_and_preserve_retained_references(
         echo $removed, ':', $removedBySplice[0], '|';
         echo implode(',', $original), '|', implode(',', $shifted), '|', implode(',', $spliced), '|', $shared;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "first:first|first,9,last|9,last|replacement,9,last|9");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "first:first|first,9,last|9,last|replacement,9,last|9"
+    );
 }
 
 #[test]
@@ -46,11 +52,20 @@ fn fractional_float_array_keys_emit_precision_deprecation_and_truncate() {
         $array[2.75] = 'write';
         echo $array[1.25], ':', $array[2];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "literal:write");
     assert_eq!(result.diagnostics.len(), 3);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.starts_with("Implicit conversion from float ") && diagnostic.message.ends_with(" to int loses precision")));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .starts_with("Implicit conversion from float ")
+        && diagnostic.message.ends_with(" to int loses precision")));
 }
 
 #[test]
@@ -65,7 +80,10 @@ fn array_and_object_offsets_raise_catchable_illegal_offset_type_errors() {
             catch (TypeError $error) { echo $error->getMessage(), ';'; }
         }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Illegal offset type;Illegal offset type;Illegal offset type;Illegal offset type;");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Illegal offset type;Illegal offset type;Illegal offset type;Illegal offset type;"
+    );
 }
 
 #[test]
@@ -110,10 +128,16 @@ fn isset_and_empty_on_string_invalid_keys_warn_and_keep_php_boolean_results() {
         $object = new stdClass();
         echo isset($text[[]]), ':', empty($text[$object]);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, ":1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.starts_with("Cannot access offset of type ") && diagnostic.message.ends_with(" on string")));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .starts_with("Cannot access offset of type ")
+        && diagnostic.message.ends_with(" on string")));
 }
 
 #[test]
@@ -125,10 +149,16 @@ fn fractional_float_keys_in_array_helpers_emit_precision_deprecations() {
         $exists = array_key_exists(1.5, [1 => 'present']);
         echo $filled[1], ':', $combined[2], ':', $column[3], ':', $exists ? 'yes' : 'no';
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "filled:combined:column:yes");
     assert_eq!(result.diagnostics.len(), 4);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
 }
 
 #[test]
@@ -138,11 +168,20 @@ fn fractional_float_keys_in_destructuring_targets_emit_deprecations() {
         [$target[2.5]] = ['value'];
         echo $target[2];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "value");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert_eq!(result.diagnostics[0].message, "Implicit conversion from float 2.5 to int loses precision");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "Implicit conversion from float 2.5 to int loses precision"
+    );
 }
 
 #[test]
@@ -153,13 +192,28 @@ fn non_representable_float_array_keys_emit_php_85_warnings() {
         $array[1e100] = 'large';
         echo count($array);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "2");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[0].message, "unexpected NAN value was coerced to int");
-    assert_eq!(result.diagnostics[1].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[1].message, "The float 1.0E+100 is not representable as an int, cast occurred");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "unexpected NAN value was coerced to int"
+    );
+    assert_eq!(
+        result.diagnostics[1].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert_eq!(
+        result.diagnostics[1].message,
+        "The float 1.0E+100 is not representable as an int, cast occurred"
+    );
 }
 
 #[test]
@@ -168,12 +222,24 @@ fn non_representable_float_keys_in_array_helpers_emit_php_85_warnings() {
         $array = array_fill_keys([sqrt(-1), 1e100], 'value');
         echo count($array);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "2");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics[0].message, "unexpected NAN value was coerced to int");
-    assert_eq!(result.diagnostics[1].message, "The float 1.0E+100 is not representable as an int, cast occurred");
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert_eq!(
+        result.diagnostics[0].message,
+        "unexpected NAN value was coerced to int"
+    );
+    assert_eq!(
+        result.diagnostics[1].message,
+        "The float 1.0E+100 is not representable as an int, cast occurred"
+    );
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
 }
 
 #[test]
@@ -187,13 +253,30 @@ fn php85_destructuring_scalars_warns_and_assigns_null_but_null_stays_silent() {
         [$nullValue] = null;
         echo gettype($integer), ':', gettype($float), ':', gettype($string), ':', gettype($boolean), ':', gettype($resource), ':', gettype($nullValue);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "NULL:NULL:NULL:NULL:NULL:NULL");
     assert_eq!(result.diagnostics.len(), 5);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), [
-        "Cannot use int as array", "Cannot use float as array", "Cannot use string as array", "Cannot use bool as array", "Cannot use resource as array",
-    ]);
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Cannot use int as array",
+            "Cannot use float as array",
+            "Cannot use string as array",
+            "Cannot use bool as array",
+            "Cannot use resource as array",
+        ]
+    );
 }
 
 #[test]
@@ -203,7 +286,10 @@ fn php85_destructuring_objects_still_raise_error() {
         try { [$value] = new DestructureObject(); }
         catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Error:Cannot use object of type DestructureObject as array");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:Cannot use object of type DestructureObject as array"
+    );
 }
 
 #[test]
@@ -220,7 +306,10 @@ fn destructuring_by_reference_binds_source_slots_and_nested_slots() {
    $holder['slot'] = 12;
    echo $source[0], ':', $source[1]['value'], ':', $temporaryAlias;
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "12:22:41");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "12:22:41"
+    );
 }
 
 #[test]
@@ -234,7 +323,10 @@ fn destructuring_by_reference_binds_direct_and_array_offset_object_properties() 
         $holder->items[0] = 12;
         echo $source[0], ':', $holder->direct, ':', $holder->items[0];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "12:12:12");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "12:12:12"
+    );
 }
 
 #[test]
@@ -258,12 +350,27 @@ fn destructuring_missing_array_keys_emit_undefined_key_warnings() {
         [, $omittedTarget] = [];
         echo $first, ':', gettype($second), ':', $known, ':', gettype($missing), ':', gettype($omittedTarget);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "42:NULL:7:NULL:NULL");
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), [
-        "Undefined array key 1", "Undefined array key \"missing\"", "Undefined array key 1",
-    ]);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Undefined array key 1",
+            "Undefined array key \"missing\"",
+            "Undefined array key 1",
+        ]
+    );
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
 }
 
 #[test]
@@ -274,7 +381,10 @@ fn destructuring_by_reference_rejects_typed_object_properties() {
         try { [&$object->value] = [5]; }
         catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Error:Typed property TypedReferenceDestructureTarget::$value must not be referenced");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:Typed property TypedReferenceDestructureTarget::$value must not be referenced"
+    );
 }
 
 #[test]
@@ -293,11 +403,21 @@ fn array_flip_warns_and_skips_values_that_cannot_be_array_keys() {
         $flipped = array_flip(['first' => &$referenced, 'float' => 1.5, 'array' => [], 'last' => 'shared']);
         echo $flipped['shared'], ':', count($flipped);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "last:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "array_flip(): Can only flip STRING and INTEGER values!"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message
+            == "array_flip(): Can only flip STRING and INTEGER values!"));
 }
 
 #[test]
@@ -307,11 +427,21 @@ fn array_count_values_warns_and_skips_non_integer_and_non_string_values() {
         $counts = array_count_values(['int' => &$referenced, 'string' => 'x', 'float' => 2.5, 'bool' => true, 'array' => []]);
         echo $counts[7], ':', $counts['x'], ':', count($counts);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1:2");
     assert_eq!(result.diagnostics.len(), 3);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "array_count_values(): Can only count string and integer values, entry skipped"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message
+            == "array_count_values(): Can only count string and integer values, entry skipped"));
 }
 
 #[test]
@@ -343,7 +473,10 @@ fn array_change_key_case_folds_ascii_without_changing_unicode_bytes() {
         $upper = array_change_key_case($input, CASE_UPPER);
         echo implode(',', array_keys($lower)), '|', implode(',', array_keys($upper));
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Äbc,abc,äbc|ÄBC,ABC,äBC");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Äbc,abc,äbc|ÄBC,ABC,äBC"
+    );
 }
 
 #[test]
@@ -362,7 +495,10 @@ fn assignment_appends_at_multiple_levels_of_an_array_path() {
         $body['personalizations'][]['to'][]['email'] = 'ada@example.test';
         echo $body['personalizations'][0]['to'][0]['email'];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ada@example.test");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ada@example.test"
+    );
 }
 
 #[test]
@@ -423,7 +559,10 @@ fn array_filter_modes_pass_keys_and_values_with_php_constants() {
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "1:2:1:4:1:3\n1\n");
 
-    let invalid = compile_source("<?php array_filter([1], 'is_int', 3);").unwrap().execute().unwrap_err();
+    let invalid = compile_source("<?php array_filter([1], 'is_int', 3);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
     assert!(invalid.contains("ARRAY_FILTER_USE_BOTH"));
 }
 
@@ -489,7 +628,10 @@ fn regular_array_comparison_matches_values_by_key_and_handles_missing_keys() {
         $object = new SortComparisonObject();
         echo ($object <=> []);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:1:1:1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:1:1:1:1:1:1"
+    );
 }
 
 #[test]
@@ -499,7 +641,10 @@ fn regular_array_sort_does_not_treat_unicode_whitespace_as_numeric_string_paddin
         sort($values, SORT_REGULAR);
         echo implode('|', $values), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2|10|\u{00a0}2\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2|10|\u{00a0}2\n"
+    );
 }
 
 #[test]
@@ -509,7 +654,10 @@ fn regular_array_sort_compares_large_integer_strings_without_float_rounding() {
         sort($values, SORT_REGULAR);
         echo implode(',', $values), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "9007199254740992,9007199254740993\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "9007199254740992,9007199254740993\n"
+    );
 }
 
 #[test]
@@ -522,7 +670,10 @@ fn case_insensitive_string_and_natural_sorts_fold_ascii_only() {
         sort($natural, SORT_NATURAL | SORT_FLAG_CASE);
         echo implode(',', $natural), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "A,a,z,İ\nZ1,z2,z10,İ2\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "A,a,z,İ\nZ1,z2,z10,İ2\n"
+    );
 }
 
 #[test]
@@ -533,7 +684,10 @@ fn regular_array_sort_compares_objects_by_class_and_properties() {
         sort($records, SORT_REGULAR);
         echo $records[0]->rank, ':', $records[0]->label, ',', $records[1]->rank, ':', $records[1]->label, ',', $records[2]->rank, ':', $records[2]->label, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:a,2:a,2:b\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:a,2:a,2:b\n"
+    );
 }
 
 #[test]
@@ -566,7 +720,10 @@ fn regular_array_sort_compares_nested_arrays_by_keys_and_values() {
         sort($rows, SORT_REGULAR);
         echo $rows[0]['rank'], ':', $rows[1]['rank'], ':', $rows[1]['tie']['score'], ':', $rows[2]['tie']['score'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:2:1:5\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:2:1:5\n"
+    );
 }
 
 #[test]
@@ -595,7 +752,10 @@ fn array_multisort_reports_catchable_value_and_type_errors() {
         try { array_multisort('not an array'); }
         catch (TypeError $error) { echo get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ValueError:TypeError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ValueError:TypeError"
+    );
 }
 
 #[test]
@@ -612,7 +772,10 @@ fn array_multisort_rejects_unknown_and_repeated_flag_kinds() {
             catch (TypeError $error) { echo 'TypeError:'; }
         }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ValueError:TypeError:TypeError:ValueError:");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ValueError:TypeError:TypeError:ValueError:"
+    );
 }
 
 #[test]
@@ -627,7 +790,10 @@ fn array_copies_separate_nested_values_but_keep_embedded_reference_cells() {
         $third['nested']['value'] = 30;
         echo $shared, ':', $original['nested']['value'], ':', $copy['nested']['value'], ':', $third['nested']['value'], ':', $original['reference'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:10:20:30:2\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:10:20:30:2\n"
+    );
 }
 
 #[test]
@@ -698,11 +864,20 @@ fn recursive_count_warns_once_and_returns_partial_entry_count() {
         $inner['outer'] =& $outer;
         echo ':', count($outer, COUNT_RECURSIVE);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1:2");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "count(): Recursion detected"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message == "count(): Recursion detected"));
 }
 
 #[test]
@@ -720,7 +895,10 @@ fn array_pop_and_shift_return_values_without_leaking_removed_references() {
         $head[1] = 6;
         echo $shared, ':', $remaining, ':', count($tail), ':', count($head), ':', array_key_first($head), ':', array_key_last($head);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "5:6:0:2:0:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "5:6:0:2:0:1"
+    );
 }
 
 #[test]
@@ -734,7 +912,10 @@ fn array_splice_casts_object_replacements_to_property_values() {
         $removed = array_splice($array, 1, 1, new SpliceReplacementObject());
         echo implode(',', $removed), ':', implode(',', $array), ':', count($array);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "removed:left,one,two,right:4");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "removed:left,one,two,right:4"
+    );
 }
 
 #[test]
@@ -748,7 +929,10 @@ fn copy_on_write_detaches_array_aliases_without_losing_element_references() {
         $alias['alias'] = 2;
         echo $array['value'], ':', $snapshot['value'], ':', $shared, ':', $snapshot['alias'];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "20:10:2:2");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "20:10:2:2"
+    );
 }
 
 #[test]
@@ -760,7 +944,10 @@ fn by_reference_array_walk_detaches_a_copied_array_but_keeps_shared_slots() {
         array_walk($copy, function (&$value) { $value += 10; });
         echo $source['plain'], ':', $copy['plain'], ':', $sourceValue, ':', $source['shared'];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:12:11:11");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:12:11:11"
+    );
 }
 
 #[test]
@@ -772,7 +959,10 @@ fn by_reference_foreach_detaches_a_copy_and_keeps_the_loop_variable_alias() {
         $value = 9;
         echo implode(',', $source), ':', implode(',', $copy);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1,2:10,9");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1,2:10,9"
+    );
 }
 
 #[test]
@@ -804,7 +994,10 @@ fn regular_sort_and_extrema_keep_order_for_incomparable_object_classes() {
         echo ($items[0] === $zulu), ':', ($items[1] === $alpha), ':';
         echo (max($zulu, $alpha) === $zulu), ':', (min($zulu, $alpha) === $zulu);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:1"
+    );
 }
 
 #[test]
@@ -817,7 +1010,10 @@ fn sorting_a_copied_array_separates_keys_but_keeps_element_references() {
         $copy[1] = 9;
         echo array_key_exists('named', $original), ':', $original['other'], ':', $original['named'], ':', $shared, ':', implode(',', $copy), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:9:9:1,9\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:9:9:1,9\n"
+    );
 }
 
 #[test]
@@ -839,18 +1035,35 @@ fn shuffle_detaches_copied_array_keys_and_preserves_embedded_reference_cells() {
 #[test]
 fn array_mutators_reject_literal_array_arguments_with_php_diagnostics() {
     for (source, expected) in [
-        ("<?php array_push([], 1);", "array_push(): Argument #1 ($array) cannot be passed by reference"),
-        ("<?php array_pop(array: []);", "array_pop(): Argument #1 ($array) cannot be passed by reference"),
-        ("<?php sort(array: [2, 1]);", "sort(): Argument #1 ($array) cannot be passed by reference"),
+        (
+            "<?php array_push([], 1);",
+            "array_push(): Argument #1 ($array) cannot be passed by reference",
+        ),
+        (
+            "<?php array_pop(array: []);",
+            "array_pop(): Argument #1 ($array) cannot be passed by reference",
+        ),
+        (
+            "<?php sort(array: [2, 1]);",
+            "sort(): Argument #1 ($array) cannot be passed by reference",
+        ),
     ] {
         let error = compile_source(source).unwrap().execute().unwrap_err();
         assert!(error.contains(expected), "{error}");
     }
-    let caught = compile_source(r#"<?php
+    let caught = compile_source(
+        r#"<?php
         try { array_push([], 1); }
         catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
-    "#).unwrap().execute().unwrap();
-    assert_eq!(caught, "Error:array_push(): Argument #1 ($array) cannot be passed by reference");
+    "#,
+    )
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        caught,
+        "Error:array_push(): Argument #1 ($array) cannot be passed by reference"
+    );
 }
 
 #[test]
@@ -863,7 +1076,10 @@ fn array_walk_ignores_callback_return_and_writes_only_by_reference_changes() {
         array_walk($values, 'uppercaseValue');
         echo implode(',', $returnedOnly), '|', implode(',', $values), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "lower|LOWER,ALSO LOWER\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "lower|LOWER,ALSO LOWER\n"
+    );
 }
 
 #[test]
@@ -892,11 +1108,20 @@ fn array_walk_recursive_warns_once_and_skips_a_recursive_reference_edge() {
         array_walk_recursive($left, function (&$value) use (&$cycleVisits) { $cycleVisits++; });
         echo $visited, ':', $cycleVisits;
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "2:3");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message == "array_walk_recursive(): Recursion detected"));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.message == "array_walk_recursive(): Recursion detected"));
 }
 
 #[test]
@@ -919,7 +1144,10 @@ fn count_accepts_countable_objects_and_validates_modes_and_input_types() {
         try { count(null); } catch (TypeError $error) { echo ':', get_class($error); }
         try { count([], 2); } catch (ValueError $error) { echo ':', get_class($error); }
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1::1,1,:1:1:7:7:4:4:2:TypeError:TypeError:TypeError:ValueError");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1::1,1,:1:1:7:7:4:4:2:TypeError:TypeError:TypeError:ValueError"
+    );
 }
 
 #[test]
@@ -944,7 +1172,10 @@ fn array_callbacks_dispatch_registered_string_and_math_builtins() {
         echo implode(',', array_map('strnatcmp', ['item2', 'item10'], ['item10', 'item2'])), '|';
         echo implode(',', array_map('str_replace', ['cat', 'dog'], ['a cat', 'a dog'], ['fox', 'fox']));
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1,235,12|2,3|-1,1|fox,fox");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1,235,12|2,3|-1,1|fox,fox"
+    );
 }
 
 #[test]
@@ -956,7 +1187,10 @@ fn array_callback_is_resource_tracks_stream_lifecycle() {
         $after = array_map('is_resource', [$stream]);
         echo ($before[0] ? 'open' : 'closed'), ':', ($after[0] ? 'open' : 'closed');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "open:closed");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "open:closed"
+    );
 }
 
 #[test]
@@ -985,10 +1219,16 @@ fn callback_array_functions_warn_when_callbacks_require_references() {
         array_find_key([1], 'byReference');
         echo $mapped[0], ':', $source[0], '|', $walkValues['original'], ':', array_key_first($walkValues), ':', $extra;
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 6);
     assert_eq!(result.output, "99:1|8:original:source");
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
     assert!(result.diagnostics[0].message.contains("array_walk"));
     assert!(result.diagnostics[1].message.contains("array_map"));
     assert!(result.diagnostics[2].message.contains("array_all"));
@@ -1030,12 +1270,34 @@ fn every_user_array_diff_callback_variant_warns_for_reference_parameters() {
         array_uintersect_uassoc($a, $b, 'compareByReference', 'compareByReference');
         array_uintersect_ukey($a, $b, 'compareByReference');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 12, "{:#?}", result.diagnostics);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    let names = ["array_diff_uassoc", "array_diff_ukey", "array_intersect_uassoc", "array_intersect_ukey", "array_udiff", "array_udiff_assoc", "array_udiff_uassoc", "array_udiff_ukey", "array_uintersect", "array_uintersect_assoc", "array_uintersect_uassoc", "array_uintersect_ukey"];
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    let names = [
+        "array_diff_uassoc",
+        "array_diff_ukey",
+        "array_intersect_uassoc",
+        "array_intersect_ukey",
+        "array_udiff",
+        "array_udiff_assoc",
+        "array_udiff_uassoc",
+        "array_udiff_ukey",
+        "array_uintersect",
+        "array_uintersect_assoc",
+        "array_uintersect_uassoc",
+        "array_uintersect_ukey",
+    ];
     for (diagnostic, name) in result.diagnostics.iter().zip(names) {
-        assert!(diagnostic.message.starts_with(&format!("{name}():")), "{diagnostic:?}");
+        assert!(
+            diagnostic.message.starts_with(&format!("{name}():")),
+            "{diagnostic:?}"
+        );
     }
 }
 
@@ -1047,9 +1309,14 @@ fn diff_callback_reference_warning_waits_until_that_comparator_is_called() {
         array_udiff_uassoc(['left' => 1], ['right' => 2], 'compareValuesNormally', 'compareKeysByReference');
         array_udiff_uassoc(['same' => 1], ['same' => 1], 'compareValuesNormally', 'compareKeysByReference');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.starts_with("array_udiff_uassoc(): callback expects a parameter to be passed by reference"));
+    assert!(result.diagnostics[0].message.starts_with(
+        "array_udiff_uassoc(): callback expects a parameter to be passed by reference"
+    ));
 }
 
 #[test]
@@ -1064,11 +1331,19 @@ fn array_filter_reference_callback_arguments_are_temporary_even_with_both_mode()
         $filtered = array_filter($source, 'rewrite_filter_inputs', ARRAY_FILTER_USE_BOTH);
         echo array_key_first($filtered), ':', $filtered['original'], '|', array_key_first($source), ':', $source['original'];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "original:1|original:1");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert!(result.diagnostics[0].message.contains("array_filter(): callback expects a parameter to be passed by reference"));
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("array_filter(): callback expects a parameter to be passed by reference"));
 }
 
 #[test]
@@ -1081,10 +1356,15 @@ fn array_callback_reference_parameters_do_not_bind_reference_backed_source_slots
         $filtered = array_filter($source, 'overwriteCallbackValue');
         echo $shared, ':', $source[0], ':', $mapped[0], ':', $filtered[0];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "7:7:1:7");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.contains("callback expects a parameter to be passed by reference")));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .contains("callback expects a parameter to be passed by reference")));
 }
 
 #[test]
@@ -1100,10 +1380,15 @@ fn static_string_callbacks_support_and_diagnose_by_reference_parameters() {
         echo implode(',', $mapped), ':', implode(',', $ordinary), ':', implode(',', $source), ':',
             is_callable('StaticReferenceArrayCallback::doubleNormally');
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "6,8:6,8:3,4:1");
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.contains("array_map(): callback expects a parameter to be passed by reference"));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("array_map(): callback expects a parameter to be passed by reference"));
 }
 
 #[test]
@@ -1119,10 +1404,15 @@ fn array_walk_static_method_strings_preserve_the_writable_value_argument() {
         array_walk($values, 'StaticWalkCallback::rewriteKey');
         echo $values['left'], ':', array_key_first($values);
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "6:left|7:left");
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.contains("array_walk(): callback expects the key or userdata parameter to be passed by reference"));
+    assert!(result.diagnostics[0].message.contains(
+        "array_walk(): callback expects the key or userdata parameter to be passed by reference"
+    ));
 }
 
 #[test]
@@ -1139,11 +1429,19 @@ fn callback_reference_warnings_require_an_actual_callback_invocation() {
         $mapped = array_map('mutateCallbackInputs', $single);
         echo $single[0], ':', $mapped[0];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert!(result.diagnostics[0].message.starts_with("array_map(): callback expects a parameter to be passed by reference"));
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .starts_with("array_map(): callback expects a parameter to be passed by reference"));
 }
 
 #[test]
@@ -1159,7 +1457,10 @@ fn key_sorts_honor_sort_flags_for_mixed_integer_and_string_keys() {
         krsort($values, SORT_NUMERIC);
         echo implode(',', array_keys($values)), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2,a\na,2\n2,a\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2,a\na,2\n2,a\n"
+    );
 }
 
 #[test]
@@ -1184,7 +1485,10 @@ fn array_rand_uses_catchable_type_and_value_errors() {
         try { array_rand([1], 'nope'); } catch (TypeError $error) { echo get_class($error); }
         echo "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ValueError:TypeError:TypeError\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ValueError:TypeError:TypeError\n"
+    );
 }
 
 #[test]
@@ -1218,7 +1522,10 @@ fn callback_helpers_dispatch_named_reference_and_callable_targets() {
         echo $value, "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "AB\nNO\nPQ\n3\n5\nCD\nEF\nGH\n[I]\nJK\nLM\nchanged\nbefore\n");
+    assert_eq!(
+        output,
+        "AB\nNO\nPQ\n3\n5\nCD\nEF\nGH\n[I]\nJK\nLM\nchanged\nbefore\n"
+    );
 }
 
 #[test]
@@ -1283,7 +1590,10 @@ fn increment_lvalues_support_computed_instance_property_names() {
         $property = 'count';
         echo $target->{$property}++, ':', ++$target->{$property}, ':', $target->{$property}, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:6:6\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:6:6\n"
+    );
 }
 
 #[test]
@@ -1295,7 +1605,10 @@ fn increment_respects_typed_and_readonly_instance_properties() {
         try { ++$target->locked; } catch (Error $error) { echo get_class($error), ':', $error->getMessage(), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "3:5:5\nError:Cannot modify readonly property typedincrementtarget::$locked\n");
+    assert_eq!(
+        output,
+        "3:5:5\nError:Cannot modify readonly property typedincrementtarget::$locked\n"
+    );
 }
 
 #[test]
@@ -1311,7 +1624,10 @@ fn increment_operators_support_variable_variables_and_nested_offsets() {
         $bump = function () use ($targetName, &$rows) { return ++$$targetName['item']['count']; };
         echo $bump(), ':', $rows['item']['count'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "4:5:6:6\n8:9:10:10\n11:11\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:5:6:6\n8:9:10:10\n11:11\n"
+    );
 }
 
 #[test]
@@ -1320,7 +1636,10 @@ fn increment_operators_support_string_offset_lvalues() {
         $text = 'Az';
         echo $text[0]++, ':', $text, ':', ++$text[1], ':', $text, ':', $text[-1], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "A:Bz:aa:Ba:a\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "A:Bz:aa:Ba:a\n"
+    );
 }
 
 #[test]
@@ -1329,14 +1648,26 @@ fn range_emits_php_83_boundary_and_character_step_warnings() {
         echo count(range('', '2')), ':', count(range('ab', 'd')), ':';
         echo count(range(1, 'x')), ':', count(range('a', 'c', 1.0));
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "3:4:2:3");
     assert_eq!(result.diagnostics.len(), 4);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
     assert!(result.diagnostics[0].message.contains("must not be empty"));
-    assert!(result.diagnostics[1].message.contains("must be a single byte, subsequent bytes are ignored"));
-    assert!(result.diagnostics[2].message.contains("other boundary is numeric"));
-    assert!(result.diagnostics[3].message.contains("generating an array of characters"));
+    assert!(result.diagnostics[1]
+        .message
+        .contains("must be a single byte, subsequent bytes are ignored"));
+    assert!(result.diagnostics[2]
+        .message
+        .contains("other boundary is numeric"));
+    assert!(result.diagnostics[3]
+        .message
+        .contains("generating an array of characters"));
     assert_eq!(result.diagnostics[0].source_line, Some(2));
     assert_eq!(result.diagnostics[1].source_line, Some(2));
     assert_eq!(result.diagnostics[2].source_line, Some(3));
@@ -1353,7 +1684,10 @@ fn range_dereferences_numeric_string_and_character_boundaries() {
         echo implode(',', range($decimalStart, $decimalEnd)), '|';
         echo implode(',', range($letterStart, $letterEnd));
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1.5,2.5,3.5|a,b,c");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1.5,2.5,3.5|a,b,c"
+    );
 }
 
 #[test]
@@ -1379,10 +1713,15 @@ fn range_numeric_strings_trim_only_php_ascii_whitespace() {
         echo implode(',', range(' 1', 2)), '|';
         echo implode(',', range(" \t1\r\n", '3'));
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "0,1,2|1,2,3");
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.contains("must be numeric when the other boundary is numeric"));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("must be numeric when the other boundary is numeric"));
 }
 
 #[test]
@@ -1390,10 +1729,15 @@ fn range_uses_first_utf8_bytes_for_non_ascii_character_endpoints() {
     let source = r#"<?php
         echo count(range('é', 'ê')), ':', implode('', range('é', 'ê'));
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:�");
     assert_eq!(result.diagnostics.len(), 4);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.message.contains("single byte, subsequent bytes are ignored")));
+    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic
+        .message
+        .contains("single byte, subsequent bytes are ignored")));
 }
 
 #[test]
@@ -1416,7 +1760,10 @@ fn array_map_dispatches_array_builtin_callbacks() {
         $filledRanges = array_map('array_fill', [0, 2], [2, 1], ['a', 'b']);
         echo implode(',', $padded[0]), ':', implode(',', $padded[1]), ':', implode(',', $filledRanges[0]), ':', $filledRanges[1][2];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "3,7,5|2,12,5|1,1,1|2:2|1:1|2:2:2|2:1:1:7:9|1,0,0:9,9,2,3:a,a:b");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "3,7,5|2,12,5|1,1,1|2:2|1:1|2:2:2|2:1:1:7:9|1,0,0:9,9,2,3:a,a:b"
+    );
 }
 
 #[test]
@@ -1430,7 +1777,10 @@ fn array_pad_preserves_string_keys_and_reindexes_numeric_keys() {
         $right[0] = 'updated';
         echo $shared, ':', $right['label'], ':', $left['label'];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0,label,1,2,3|0,1,2,label,3|updated:keep:keep");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0,label,1,2,3|0,1,2,label,3|updated:keep:keep"
+    );
 }
 
 #[test]
@@ -1446,7 +1796,10 @@ fn loose_array_search_and_diff_use_php8_string_number_comparisons() {
         echo ':', count(array_diff_uassoc([new ArrayDiffStringable()], ['match'], fn($left, $right) => $left <=> $right));
         echo ':', count(array_intersect_uassoc([new ArrayDiffStringable()], ['match'], fn($left, $right) => $left <=> $right));
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":1|1|not numeric|00:0|0:1:0:1");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        ":1|1|not numeric|00:0|0:1:0:1"
+    );
 }
 
 #[test]
@@ -1472,7 +1825,10 @@ fn strict_array_search_uses_identity_for_objects_generators_and_streams() {
         echo in_array($generator, [$generator], true), ':', in_array($stream, [$stream], true), ':';
         echo in_array($stream, [$otherStream], true);
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1::1:1:");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1::1:1:"
+    );
 }
 
 #[test]
@@ -1495,7 +1851,10 @@ fn array_map_dispatches_array_query_and_transform_callbacks() {
         echo $keys[0], ':', $keys[1], ':', $values[0], ':', $values[1], '|';
         echo $found[0], ':', $found[1];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "a:x|4:5|9:8|1:0|L:R|a:x:1:3|a:x");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "a:x|4:5|9:8|1:0|L:R|a:x:1:3|a:x"
+    );
 }
 
 #[test]
@@ -1504,10 +1863,15 @@ fn array_map_forwards_diagnostics_from_array_utility_callbacks() {
         $flipped = array_map('array_flip', [['valid' => 'key', 'invalid' => true]]);
         echo $flipped[0]['key'];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "valid");
     assert_eq!(result.diagnostics.len(), 1);
-    assert!(result.diagnostics[0].message.contains("array_flip(): Can only flip STRING and INTEGER values"));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("array_flip(): Can only flip STRING and INTEGER values"));
 }
 
 #[test]
@@ -1522,7 +1886,10 @@ fn array_map_unique_callback_uses_runtime_string_conversion() {
         $unique = array_map('array_unique', [$values]);
         echo count($unique[0]), ':', (string)$unique[0][0], ':', (string)$unique[0][2];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2:same:other");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:same:other"
+    );
 }
 
 #[test]
@@ -1539,7 +1906,10 @@ fn array_map_count_callback_supports_arrays_and_countable_objects() {
 #[test]
 fn array_map_count_values_callback_preserves_warnings_for_invalid_items() {
     let source = r#"<?php $counts = array_map('array_count_values', [[1, true, 2]]); echo count($counts[0]);"#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "2");
     assert_eq!(result.diagnostics.len(), 1);
     assert!(result.diagnostics[0].message.contains("array_count_values"));
@@ -1555,7 +1925,10 @@ fn array_map_dispatches_array_column_callback_for_nested_records() {
         $objectColumns = array_map('array_column', $objects, ['name']);
         echo $columns[0][1], ':', $columns[1][0], ':', $objectColumns[0][1];
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Lin:Sam:Mo");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Lin:Sam:Mo"
+    );
 }
 
 #[test]
@@ -1589,17 +1962,28 @@ fn increment_operators_handle_numeric_empty_and_non_alphanumeric_strings() {
             gettype($exponent), ':', $exponent, ':', $empty, ':', $punctuation, ':', $nonnumeric, ':',
             $empty_decrement, ':', gettype($boolean), ':', $boolean, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "integer:6:double:2.5:double:6:1:a-b:hello:-1:boolean:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "integer:6:double:2.5:double:6:1:a-b:hello:-1:boolean:1\n"
+    );
 }
 
 #[test]
 fn incrementing_non_ascii_string_preserves_utf8_bytes_and_reports_nonnumeric_deprecation() {
     let source = "<?php $value = 'é'; ++$value; echo bin2hex($value);";
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "c3a9");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert!(result.diagnostics[0].message.contains("Increment on non-numeric string is deprecated"));
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("Increment on non-numeric string is deprecated"));
 }
 
 #[test]
@@ -1624,8 +2008,14 @@ fn increment_deprecations_use_custom_error_handlers_and_handler_exceptions_are_c
             echo $error->getMessage();
         }
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
-    assert_eq!(result.output, "8192:1:Command line code:9:wore:increment handler");
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(
+        result.output,
+        "8192:1:Command line code:9:wore:increment handler"
+    );
     assert!(result.diagnostics.is_empty());
 }
 
@@ -1642,20 +2032,50 @@ fn increment_operators_apply_php_85_boolean_null_and_string_diagnostics() {
         echo $boolean, ':', $null_increment, ':', gettype($null_decrement), ':', $empty_increment, ':',
             $empty_decrement, ':', $alpha, ':', $word;
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1:NULL:1:-1:aa:hello");
     assert_eq!(result.diagnostics.len(), 6);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[1].level, php_runtime::DiagnosticLevel::Warning);
-    assert!(result.diagnostics[0].message.contains("Increment on type bool"));
-    assert!(result.diagnostics[1].message.contains("Decrement on type null"));
-    assert!(result.diagnostics[2].message.contains("Increment on non-numeric string is deprecated"));
-    assert!(result.diagnostics[3].message.contains("Decrement on empty string is deprecated as non-numeric"));
-    assert!(result.diagnostics[2..].iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(2), Some(4), Some(5), Some(6), Some(7), Some(8)]);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert_eq!(
+        result.diagnostics[1].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("Increment on type bool"));
+    assert!(result.diagnostics[1]
+        .message
+        .contains("Decrement on type null"));
+    assert!(result.diagnostics[2]
+        .message
+        .contains("Increment on non-numeric string is deprecated"));
+    assert!(result.diagnostics[3]
+        .message
+        .contains("Decrement on empty string is deprecated as non-numeric"));
+    assert!(result.diagnostics[2..]
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.source_line)
+            .collect::<Vec<_>>(),
+        vec![Some(2), Some(4), Some(5), Some(6), Some(7), Some(8)]
+    );
 
-    let array_error = compile_source("<?php $value = []; try { ++$value; } catch (TypeError $error) { echo get_class($error); }")
-        .unwrap().execute().unwrap();
+    let array_error = compile_source(
+        "<?php $value = []; try { ++$value; } catch (TypeError $error) { echo get_class($error); }",
+    )
+    .unwrap()
+    .execute()
+    .unwrap();
     assert_eq!(array_error, "TypeError");
 }
 
@@ -1674,11 +2094,20 @@ fn error_reporting_masks_warning_and_deprecation_diagnostics() {
         $previous = error_reporting(E_ALL);
         echo $initial, ':', $previous, ':', E_WARNING, ':', E_DEPRECATED, ':', function_exists('error_reporting'), "\n";
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(std::collections::HashMap::new()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(std::collections::HashMap::new())
+        .unwrap();
     assert_eq!(result.output, "32767:2:2:8192:1\n");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Deprecated);
-    assert_eq!(result.diagnostics[1].level, php_runtime::DiagnosticLevel::Warning);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert_eq!(
+        result.diagnostics[1].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
 }
 
 #[test]
@@ -1695,7 +2124,10 @@ fn prefix_and_postfix_increment_support_array_paths_in_properties() {
             ++$container->values['row'][0], ':', IncrementContainers::$shared['count']++, ':',
             IncrementContainers::$shared['count'], ':', ++IncrementContainers::$shared['count'], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "z:aa:ab:9:10:11\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "z:aa:ab:9:10:11\n"
+    );
 }
 
 #[test]
@@ -1705,7 +2137,10 @@ fn variadic_array_merge_binds_its_php_named_parameter() {
         echo array_merge(arrays: ['answer' => 42])['answer'], ':';
         echo array_merge_recursive(arrays: ['key' => ['value']])['key'][0], "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:42:value\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:42:value\n"
+    );
 }
 
 #[test]
@@ -1729,38 +2164,90 @@ fn array_callback_diff_binds_both_value_and_key_comparators_by_name() {
         $difference = array_udiff($first, $second, value_compare_func: 'compareValues');
         echo count($common), ':', array_key_first($common), ':', count($difference), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:A:1\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:A:1\n"
+    );
 }
 
 #[test]
 fn incrementing_undefined_variables_emits_php_warning_with_source_location() {
     let source = "<?php\n$before = $missing++;\n++$otherMissing;\necho $before, ':', $missing, ':', $otherMissing;";
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, ":1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert!(result.diagnostics.iter().all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), vec!["Undefined variable $missing", "Undefined variable $otherMissing"]);
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(2), Some(3)]);
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Warning));
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Undefined variable $missing",
+            "Undefined variable $otherMissing"
+        ]
+    );
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.source_line)
+            .collect::<Vec<_>>(),
+        vec![Some(2), Some(3)]
+    );
 }
 
 #[test]
 fn incrementing_missing_array_keys_emits_source_located_warning() {
     let source = "<?php\n$values = [];\n$previous = $values['missing']++;\n++$values[4];\necho gettype($previous), ':', $values['missing'], ':', $values[4];";
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "NULL:1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), vec!["Undefined array key \"missing\"", "Undefined array key 4"]);
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.source_line).collect::<Vec<_>>(), vec![Some(3), Some(4)]);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Undefined array key \"missing\"", "Undefined array key 4"]
+    );
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.source_line)
+            .collect::<Vec<_>>(),
+        vec![Some(3), Some(4)]
+    );
 }
 
 #[test]
 fn missing_array_key_reads_warn_but_isset_coalesce_and_empty_stay_silent() {
     let source = "<?php\n$values = [];\n$read = $values['missing'];\n$exists = isset($values['missing']);\n$fallback = $values['missing'] ?? 'fallback';\n$isEmpty = empty($values['missing']);\nerror_reporting(0);\n$suppressed = $values['missing'];\necho gettype($read), ':', $exists, ':', $fallback, ':', $isEmpty;";
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "NULL::fallback:1");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Warning);
-    assert_eq!(result.diagnostics[0].message, "Undefined array key \"missing\"");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "Undefined array key \"missing\""
+    );
     assert_eq!(result.diagnostics[0].source_line, Some(3));
 }
 
@@ -1776,10 +2263,23 @@ fn incrementing_missing_property_array_keys_emits_php_warnings() {
         ++IncrementDiagnostics::$shared['static'];
         echo $object->values['instance'], ':', IncrementDiagnostics::$shared['static'];
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "1:1");
     assert_eq!(result.diagnostics.len(), 2);
-    assert_eq!(result.diagnostics.iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(), vec!["Undefined array key \"instance\"", "Undefined array key \"static\""]);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Undefined array key \"instance\"",
+            "Undefined array key \"static\""
+        ]
+    );
 }
 
 #[test]
@@ -1789,7 +2289,10 @@ fn pos_aliases_current_for_direct_named_and_callback_calls() {
         echo function_exists('pos'), ':', pos($values), ':', pos(array: $values), ':';
         echo implode(',', array_map('pos', [$values, ['only' => 7]])), "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:10:10:10,7\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:10:10:10,7\n"
+    );
 }
 
 #[test]
@@ -1802,5 +2305,8 @@ fn array_first_and_last_follow_insertion_order_without_moving_array_pointer() {
         echo implode(',', array_map('array_first', [[], ['sparse' => 'one', 9 => 'two']])), ':';
         echo function_exists('array_first'), function_exists('array_last');
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "first:last:next:1:1:,one:11");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "first:last:next:1:1:,one:11"
+    );
 }

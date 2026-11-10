@@ -1,61 +1,152 @@
 //! PHP array builtins, grouped by operation family.
 
-mod construct;
-mod query;
-mod transform;
 mod callbacks;
 mod common;
+mod construct;
 mod cursor;
 mod mutation;
+mod query;
 mod sorting;
+mod transform;
 
 use crate::{BytecodeClass, RuntimeDiagnostic, Value};
 use std::collections::HashMap;
 
-pub(crate) fn natural_string_order(left: &str, right: &str, insensitive: bool) -> std::cmp::Ordering {
+pub(crate) fn natural_string_order(
+    left: &str,
+    right: &str,
+    insensitive: bool,
+) -> std::cmp::Ordering {
     sorting::natural_order(left, right, insensitive)
 }
 
 pub(crate) fn non_representable_float_to_int_message(number: f64) -> String {
-    let rendered = if number == f64::INFINITY { "INF".into() }
-        else if number == f64::NEG_INFINITY { "-INF".into() }
-        else {
-            let scientific = format!("{number:.1E}");
-            if let Some((mantissa, exponent)) = scientific.split_once('E') {
-                let exponent = exponent.parse::<i32>().unwrap_or(0);
-                format!("{mantissa}E{}{:.2}", if exponent >= 0 { "+" } else { "-" }, exponent.unsigned_abs())
-            } else { scientific }
-        };
+    let rendered = if number == f64::INFINITY {
+        "INF".into()
+    } else if number == f64::NEG_INFINITY {
+        "-INF".into()
+    } else {
+        let scientific = format!("{number:.1E}");
+        if let Some((mantissa, exponent)) = scientific.split_once('E') {
+            let exponent = exponent.parse::<i32>().unwrap_or(0);
+            format!(
+                "{mantissa}E{}{:.2}",
+                if exponent >= 0 { "+" } else { "-" },
+                exponent.unsigned_abs()
+            )
+        } else {
+            scientific
+        }
+    };
     format!("The float {rendered} is not representable as an int, cast occurred")
 }
 
 /// Compare values using PHP's regular array-sort comparison rules.
-pub(crate) fn regular_value_order(left: &Value, right: &Value) -> Result<std::cmp::Ordering, String> {
+pub(crate) fn regular_value_order(
+    left: &Value,
+    right: &Value,
+) -> Result<std::cmp::Ordering, String> {
     sorting::compare_values(left, right, 0)
 }
 
 /// Test the runtime's public array-function inventory without invoking a function.
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
-        "array_all", "array_any", "array_change_key_case", "array_chunk", "array_column", "array_combine",
-        "array_count_values", "array_diff", "array_diff_assoc", "array_diff_key", "array_diff_uassoc",
-        "array_diff_ukey", "array_fill", "array_fill_keys", "array_filter", "array_find", "array_find_key",
-        "array_first", "array_flip", "array_intersect", "array_intersect_assoc", "array_intersect_key",
-        "array_intersect_uassoc", "array_intersect_ukey", "array_is_list", "array_key_exists", "array_key_first",
-        "array_key_last", "array_keys", "array_last", "array_map", "array_merge", "array_merge_recursive",
-        "array_multisort", "array_pad", "array_pop", "array_product", "array_push", "array_rand", "array_reduce",
-        "array_replace", "array_replace_recursive", "array_reverse", "array_search", "array_shift", "array_slice",
-        "array_splice", "array_sum", "array_udiff", "array_udiff_assoc", "array_udiff_uassoc", "array_udiff_ukey",
-        "array_uintersect", "array_uintersect_assoc", "array_uintersect_uassoc", "array_uintersect_ukey",
-        "array_unshift", "array_unique", "array_values", "arsort", "asort", "count", "current", "each", "end",
-        "in_array", "iterator_count", "iterator_to_array", "key", "key_exists", "krsort", "ksort", "natcasesort", "next", "natsort", "pos", "prev", "range",
-        "reset", "rsort", "shuffle", "sizeof", "sort", "uasort", "uksort", "usort", "array_walk",
+        "array_all",
+        "array_any",
+        "array_change_key_case",
+        "array_chunk",
+        "array_column",
+        "array_combine",
+        "array_count_values",
+        "array_diff",
+        "array_diff_assoc",
+        "array_diff_key",
+        "array_diff_uassoc",
+        "array_diff_ukey",
+        "array_fill",
+        "array_fill_keys",
+        "array_filter",
+        "array_find",
+        "array_find_key",
+        "array_first",
+        "array_flip",
+        "array_intersect",
+        "array_intersect_assoc",
+        "array_intersect_key",
+        "array_intersect_uassoc",
+        "array_intersect_ukey",
+        "array_is_list",
+        "array_key_exists",
+        "array_key_first",
+        "array_key_last",
+        "array_keys",
+        "array_last",
+        "array_map",
+        "array_merge",
+        "array_merge_recursive",
+        "array_multisort",
+        "array_pad",
+        "array_pop",
+        "array_product",
+        "array_push",
+        "array_rand",
+        "array_reduce",
+        "array_replace",
+        "array_replace_recursive",
+        "array_reverse",
+        "array_search",
+        "array_shift",
+        "array_slice",
+        "array_splice",
+        "array_sum",
+        "array_udiff",
+        "array_udiff_assoc",
+        "array_udiff_uassoc",
+        "array_udiff_ukey",
+        "array_uintersect",
+        "array_uintersect_assoc",
+        "array_uintersect_uassoc",
+        "array_uintersect_ukey",
+        "array_unshift",
+        "array_unique",
+        "array_values",
+        "arsort",
+        "asort",
+        "count",
+        "current",
+        "each",
+        "end",
+        "in_array",
+        "iterator_count",
+        "iterator_to_array",
+        "key",
+        "key_exists",
+        "krsort",
+        "ksort",
+        "natcasesort",
+        "next",
+        "natsort",
+        "pos",
+        "prev",
+        "range",
+        "reset",
+        "rsort",
+        "shuffle",
+        "sizeof",
+        "sort",
+        "uasort",
+        "uksort",
+        "usort",
+        "array_walk",
         "array_walk_recursive",
     ]
 }
 
 pub(crate) fn is_supported(name: &str) -> bool {
-    supported_names().iter().any(|function| function.eq_ignore_ascii_case(name))
+    supported_names()
+        .iter()
+        .any(|function| function.eq_ignore_ascii_case(name))
 }
 
 pub(crate) fn is_countable(value: &Value, classes: &HashMap<String, BytecodeClass>) -> bool {
@@ -73,8 +164,12 @@ pub(crate) fn call(
     stringify: &mut dyn FnMut(&Value) -> Result<String, String>,
     diagnostics: &mut Vec<RuntimeDiagnostic>,
 ) -> Result<(Value, Vec<(usize, Value)>), String> {
-    if matches!(name, "current" | "pos" | "key") { return cursor::call(if name == "pos" { "current" } else { name }, &args); }
-    if matches!(name, "next" | "prev" | "reset" | "end" | "each") { return cursor::call(name, &args); }
+    if matches!(name, "current" | "pos" | "key") {
+        return cursor::call(if name == "pos" { "current" } else { name }, &args);
+    }
+    if matches!(name, "next" | "prev" | "reset" | "end" | "each") {
+        return cursor::call(name, &args);
+    }
     if name == "array_walk" {
         let (value, mutation) = callbacks::array_walk(&args, invoke_walk)?;
         return Ok((value, mutation.into_iter().collect()));
@@ -84,7 +179,8 @@ pub(crate) fn call(
         return Ok((value, mutation.into_iter().collect()));
     }
     if matches!(name, "usort" | "uasort" | "uksort") {
-        let (value, mutation) = sorting::user_sort(name, &args, name == "uksort", name != "usort", invoke)?;
+        let (value, mutation) =
+            sorting::user_sort(name, &args, name == "uksort", name != "usort", invoke)?;
         return Ok((value, mutation.into_iter().collect()));
     }
     if name == "array_multisort" {
@@ -98,16 +194,35 @@ pub(crate) fn call(
         "array_diff_ukey" => Some((false, true, false, true, false)),
         "array_intersect_uassoc" => Some((true, false, false, true, false)),
         "array_intersect_ukey" => Some((true, true, false, true, false)),
-        "array_udiff" | "array_uintersect" => Some((name == "array_uintersect", false, true, false, false)),
-        "array_udiff_assoc" | "array_uintersect_assoc" => Some((name == "array_uintersect_assoc", false, true, false, true)),
+        "array_udiff" | "array_uintersect" => {
+            Some((name == "array_uintersect", false, true, false, false))
+        }
+        "array_udiff_assoc" | "array_uintersect_assoc" => {
+            Some((name == "array_uintersect_assoc", false, true, false, true))
+        }
         "array_udiff_uassoc" => Some((false, false, true, true, false)),
         "array_udiff_ukey" => Some((false, true, false, true, false)),
         "array_uintersect_uassoc" => Some((true, false, true, true, false)),
         "array_uintersect_ukey" => Some((true, true, false, true, false)),
         _ => None,
     };
-    if let Some((intersect, ignore_values, compare_values, compare_keys, exact_keys)) = callback_diff {
-        return Ok((transform::array_diff_with_callbacks(name, &args, intersect, ignore_values, compare_values, compare_keys, exact_keys, invoke, stringify)?, Vec::new()));
+    if let Some((intersect, ignore_values, compare_values, compare_keys, exact_keys)) =
+        callback_diff
+    {
+        return Ok((
+            transform::array_diff_with_callbacks(
+                name,
+                &args,
+                intersect,
+                ignore_values,
+                compare_values,
+                compare_keys,
+                exact_keys,
+                invoke,
+                stringify,
+            )?,
+            Vec::new(),
+        ));
     }
     let mutation = match name {
         "array_pop" => Some(mutation::array_pop(&args)?),
@@ -118,15 +233,41 @@ pub(crate) fn call(
         "shuffle" => Some(mutation::shuffle(&args)?),
         "natsort" => Some(sorting::natural_sort(&args, false, stringify)?),
         "natcasesort" => Some(sorting::natural_sort(&args, true, stringify)?),
-        "sort" => Some(sorting::sort(&args, sorting::SortMode::ValuesAscending, stringify)?),
-        "rsort" => Some(sorting::sort(&args, sorting::SortMode::ValuesDescending, stringify)?),
-        "asort" => Some(sorting::sort(&args, sorting::SortMode::ValuesAscendingPreserveKeys, stringify)?),
-        "arsort" => Some(sorting::sort(&args, sorting::SortMode::ValuesDescendingPreserveKeys, stringify)?),
-        "ksort" => Some(sorting::sort(&args, sorting::SortMode::KeysAscending, stringify)?),
-        "krsort" => Some(sorting::sort(&args, sorting::SortMode::KeysDescending, stringify)?),
+        "sort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::ValuesAscending,
+            stringify,
+        )?),
+        "rsort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::ValuesDescending,
+            stringify,
+        )?),
+        "asort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::ValuesAscendingPreserveKeys,
+            stringify,
+        )?),
+        "arsort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::ValuesDescendingPreserveKeys,
+            stringify,
+        )?),
+        "ksort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::KeysAscending,
+            stringify,
+        )?),
+        "krsort" => Some(sorting::sort(
+            &args,
+            sorting::SortMode::KeysDescending,
+            stringify,
+        )?),
         _ => None,
     };
-    if let Some((value, mutation)) = mutation { return Ok((value, mutation.into_iter().collect())); }
+    if let Some((value, mutation)) = mutation {
+        return Ok((value, mutation.into_iter().collect()));
+    }
 
     let result = match name {
         "count" | "sizeof" => query::count(&args, classes, invoke, diagnostics),
@@ -163,11 +304,21 @@ pub(crate) fn call(
         "array_fill_keys" => construct::array_fill_keys(&args, diagnostics),
         "range" => construct::range(&args, diagnostics),
         "array_diff" => transform::array_diff(&args, transform::DiffMode::Values, false, stringify),
-        "array_intersect" => transform::array_diff(&args, transform::DiffMode::Values, true, stringify),
-        "array_diff_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, false, stringify),
-        "array_intersect_assoc" => transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, true, stringify),
-        "array_diff_key" => transform::array_diff(&args, transform::DiffMode::Keys, false, stringify),
-        "array_intersect_key" => transform::array_diff(&args, transform::DiffMode::Keys, true, stringify),
+        "array_intersect" => {
+            transform::array_diff(&args, transform::DiffMode::Values, true, stringify)
+        }
+        "array_diff_assoc" => {
+            transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, false, stringify)
+        }
+        "array_intersect_assoc" => {
+            transform::array_diff(&args, transform::DiffMode::ValuesAndKeys, true, stringify)
+        }
+        "array_diff_key" => {
+            transform::array_diff(&args, transform::DiffMode::Keys, false, stringify)
+        }
+        "array_intersect_key" => {
+            transform::array_diff(&args, transform::DiffMode::Keys, true, stringify)
+        }
         "array_key_first" => query::array_edge_key(&args, false),
         "array_key_last" => query::array_edge_key(&args, true),
         "array_first" => query::array_edge_value(&args, false),

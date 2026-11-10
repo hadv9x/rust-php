@@ -1,14 +1,18 @@
 //! Builtins that expose PHP's internal array iteration pointer.
 
-use crate::{ArrayKey, Value};
 use super::common::*;
+use crate::{ArrayKey, Value};
 
 fn current_index(array: &crate::PhpArray) -> Option<usize> {
-    usize::try_from(array.internal_pointer).ok().filter(|index| *index < array.len())
+    usize::try_from(array.internal_pointer)
+        .ok()
+        .filter(|index| *index < array.len())
 }
 
 fn current_value(array: &crate::PhpArray) -> Value {
-    current_index(array).map(|index| array[index].1.clone()).unwrap_or(Value::Bool(false))
+    current_index(array)
+        .map(|index| array[index].1.clone())
+        .unwrap_or(Value::Bool(false))
 }
 
 /// Read or move an array's internal pointer, returning a writeback for pointer-changing functions.
@@ -19,18 +23,36 @@ pub(super) fn call(name: &str, args: &[Value]) -> Result<(Value, Vec<(usize, Val
     };
     let result = match name {
         "current" => return Ok((current_value(&array), Vec::new())),
-        "key" => return Ok((current_index(&array).map(|index| match &array[index].0 {
-            ArrayKey::Integer(_) | ArrayKey::String(_) => key_value(&array[index].0),
-        }).unwrap_or(Value::Null), Vec::new())),
-        "next" => { array.internal_pointer += 1; current_value(&array) }
-        "prev" => { array.internal_pointer -= 1; current_value(&array) }
-        "reset" => { array.internal_pointer = 0; current_value(&array) }
+        "key" => {
+            return Ok((
+                current_index(&array)
+                    .map(|index| match &array[index].0 {
+                        ArrayKey::Integer(_) | ArrayKey::String(_) => key_value(&array[index].0),
+                    })
+                    .unwrap_or(Value::Null),
+                Vec::new(),
+            ))
+        }
+        "next" => {
+            array.internal_pointer += 1;
+            current_value(&array)
+        }
+        "prev" => {
+            array.internal_pointer -= 1;
+            current_value(&array)
+        }
+        "reset" => {
+            array.internal_pointer = 0;
+            current_value(&array)
+        }
         "end" => {
             array.internal_pointer = array.len() as isize - 1;
             current_value(&array)
         }
         "each" => {
-            let Some(index) = current_index(&array) else { return Ok((Value::Bool(false), vec![(0, Value::Array(array))])); };
+            let Some(index) = current_index(&array) else {
+                return Ok((Value::Bool(false), vec![(0, Value::Array(array))]));
+            };
             let (key, value) = (array[index].0.clone(), array[index].1.clone());
             array.internal_pointer += 1;
             let mut result = Vec::with_capacity(4);

@@ -1,6 +1,6 @@
 # Release process
 
-Releases are created from version tags. The tag must match the workspace version in `Cargo.toml`; for example, version `0.1.0` uses tag `v0.1.0`.
+Releases are created from version tags. The tag must match the workspace version in `Cargo.toml`; for example, version `0.2.0` uses tag `v0.2.0`.
 
 ## Publish a release
 
@@ -14,11 +14,11 @@ Releases are created from version tags. The tag must match the workspace version
 3. Create and push an annotated tag:
 
    ```sh
-   git tag -a v0.1.0 -m "php-rust 0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m "php-rust 0.2.0"
+   git push origin v0.2.0
    ```
 
-4. Open the repository's **Actions** tab and wait for the **Release** workflow. It runs workspace tests, verifies the tag/version match, builds the Linux x86_64 package and Docker image, creates a source archive and SHA-256 checksums, then publishes a GitHub Release with those assets.
+4. Open the repository's **Actions** tab and wait for the **Release** workflow. It runs formatting, Clippy, workspace tests, all PHP examples, verifies the tag/version match, builds and checks the Docker image version label, creates the Linux x86_64 package, source archive, and SHA-256 checksums, then publishes a GitHub Release with those assets and the versioned notes from `docs/releases/`.
 
 For later releases, update the workspace version first, commit and push the change, then tag that commit with the matching `vX.Y.Z` value. The workflow rejects mismatched tag and manifest versions. Do not reuse a published version or move an existing release tag.
 

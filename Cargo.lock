@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "php-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "php-compiler",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "php-compiler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "php-db",
  "php-runtime",
@@ -47,14 +47,14 @@ dependencies = [
 
 [[package]]
 name = "php-db"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "php-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "php-db",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "php-syntax"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "pin-project-lite"

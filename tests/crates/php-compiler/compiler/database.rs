@@ -1,5 +1,8 @@
 use php_compiler::compile_source;
-use php_db::{ConnectionConfig, DatabaseDriver, DatabaseKind, DatabaseRegistry, DatabaseSession, DbCommand, DbResult, DbValue};
+use php_db::{
+    ConnectionConfig, DatabaseDriver, DatabaseKind, DatabaseRegistry, DatabaseSession, DbCommand,
+    DbResult, DbValue,
+};
 use std::sync::{Arc, Mutex};
 
 static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -14,13 +17,23 @@ static MONGO_WRITE_OPTIONS: Mutex<Vec<(String, DbValue)>> = Mutex::new(Vec::new(
 struct FakePostgres;
 struct FakeSession;
 impl DatabaseSession for FakeSession {
-    fn client_version(&self) -> Option<String> { Some("libpq-test".into()) }
+    fn client_version(&self) -> Option<String> {
+        Some("libpq-test".into())
+    }
     fn execute(&mut self, command: &DbCommand) -> Result<DbResult, String> {
         DB_SESSION_COMMANDS.lock().unwrap().push(command.clone());
-        let last_insert_id = match command { DbCommand::Sql { statement, .. } if statement.starts_with("INSERT") => Some("77".into()), _ => None };
+        let last_insert_id = match command {
+            DbCommand::Sql { statement, .. } if statement.starts_with("INSERT") => {
+                Some("77".into())
+            }
+            _ => None,
+        };
         Ok(DbResult {
             columns: vec!["id".into(), "name".into()],
-            rows: vec![vec![DbValue::String("42".into()), DbValue::String("Ada".into())]],
+            rows: vec![vec![
+                DbValue::String("42".into()),
+                DbValue::String("Ada".into()),
+            ]],
             affected_rows: 1,
             last_insert_id,
             ..DbResult::default()
@@ -28,15 +41,29 @@ impl DatabaseSession for FakeSession {
     }
 }
 impl DatabaseDriver for FakePostgres {
-    fn kind(&self) -> DatabaseKind { DatabaseKind::PostgreSql }
-    fn ping(&self) -> Result<(), String> { Ok(()) }
-    fn start_session(&self) -> Result<Box<dyn DatabaseSession>, String> { Ok(Box::new(FakeSession)) }
+    fn kind(&self) -> DatabaseKind {
+        DatabaseKind::PostgreSql
+    }
+    fn ping(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn start_session(&self) -> Result<Box<dyn DatabaseSession>, String> {
+        Ok(Box::new(FakeSession))
+    }
     fn execute(&self, command: &DbCommand) -> Result<DbResult, String> {
         DB_COMMANDS.lock().unwrap().push(command.clone());
-        let last_insert_id = match command { DbCommand::Sql { statement, .. } if statement.starts_with("INSERT") => Some("77".into()), _ => None };
+        let last_insert_id = match command {
+            DbCommand::Sql { statement, .. } if statement.starts_with("INSERT") => {
+                Some("77".into())
+            }
+            _ => None,
+        };
         Ok(DbResult {
             columns: vec!["id".into(), "name".into()],
-            rows: vec![vec![DbValue::String("42".into()), DbValue::String("Ada".into())]],
+            rows: vec![vec![
+                DbValue::String("42".into()),
+                DbValue::String("Ada".into()),
+            ]],
             affected_rows: 1,
             last_insert_id,
             ..DbResult::default()
@@ -89,9 +116,15 @@ fn pdo_construct_prepare_execute_fetch_and_query_use_registered_driver() {
     assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(|command| matches!(command,
         DbCommand::Sql { statement, parameters } if statement == "SELECT id, name WHERE id = $1" && parameters == &[DbValue::Integer(99)]
     )));
-    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(|command| matches!(command, DbCommand::Sql { statement, .. } if statement == "BEGIN")));
-    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(|command| matches!(command, DbCommand::Sql { statement, .. } if statement == "COMMIT")));
-    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(|command| matches!(command, DbCommand::Sql { statement, .. } if statement == "SELECT 1")));
+    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(
+        |command| matches!(command, DbCommand::Sql { statement, .. } if statement == "BEGIN")
+    ));
+    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(
+        |command| matches!(command, DbCommand::Sql { statement, .. } if statement == "COMMIT")
+    ));
+    assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(
+        |command| matches!(command, DbCommand::Sql { statement, .. } if statement == "SELECT 1")
+    ));
 }
 
 #[test]
@@ -107,11 +140,20 @@ fn by_reference_yield_from_pdo_statement_warns_for_each_row() {
         $statement = $pdo->query('SELECT id, name');
         foreach (delegateStatement($statement) as $row) { echo $row['name'], ','; }
     "#;
-    let result = compile_source(source).unwrap().execute_with_globals(Default::default()).unwrap();
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
     assert_eq!(result.output, "Ada,");
     assert_eq!(result.diagnostics.len(), 1);
-    assert_eq!(result.diagnostics[0].level, php_runtime::DiagnosticLevel::Notice);
-    assert_eq!(result.diagnostics[0].message, "Only variable references should be yielded by reference");
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Notice
+    );
+    assert_eq!(
+        result.diagnostics[0].message,
+        "Only variable references should be yielded by reference"
+    );
 }
 
 #[test]
@@ -137,7 +179,10 @@ fn pdo_fetch_modes_and_common_attributes_are_applied() {
         $statement->setFetchMode(PDO::FETCH_OBJ);
         echo $statement->fetch()->name, "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "libpq-test:4:Ada:42:Ada:Ada\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "libpq-test:4:Ada:42:Ada:Ada\n"
+    );
 }
 
 #[test]
@@ -160,7 +205,10 @@ fn file_backed_php_streams_bind_as_pdo_lobs() {
         $statement->execute();
         echo fclose($stream) ? 'closed' : 'open', ':', is_resource($stream) ? 'resource' : 'closed', "\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "resource:resource:large-object-data:closed:closed\n");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "resource:resource:large-object-data:closed:closed\n"
+    );
     assert!(DB_SESSION_COMMANDS.lock().unwrap().iter().any(|command| matches!(command,
         DbCommand::Sql { statement, parameters } if statement == "INSERT INTO blobs (payload) VALUES ($1)" && parameters == &[DbValue::Bytes(b"large-object-data".to_vec())]
     )));
@@ -171,53 +219,206 @@ struct FakeMongoSession;
 impl DatabaseSession for FakeMongoSession {
     fn execute(&mut self, command: &DbCommand) -> Result<DbResult, String> {
         DB_SESSION_COMMANDS.lock().unwrap().push(command.clone());
-        Ok(DbResult { columns: vec!["document".into()], rows: vec![vec![DbValue::Document(vec![("name".into(), DbValue::String("Txn".into()))])]], affected_rows: 1, ..DbResult::default() })
+        Ok(DbResult {
+            columns: vec!["document".into()],
+            rows: vec![vec![DbValue::Document(vec![(
+                "name".into(),
+                DbValue::String("Txn".into()),
+            )])]],
+            affected_rows: 1,
+            ..DbResult::default()
+        })
     }
-    fn begin_transaction(&mut self) -> Result<(), String> { MONGO_SESSION_EVENTS.lock().unwrap().push("begin"); Ok(()) }
-    fn commit_transaction(&mut self) -> Result<(), String> { MONGO_SESSION_EVENTS.lock().unwrap().push("commit"); Ok(()) }
-    fn rollback_transaction(&mut self) -> Result<(), String> { MONGO_SESSION_EVENTS.lock().unwrap().push("rollback"); Ok(()) }
+    fn begin_transaction(&mut self) -> Result<(), String> {
+        MONGO_SESSION_EVENTS.lock().unwrap().push("begin");
+        Ok(())
+    }
+    fn commit_transaction(&mut self) -> Result<(), String> {
+        MONGO_SESSION_EVENTS.lock().unwrap().push("commit");
+        Ok(())
+    }
+    fn rollback_transaction(&mut self) -> Result<(), String> {
+        MONGO_SESSION_EVENTS.lock().unwrap().push("rollback");
+        Ok(())
+    }
 }
 impl DatabaseDriver for FakeMongo {
-    fn kind(&self) -> DatabaseKind { DatabaseKind::MongoDb }
-    fn ping(&self) -> Result<(), String> { Ok(()) }
-    fn start_session(&self) -> Result<Box<dyn DatabaseSession>, String> { Ok(Box::new(FakeMongoSession)) }
+    fn kind(&self) -> DatabaseKind {
+        DatabaseKind::MongoDb
+    }
+    fn ping(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn start_session(&self) -> Result<Box<dyn DatabaseSession>, String> {
+        Ok(Box::new(FakeMongoSession))
+    }
     fn execute(&self, command: &DbCommand) -> Result<DbResult, String> {
-        if let DbCommand::Mongo { action: php_db::MongoAction::Find { options, .. }, .. } = command {
+        if let DbCommand::Mongo {
+            action: php_db::MongoAction::Find { options, .. },
+            ..
+        } = command
+        {
             MONGO_FIND_OPTIONS.lock().unwrap().push(options.clone());
         }
-        if let DbCommand::Mongo { action: php_db::MongoAction::CountDocuments { options, estimated: false, .. }, .. } = command {
+        if let DbCommand::Mongo {
+            action:
+                php_db::MongoAction::CountDocuments {
+                    options,
+                    estimated: false,
+                    ..
+                },
+            ..
+        } = command
+        {
             MONGO_COUNT_OPTIONS.lock().unwrap().push(options.clone());
         }
-        if let DbCommand::Mongo { action: php_db::MongoAction::Aggregate { options, .. }, .. } = command {
-            MONGO_AGGREGATE_OPTIONS.lock().unwrap().push(options.clone());
+        if let DbCommand::Mongo {
+            action: php_db::MongoAction::Aggregate { options, .. },
+            ..
+        } = command
+        {
+            MONGO_AGGREGATE_OPTIONS
+                .lock()
+                .unwrap()
+                .push(options.clone());
         }
         let write_options = match command {
-            DbCommand::Mongo { action: php_db::MongoAction::InsertOne { options, .. }, .. } => Some(("insertOne", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::InsertMany { options, .. }, .. } => Some(("insertMany", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::ReplaceOne { options, .. }, .. } => Some(("replaceOne", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::UpdateOne { options, .. }, .. } => Some(("updateOne", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::UpdateMany { options, .. }, .. } => Some(("updateMany", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::DeleteOne { options, .. }, .. } => Some(("deleteOne", options)),
-            DbCommand::Mongo { action: php_db::MongoAction::DeleteMany { options, .. }, .. } => Some(("deleteMany", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::InsertOne { options, .. },
+                ..
+            } => Some(("insertOne", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::InsertMany { options, .. },
+                ..
+            } => Some(("insertMany", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::ReplaceOne { options, .. },
+                ..
+            } => Some(("replaceOne", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::UpdateOne { options, .. },
+                ..
+            } => Some(("updateOne", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::UpdateMany { options, .. },
+                ..
+            } => Some(("updateMany", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::DeleteOne { options, .. },
+                ..
+            } => Some(("deleteOne", options)),
+            DbCommand::Mongo {
+                action: php_db::MongoAction::DeleteMany { options, .. },
+                ..
+            } => Some(("deleteMany", options)),
             _ => None,
         };
-        if let Some((method, options)) = write_options { MONGO_WRITE_OPTIONS.lock().unwrap().push((method.into(), options.clone())); }
+        if let Some((method, options)) = write_options {
+            MONGO_WRITE_OPTIONS
+                .lock()
+                .unwrap()
+                .push((method.into(), options.clone()));
+        }
         Ok(match command {
-            DbCommand::Mongo { action: php_db::MongoAction::Find { .. }, .. } => DbResult {
-                columns: vec!["document".into()], rows: vec![vec![DbValue::Document(vec![("name".into(), DbValue::String("Ada".into()))])]], affected_rows: 1, ..DbResult::default()
+            DbCommand::Mongo {
+                action: php_db::MongoAction::Find { .. },
+                ..
+            } => DbResult {
+                columns: vec!["document".into()],
+                rows: vec![vec![DbValue::Document(vec![(
+                    "name".into(),
+                    DbValue::String("Ada".into()),
+                )])]],
+                affected_rows: 1,
+                ..DbResult::default()
             },
-            DbCommand::Mongo { action: php_db::MongoAction::Aggregate { pipeline, .. }, .. } if pipeline.len() == 1 => DbResult {
-                columns: vec!["document".into()], rows: vec![vec![DbValue::Document(vec![("count".into(), DbValue::Integer(1))])]], affected_rows: 1, ..DbResult::default()
+            DbCommand::Mongo {
+                action: php_db::MongoAction::Aggregate { pipeline, .. },
+                ..
+            } if pipeline.len() == 1 => DbResult {
+                columns: vec!["document".into()],
+                rows: vec![vec![DbValue::Document(vec![(
+                    "count".into(),
+                    DbValue::Integer(1),
+                )])]],
+                affected_rows: 1,
+                ..DbResult::default()
             },
-            DbCommand::Mongo { action: php_db::MongoAction::CountDocuments { estimated: true, .. }, .. } => DbResult { affected_rows: 9, ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::CountDocuments { estimated: false, .. }, .. } => DbResult { affected_rows: 7, ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::InsertOne { .. }, .. } => DbResult { affected_rows: 1, ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::InsertMany { .. }, .. } => DbResult { affected_rows: 2, ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::ReplaceOne { .. }, .. } => DbResult { affected_rows: 1, matched_rows: Some(1), modified_rows: Some(1), ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::UpdateOne { .. }, .. } => DbResult { affected_rows: 1, matched_rows: Some(1), modified_rows: Some(1), ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::UpdateMany { .. }, .. } => DbResult { affected_rows: 1, matched_rows: Some(2), modified_rows: Some(1), ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::DeleteOne { .. }, .. } => DbResult { affected_rows: 1, ..DbResult::default() },
-            DbCommand::Mongo { action: php_db::MongoAction::DeleteMany { .. }, .. } => DbResult { affected_rows: 3, ..DbResult::default() },
+            DbCommand::Mongo {
+                action:
+                    php_db::MongoAction::CountDocuments {
+                        estimated: true, ..
+                    },
+                ..
+            } => DbResult {
+                affected_rows: 9,
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action:
+                    php_db::MongoAction::CountDocuments {
+                        estimated: false, ..
+                    },
+                ..
+            } => DbResult {
+                affected_rows: 7,
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::InsertOne { .. },
+                ..
+            } => DbResult {
+                affected_rows: 1,
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::InsertMany { .. },
+                ..
+            } => DbResult {
+                affected_rows: 2,
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::ReplaceOne { .. },
+                ..
+            } => DbResult {
+                affected_rows: 1,
+                matched_rows: Some(1),
+                modified_rows: Some(1),
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::UpdateOne { .. },
+                ..
+            } => DbResult {
+                affected_rows: 1,
+                matched_rows: Some(1),
+                modified_rows: Some(1),
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::UpdateMany { .. },
+                ..
+            } => DbResult {
+                affected_rows: 1,
+                matched_rows: Some(2),
+                modified_rows: Some(1),
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::DeleteOne { .. },
+                ..
+            } => DbResult {
+                affected_rows: 1,
+                ..DbResult::default()
+            },
+            DbCommand::Mongo {
+                action: php_db::MongoAction::DeleteMany { .. },
+                ..
+            } => DbResult {
+                affected_rows: 3,
+                ..DbResult::default()
+            },
             _ => return Err("unexpected Mongo test command".into()),
         })
     }
@@ -265,7 +466,10 @@ fn mongo_php_functions_dispatch_document_operations_to_registered_driver() {
         echo mongo_delete_many('docs', 'app', 'users', []), "\n";
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "mongo:1:7:9:2:1:Ada:7:9:2:1:1:2:1:1:1:Ada:inserted:1:1:1:3\n");
+    assert_eq!(
+        output,
+        "mongo:1:7:9:2:1:Ada:7:9:2:1:1:2:1:1:1:Ada:inserted:1:1:1:3\n"
+    );
     assert!(MONGO_FIND_OPTIONS.lock().unwrap().iter().any(|options| matches!(options,
         DbValue::Document(entries) if entries.iter().any(|(key, value)| key == "skip" && value == &DbValue::Integer(2))
             && entries.iter().any(|(key, value)| key == "sort" && matches!(value, DbValue::Document(_)))
@@ -279,7 +483,15 @@ fn mongo_php_functions_dispatch_document_operations_to_registered_driver() {
         DbValue::Document(entries) if entries.iter().any(|(key, value)| key == "allowDiskUse" && value == &DbValue::Bool(true))
             && entries.iter().any(|(key, value)| key == "maxTimeMS" && value == &DbValue::Integer(50))
     )));
-    for method in ["insertOne", "insertMany", "replaceOne", "updateOne", "updateMany", "deleteOne", "deleteMany"] {
+    for method in [
+        "insertOne",
+        "insertMany",
+        "replaceOne",
+        "updateOne",
+        "updateMany",
+        "deleteOne",
+        "deleteMany",
+    ] {
         assert!(MONGO_WRITE_OPTIONS.lock().unwrap().iter().any(|(seen, options)| seen == method && matches!(options,
             DbValue::Document(entries) if entries.iter().any(|(key, value)| key == "comment" && value == &DbValue::String(method.into()))
         )), "MongoDB {method}() discarded its options document");
@@ -304,7 +516,19 @@ fn mongo_aggregation_and_transactions_use_the_same_session() {
         mongo_rollback('docs_tx');
         echo "ok\n";
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Txn:ok\n");
-    assert_eq!(*MONGO_SESSION_EVENTS.lock().unwrap(), vec!["begin", "commit", "begin", "rollback"]);
-    assert!(matches!(DB_SESSION_COMMANDS.lock().unwrap().as_slice(), [DbCommand::Mongo { action: php_db::MongoAction::Aggregate { .. }, .. }]));
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Txn:ok\n"
+    );
+    assert_eq!(
+        *MONGO_SESSION_EVENTS.lock().unwrap(),
+        vec!["begin", "commit", "begin", "rollback"]
+    );
+    assert!(matches!(
+        DB_SESSION_COMMANDS.lock().unwrap().as_slice(),
+        [DbCommand::Mongo {
+            action: php_db::MongoAction::Aggregate { .. },
+            ..
+        }]
+    ));
 }

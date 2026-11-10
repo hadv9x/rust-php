@@ -1,20 +1,20 @@
 //! Runtime bytecode structures and public execution interface.
 
 mod array_builtins;
+pub mod bytecode;
+mod exception_builtins;
 mod json_builtins;
 mod math_builtins;
-mod exception_builtins;
-mod pdo;
 mod mongo_php;
+mod pdo;
 mod string_builtins;
 mod values;
 pub(crate) mod vm;
-pub mod bytecode;
 
 pub use vm::PhpGenerator;
 
-use std::sync::{OnceLock, RwLock};
 use std::rc::Rc;
+use std::sync::{OnceLock, RwLock};
 
 /// Compiler-provided runtime loader used by dynamic include and require expressions.
 pub type IncludeLoader = Rc<dyn Fn(&str, &str, &str) -> Result<BytecodeProgram, String>>;
@@ -23,17 +23,22 @@ static DATABASE_REGISTRY: OnceLock<RwLock<php_db::DatabaseRegistry>> = OnceLock:
 
 /// Install process-wide named database handles used by PHP's PDO compatibility layer.
 pub fn set_database_registry(registry: php_db::DatabaseRegistry) {
-    *DATABASE_REGISTRY.get_or_init(|| RwLock::new(php_db::DatabaseRegistry::default()))
-        .write().unwrap_or_else(std::sync::PoisonError::into_inner) = registry;
+    *DATABASE_REGISTRY
+        .get_or_init(|| RwLock::new(php_db::DatabaseRegistry::default()))
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = registry;
 }
 
 pub(crate) fn database_registry() -> php_db::DatabaseRegistry {
-    DATABASE_REGISTRY.get_or_init(|| RwLock::new(php_db::DatabaseRegistry::default()))
-        .read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    DATABASE_REGISTRY
+        .get_or_init(|| RwLock::new(php_db::DatabaseRegistry::default()))
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
-pub(crate) use values::{PhpExceptionData, PhpTraceFrame};
 pub use values::{ArrayKey, PhpArray, PhpClosure, PhpObject, PhpStream, Value};
+pub(crate) use values::{PhpExceptionData, PhpTraceFrame};
 
 /// Return a runtime-provided predefined constant when the name is supported.
 pub fn predefined_constant(name: &str) -> Option<Value> {
@@ -47,16 +52,46 @@ pub fn pdo_class_constant(class: &str, constant: &str) -> Option<Value> {
 
 /// Resolve the integer constants on PHP's Intl `NumberFormatter` class.
 pub fn intl_class_constant(class: &str, constant: &str) -> Option<Value> {
-    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("NumberFormatter") { return None; }
+    if !class
+        .rsplit('\\')
+        .next()?
+        .eq_ignore_ascii_case("NumberFormatter")
+    {
+        return None;
+    }
     let value = match constant.to_ascii_uppercase().as_str() {
-        "PATTERN_DECIMAL" => 0, "DECIMAL" => 1, "CURRENCY" => 2, "PERCENT" => 3,
-        "SCIENTIFIC" => 4, "SPELLOUT" => 5, "ORDINAL" => 6, "DURATION" => 7,
-        "PATTERN_RULEBASED" => 9, "IGNORE" | "DEFAULT_STYLE" => 0,
-        "TYPE_DEFAULT" => 0, "TYPE_INT32" => 1, "TYPE_INT64" => 2, "TYPE_DOUBLE" => 3, "TYPE_CURRENCY" => 4,
-        "PARSE_INT_ONLY" | "POSITIVE_PREFIX" | "DECIMAL_SEPARATOR_SYMBOL" | "ROUND_CEILING" | "PAD_BEFORE_PREFIX" => 0,
-        "GROUPING_USED" | "POSITIVE_SUFFIX" | "GROUPING_SEPARATOR_SYMBOL" | "ROUND_FLOOR" | "PAD_AFTER_PREFIX" => 1,
-        "DECIMAL_ALWAYS_SHOWN" | "NEGATIVE_PREFIX" | "PATTERN_SEPARATOR_SYMBOL" | "ROUND_DOWN" | "PAD_BEFORE_SUFFIX" => 2,
-        "MAX_INTEGER_DIGITS" | "NEGATIVE_SUFFIX" | "PERCENT_SYMBOL" | "ROUND_UP" | "PAD_AFTER_SUFFIX" => 3,
+        "PATTERN_DECIMAL" => 0,
+        "DECIMAL" => 1,
+        "CURRENCY" => 2,
+        "PERCENT" => 3,
+        "SCIENTIFIC" => 4,
+        "SPELLOUT" => 5,
+        "ORDINAL" => 6,
+        "DURATION" => 7,
+        "PATTERN_RULEBASED" => 9,
+        "IGNORE" | "DEFAULT_STYLE" => 0,
+        "TYPE_DEFAULT" => 0,
+        "TYPE_INT32" => 1,
+        "TYPE_INT64" => 2,
+        "TYPE_DOUBLE" => 3,
+        "TYPE_CURRENCY" => 4,
+        "PARSE_INT_ONLY"
+        | "POSITIVE_PREFIX"
+        | "DECIMAL_SEPARATOR_SYMBOL"
+        | "ROUND_CEILING"
+        | "PAD_BEFORE_PREFIX" => 0,
+        "GROUPING_USED"
+        | "POSITIVE_SUFFIX"
+        | "GROUPING_SEPARATOR_SYMBOL"
+        | "ROUND_FLOOR"
+        | "PAD_AFTER_PREFIX" => 1,
+        "DECIMAL_ALWAYS_SHOWN"
+        | "NEGATIVE_PREFIX"
+        | "PATTERN_SEPARATOR_SYMBOL"
+        | "ROUND_DOWN"
+        | "PAD_BEFORE_SUFFIX" => 2,
+        "MAX_INTEGER_DIGITS" | "NEGATIVE_SUFFIX" | "PERCENT_SYMBOL" | "ROUND_UP"
+        | "PAD_AFTER_SUFFIX" => 3,
         "MIN_INTEGER_DIGITS" | "PADDING_CHARACTER" | "ZERO_DIGIT_SYMBOL" | "ROUND_HALFEVEN" => 4,
         "INTEGER_DIGITS" | "CURRENCY_CODE" | "DIGIT_SYMBOL" | "ROUND_HALFDOWN" => 5,
         "MAX_FRACTION_DIGITS" | "DEFAULT_RULESET" | "MINUS_SIGN_SYMBOL" | "ROUND_HALFUP" => 6,
@@ -71,7 +106,8 @@ pub fn intl_class_constant(class: &str, constant: &str) -> Option<Value> {
         "SECONDARY_GROUPING_SIZE" | "NAN_SYMBOL" => 15,
         "SIGNIFICANT_DIGITS_USED" | "SIGNIFICANT_DIGIT_SYMBOL" => 16,
         "MIN_SIGNIFICANT_DIGITS" | "MONETARY_GROUPING_SEPARATOR_SYMBOL" => 17,
-        "MAX_SIGNIFICANT_DIGITS" => 18, "LENIENT_PARSE" => 19,
+        "MAX_SIGNIFICANT_DIGITS" => 18,
+        "LENIENT_PARSE" => 19,
         _ => return None,
     };
     Some(Value::Integer(value))
@@ -79,7 +115,13 @@ pub fn intl_class_constant(class: &str, constant: &str) -> Option<Value> {
 
 /// Resolve the modifier constants exposed by PHP's built-in ReflectionMethod class.
 pub fn reflection_method_class_constant(class: &str, constant: &str) -> Option<i64> {
-    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("ReflectionMethod") { return None; }
+    if !class
+        .rsplit('\\')
+        .next()?
+        .eq_ignore_ascii_case("ReflectionMethod")
+    {
+        return None;
+    }
     match constant.to_ascii_uppercase().as_str() {
         "IS_PUBLIC" => Some(1),
         "IS_PROTECTED" => Some(2),
@@ -93,7 +135,13 @@ pub fn reflection_method_class_constant(class: &str, constant: &str) -> Option<i
 
 /// Resolve the modifier constants exposed by PHP's built-in ReflectionProperty class.
 pub fn reflection_property_class_constant(class: &str, constant: &str) -> Option<i64> {
-    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("ReflectionProperty") { return None; }
+    if !class
+        .rsplit('\\')
+        .next()?
+        .eq_ignore_ascii_case("ReflectionProperty")
+    {
+        return None;
+    }
     match constant.to_ascii_uppercase().as_str() {
         "IS_PUBLIC" => Some(1),
         "IS_PROTECTED" => Some(2),
@@ -117,7 +165,11 @@ pub struct ExecutionLimits {
 
 impl Default for ExecutionLimits {
     fn default() -> Self {
-        Self { max_instructions: 10_000_000, max_output_bytes: 8 * 1024 * 1024, max_execution_time: Some(std::time::Duration::from_secs(30)) }
+        Self {
+            max_instructions: 10_000_000,
+            max_output_bytes: 8 * 1024 * 1024,
+            max_execution_time: Some(std::time::Duration::from_secs(30)),
+        }
     }
 }
 
@@ -169,11 +221,47 @@ pub struct BytecodeFunction {
 
 impl BytecodeFunction {
     /// Build a VM function or method from parameter names and compiled instructions.
-    pub fn new(name: String, parameters: Vec<String>, parameter_types: Vec<Option<String>>, parameter_by_reference: Vec<bool>, parameter_variadic: Vec<bool>, parameter_defaults: Vec<Option<Value>>, return_type: Option<String>, returns_by_reference: bool, instructions: Vec<bytecode::Op>, is_static: bool, is_abstract: bool, is_final: bool, visibility: MemberVisibility, declaring_class: Option<String>) -> Self {
+    pub fn new(
+        name: String,
+        parameters: Vec<String>,
+        parameter_types: Vec<Option<String>>,
+        parameter_by_reference: Vec<bool>,
+        parameter_variadic: Vec<bool>,
+        parameter_defaults: Vec<Option<Value>>,
+        return_type: Option<String>,
+        returns_by_reference: bool,
+        instructions: Vec<bytecode::Op>,
+        is_static: bool,
+        is_abstract: bool,
+        is_final: bool,
+        visibility: MemberVisibility,
+        declaring_class: Option<String>,
+    ) -> Self {
         let parameter_attributes = vec![Vec::new(); parameters.len()];
         let parameter_promoted = vec![false; parameters.len()];
         let parameter_default_constant_names = vec![None; parameters.len()];
-        Self { display_name: name.clone(), name, parameters, parameter_types, parameter_by_reference, parameter_variadic, parameter_promoted, parameter_defaults, parameter_default_constant_names, return_type, strict_types: false, returns_by_reference, instructions, is_static, is_abstract, is_final, visibility, declaring_class, attributes: Vec::new(), parameter_attributes }
+        Self {
+            display_name: name.clone(),
+            name,
+            parameters,
+            parameter_types,
+            parameter_by_reference,
+            parameter_variadic,
+            parameter_promoted,
+            parameter_defaults,
+            parameter_default_constant_names,
+            return_type,
+            strict_types: false,
+            returns_by_reference,
+            instructions,
+            is_static,
+            is_abstract,
+            is_final,
+            visibility,
+            declaring_class,
+            attributes: Vec::new(),
+            parameter_attributes,
+        }
     }
 }
 
@@ -241,7 +329,11 @@ pub struct BytecodeAttribute {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Runtime visibility values used by member access checks.
-pub enum MemberVisibility { Public, Protected, Private }
+pub enum MemberVisibility {
+    Public,
+    Protected,
+    Private,
+}
 
 /// Class property metadata kept separately from its per-object or static value.
 #[derive(Clone, Debug)]
@@ -280,28 +372,62 @@ impl BytecodeProgram {
         functions: std::collections::HashMap<String, BytecodeFunction>,
         classes: std::collections::HashMap<String, BytecodeClass>,
     ) -> Self {
-        Self { instructions, functions, classes, constant_attributes: std::collections::HashMap::new(), source_file: String::new(), include_loader: None }
+        Self {
+            instructions,
+            functions,
+            classes,
+            constant_attributes: std::collections::HashMap::new(),
+            source_file: String::new(),
+            include_loader: None,
+        }
     }
 
     /// Set attribute metadata attached to user-defined global constants.
-    pub fn set_constant_attributes(&mut self, attributes: std::collections::HashMap<String, Vec<BytecodeAttribute>>) {
+    pub fn set_constant_attributes(
+        &mut self,
+        attributes: std::collections::HashMap<String, Vec<BytecodeAttribute>>,
+    ) {
         self.constant_attributes = attributes;
     }
 
     /// Set the source path used for exception location metadata.
-    pub fn set_source_file(&mut self, source_file: String) { self.source_file = source_file; }
+    pub fn set_source_file(&mut self, source_file: String) {
+        self.source_file = source_file;
+    }
 
     /// Attach the compiler's source loader for runtime-selected include paths.
-    pub fn set_include_loader(&mut self, loader: IncludeLoader) { self.include_loader = Some(loader); }
+    pub fn set_include_loader(&mut self, loader: IncludeLoader) {
+        self.include_loader = Some(loader);
+    }
 
     /// Execute in a fresh variable/output context and return captured stdout.
     pub fn execute(&self) -> Result<String, String> {
-        vm::with_include_loader(self.include_loader.clone(), || vm::execute(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, &self.source_file))
+        vm::with_include_loader(self.include_loader.clone(), || {
+            vm::execute(
+                &self.instructions,
+                &self.functions,
+                &self.classes,
+                &self.constant_attributes,
+                &self.source_file,
+            )
+        })
     }
 
     /// Execute with predefined PHP global variables and capture web response metadata.
-    pub fn execute_with_globals(&self, globals: std::collections::HashMap<String, Value>) -> Result<ExecutionResult, String> {
-        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, &self.source_file))
+    pub fn execute_with_globals(
+        &self,
+        globals: std::collections::HashMap<String, Value>,
+    ) -> Result<ExecutionResult, String> {
+        vm::with_include_loader(self.include_loader.clone(), || {
+            vm::execute_with_globals(
+                &self.instructions,
+                &self.functions,
+                &self.classes,
+                &self.constant_attributes,
+                globals,
+                &self.source_file,
+            )
+        })
     }
 
     /// Execute with request-specific VM instruction and output limits.
@@ -310,7 +436,17 @@ impl BytecodeProgram {
         globals: std::collections::HashMap<String, Value>,
         limits: ExecutionLimits,
     ) -> Result<ExecutionResult, String> {
-        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals_and_limits(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, limits, &self.source_file))
+        vm::with_include_loader(self.include_loader.clone(), || {
+            vm::execute_with_globals_and_limits(
+                &self.instructions,
+                &self.functions,
+                &self.classes,
+                &self.constant_attributes,
+                globals,
+                limits,
+                &self.source_file,
+            )
+        })
     }
 
     /// Execute with request globals, limits, and diagnostics raised before the script begins.
@@ -320,7 +456,18 @@ impl BytecodeProgram {
         limits: ExecutionLimits,
         initial_diagnostics: Vec<RuntimeDiagnostic>,
     ) -> Result<ExecutionResult, String> {
-        vm::with_include_loader(self.include_loader.clone(), || vm::execute_with_globals_and_limits_and_diagnostics(&self.instructions, &self.functions, &self.classes, &self.constant_attributes, globals, limits, &self.source_file, initial_diagnostics))
+        vm::with_include_loader(self.include_loader.clone(), || {
+            vm::execute_with_globals_and_limits_and_diagnostics(
+                &self.instructions,
+                &self.functions,
+                &self.classes,
+                &self.constant_attributes,
+                globals,
+                limits,
+                &self.source_file,
+                initial_diagnostics,
+            )
+        })
     }
 }
 
@@ -341,7 +488,15 @@ pub struct ExecutionResult {
 
 /// Severity of a non-fatal PHP runtime diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiagnosticLevel { Warning, Deprecated, Notice, UserWarning, UserDeprecated, UserNotice, Fatal }
+pub enum DiagnosticLevel {
+    Warning,
+    Deprecated,
+    Notice,
+    UserWarning,
+    UserDeprecated,
+    UserNotice,
+    Fatal,
+}
 
 /// A warning or deprecation emitted during one program execution.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -33,11 +33,31 @@ pub struct CatchTarget {
 
 /// Arithmetic or concatenation used while updating a nested array path.
 #[derive(Clone, Copy, Debug)]
-pub enum CompoundOperation { Add, Subtract, Multiply, Power, Divide, Modulo, Concatenate, BitAnd, BitXor, BitOr, ShiftLeft, ShiftRight }
+pub enum CompoundOperation {
+    Add,
+    Subtract,
+    Multiply,
+    Power,
+    Divide,
+    Modulo,
+    Concatenate,
+    BitAnd,
+    BitXor,
+    BitOr,
+    ShiftLeft,
+    ShiftRight,
+}
 
 /// Scalar conversions emitted by explicit PHP casts.
 #[derive(Clone, Copy, Debug)]
-pub enum CastType { Integer, Float, String, Bool, Array, Object }
+pub enum CastType {
+    Integer,
+    Float,
+    String,
+    Bool,
+    Array,
+    Object,
+}
 
 /// Stack-machine operations emitted by `php-compiler` and interpreted by the VM.
 #[derive(Clone, Debug)]
@@ -197,10 +217,28 @@ pub enum Op {
     /// Append to a nested path and write the updated root variable back.
     AssignArrayAppendPath(String, usize),
     /// Assign explicitly keyed or successive integer offsets to destructuring targets.
-    ListDestructure(Vec<DestructureTarget>, usize, Option<String>, bool, Option<String>),
+    ListDestructure(
+        Vec<DestructureTarget>,
+        usize,
+        Option<String>,
+        bool,
+        Option<String>,
+    ),
     /// Destructure an assigned value and preserve it as the expression result.
-    ListDestructureKeep(Vec<DestructureTarget>, usize, Option<String>, bool, Option<String>),
-    Call(String, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, bool),
+    ListDestructureKeep(
+        Vec<DestructureTarget>,
+        usize,
+        Option<String>,
+        bool,
+        Option<String>,
+    ),
+    Call(
+        String,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        bool,
+    ),
     /// Create a closure by copying the named variables from the current frame.
     MakeClosure(Box<crate::BytecodeFunction>, Vec<(String, bool)>),
     /// Create a closure around a named function or builtin.
@@ -212,7 +250,13 @@ pub enum Op {
     /// Create a closure around a public instance method; receiver is on the stack.
     MakeMethodCallable(String),
     /// Invoke a closure value already on the operand stack.
-    CallValue(usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, bool),
+    CallValue(
+        usize,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        bool,
+    ),
     /// Suspend a generator with the value on the operand stack.
     Yield,
     /// Suspend a generator with key and value on the operand stack.
@@ -231,7 +275,16 @@ pub enum Op {
     Throw,
     /// Raise a value with the source line of its throw statement.
     ThrowAt(usize),
-    NewObject(String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, Option<usize>, bool),
+    NewObject(
+        String,
+        usize,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        Option<String>,
+        Option<usize>,
+        bool,
+    ),
     GetProperty(String, Option<String>),
     /// Read a property for `??`, treating an uninitialized typed slot as null.
     GetPropertyCoalesce(String, Option<String>),
@@ -296,9 +349,35 @@ pub enum Op {
     GetClassConstant(String, String, Option<String>),
     /// Terminate the current script with an optional integer status or string message.
     Exit(Option<String>, bool),
-    CallMethod(String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
-    CallParentMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
-    CallStaticMethod(String, String, usize, Vec<Option<ReferenceDescriptor>>, Vec<Option<String>>, Vec<bool>, Option<String>, bool),
+    CallMethod(
+        String,
+        usize,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        Option<String>,
+        bool,
+    ),
+    CallParentMethod(
+        String,
+        String,
+        usize,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        Option<String>,
+        bool,
+    ),
+    CallStaticMethod(
+        String,
+        String,
+        usize,
+        Vec<Option<ReferenceDescriptor>>,
+        Vec<Option<String>>,
+        Vec<bool>,
+        Option<String>,
+        bool,
+    ),
     Return,
     IterStart(usize, Option<String>),
     /// Snapshot an array variable and convert each iterated slot to a reference cell.
@@ -314,18 +393,32 @@ pub enum Op {
     Jump(usize),
     JumpFalse(usize),
     /// Select a break/continue destination by a runtime nesting level.
-    DynamicLoopJump { targets: Vec<usize>, is_break: bool },
+    DynamicLoopJump {
+        targets: Vec<usize>,
+        is_break: bool,
+    },
     /// Keep the top stack value and jump if non-null; otherwise discard it and continue.
     CoalesceJump(usize),
 }
 
 /// Runtime include/require behavior attached to an include opcode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IncludeMode { Include, IncludeOnce, Require, RequireOnce }
+pub enum IncludeMode {
+    Include,
+    IncludeOnce,
+    Require,
+    RequireOnce,
+}
 
 /// Describes the operands produced by one item in an array literal.
 #[derive(Clone, Copy, Debug)]
-pub enum ArrayEntryKind { Packed, Keyed, PackedReference, KeyedReference, Unpack }
+pub enum ArrayEntryKind {
+    Packed,
+    Keyed,
+    PackedReference,
+    KeyedReference,
+    Unpack,
+}
 
 /// One compiled variable or nested target in a destructuring assignment.
 #[derive(Clone, Debug)]

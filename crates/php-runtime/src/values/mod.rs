@@ -5,7 +5,7 @@ mod object;
 mod value;
 
 pub use array::{ArrayKey, PhpArray};
+pub use object::PhpObject;
 pub(crate) use object::{PhpExceptionData, PhpTraceFrame};
 pub(crate) use value::increment_alphanumeric;
-pub use object::PhpObject;
 pub use value::{PhpClosure, PhpStream, Value};
