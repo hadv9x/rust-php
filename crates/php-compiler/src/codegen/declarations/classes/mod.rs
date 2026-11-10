@@ -630,6 +630,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
     validate_attribute_class_declarations(program)?;
     let builtin_classes = [
         ("exception", None),
+        ("errorexception", Some("exception")),
         ("error", None),
         ("typeerror", Some("error")),
         ("argumentcounterror", Some("typeerror")),
@@ -654,6 +655,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         ("rangeexception", Some("runtimeexception")),
         ("underflowexception", Some("runtimeexception")),
         ("unexpectedvalueexception", Some("runtimeexception")),
+        ("reflectionexception", Some("exception")),
     ];
     if let Some(class) = program.classes.iter().find(|class| {
         builtin_classes
@@ -850,6 +852,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
     for (name, parent) in builtin_classes {
         let canonical_name = match name {
             "exception" => "Exception",
+            "errorexception" => "ErrorException",
             "error" => "Error",
             "typeerror" => "TypeError",
             "argumentcounterror" => "ArgumentCountError",
@@ -874,6 +877,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
             "rangeexception" => "RangeException",
             "underflowexception" => "UnderflowException",
             "unexpectedvalueexception" => "UnexpectedValueException",
+            "reflectionexception" => "ReflectionException",
             _ => unreachable!(),
         };
         classes.insert(
@@ -895,8 +899,29 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 is_enum: false,
                 enum_backing_type: None,
                 enum_cases: Vec::new(),
-                properties: HashMap::new(),
-                property_order: Vec::new(),
+                properties: if name == "errorexception" {
+                    HashMap::from([(
+                        "severity".into(),
+                        BytecodeProperty {
+                            default: None,
+                            visibility: MemberVisibility::Protected,
+                            set_visibility: None,
+                            declaring_class: "ErrorException".into(),
+                            type_name: Some("int".into()),
+                            is_readonly: false,
+                            is_promoted: false,
+                            get_hook: None,
+                            set_hook: None,
+                        },
+                    )])
+                } else {
+                    HashMap::new()
+                },
+                property_order: if name == "errorexception" {
+                    vec!["severity".into()]
+                } else {
+                    Vec::new()
+                },
                 static_properties: HashMap::new(),
                 constants: HashMap::new(),
                 constant_order: Vec::new(),
@@ -2231,6 +2256,16 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 .get(&class.name.to_ascii_lowercase())
                 .expect("class metadata was created above");
             for (method_name, method) in &compiled_class.methods {
+                if let Some(final_owner) = builtin_final_exception_method(
+                    &parent_name.to_ascii_lowercase(),
+                    method_name,
+                    &classes,
+                ) {
+                    return Err(format!(
+                        "Cannot override final method {final_owner}::{}()",
+                        canonical_builtin_exception_method(method_name)
+                    ));
+                }
                 if let Some(parent_method) = inherited.get(method_name) {
                     if parent_method.visibility == MemberVisibility::Private
                         && !(method_name.eq_ignore_ascii_case("__construct")
@@ -2502,6 +2537,57 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         }
     }
     Ok(classes)
+}
+
+fn builtin_final_exception_method(
+    parent_name: &str,
+    method_name: &str,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Option<&'static str> {
+    let method = method_name.to_ascii_lowercase();
+    let throwable_final = matches!(
+        method.as_str(),
+        "getmessage"
+            | "getcode"
+            | "getprevious"
+            | "getfile"
+            | "getline"
+            | "gettrace"
+            | "gettraceasstring"
+    );
+    let mut current = parent_name.to_string();
+    loop {
+        match current.as_str() {
+            "exception" if throwable_final => return Some("Exception"),
+            "error" if throwable_final => return Some("Error"),
+            "errorexception" if method == "getseverity" => {
+                return Some("ErrorException")
+            }
+            _ => {}
+        }
+        let Some(parent) = classes
+            .get(&current)
+            .and_then(|class| class.parent.as_deref())
+        else {
+            break;
+        };
+        current = parent.to_ascii_lowercase();
+    }
+    None
+}
+
+fn canonical_builtin_exception_method(method_name: &str) -> &'static str {
+    match method_name.to_ascii_lowercase().as_str() {
+        "getmessage" => "getMessage",
+        "getcode" => "getCode",
+        "getprevious" => "getPrevious",
+        "getfile" => "getFile",
+        "getline" => "getLine",
+        "gettrace" => "getTrace",
+        "gettraceasstring" => "getTraceAsString",
+        "getseverity" => "getSeverity",
+        _ => unreachable!("only built-in final exception methods are canonicalized"),
+    }
 }
 
 /// PHP 8.5 rejects using the built-in Attribute marker on abstract or non-class declarations.

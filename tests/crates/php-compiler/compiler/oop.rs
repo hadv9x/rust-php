@@ -53,6 +53,95 @@ fn var_dump_uses_debug_info_and_hides_actual_object_properties() {
 }
 
 #[test]
+fn var_export_produces_reusable_php_state_expressions() {
+    let source = r#"<?php
+        class ExportableRecord {
+            public $name = 'Ada';
+            public static function __set_state(array $state): object {
+                return new self($state['name']);
+            }
+            public function __construct($name = 'default') { $this->name = $name; }
+        }
+        echo function_exists('var_export'), ':', var_export(['ready' => true], true), "\n";
+        echo var_export(new ExportableRecord('Ada'), true);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:array (\n  'ready' => true,\n)\n\\ExportableRecord::__set_state(array(\n  'name' => 'Ada',\n))"
+    );
+    let output_mode = compile_source("<?php $result = var_export(5); echo $result === null ? ':null' : ':value';")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output_mode, "5:null");
+}
+
+#[test]
+fn var_export_uses_enum_case_expressions() {
+    let source = r#"<?php
+        enum ExportUnitCase { case Ready; }
+        enum ExportBackedCase: string { case Ready = 'ready'; }
+        echo var_export(ExportUnitCase::Ready, true), ':', var_export(ExportBackedCase::Ready, true);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "\\ExportUnitCase::Ready:\\ExportBackedCase::Ready"
+    );
+}
+
+#[test]
+fn var_export_warns_and_emits_null_for_circular_references() {
+    let source = r#"<?php
+        $value = [];
+        $value['self'] =& $value;
+        echo var_export($value, true);
+    "#;
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(result.output, "array (\n  'self' => NULL,\n)");
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(
+        result.diagnostics[0].message,
+        "var_export does not handle circular references"
+    );
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Warning
+    );
+    let mutual_source = r#"<?php
+        $first = [];
+        $second = [];
+        $first['second'] =& $second;
+        $second['first'] =& $first;
+        echo var_export($first, true);
+    "#;
+    let mutual = compile_source(mutual_source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(
+        mutual.output,
+        "array (\n  'second' => array (\n    'first' => NULL,\n  ),\n)"
+    );
+    assert_eq!(mutual.diagnostics.len(), 1);
+}
+
+#[test]
+fn var_export_serializes_stdclass_as_an_object_array_cast() {
+    let source = r#"<?php
+        $value = new stdClass();
+        $value->answer = 42;
+        echo var_export($value, true);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "(object) array(\n  'answer' => 42,\n)"
+    );
+}
+
+#[test]
 fn var_dump_indents_nested_values_and_preserves_object_ids_and_private_properties() {
     let source = r#"<?php
         class DumpSubject {
@@ -66,11 +155,11 @@ fn var_dump_indents_nested_values_and_preserves_object_ids_and_private_propertie
     let output = compile_source(source).unwrap().execute().unwrap();
     assert!(output.contains("array(2) {\n  [0]=>\n  object(DumpSubject)#1 (3) {\n    [\"visible\"]=>\n    array(1) {\n      [\"nested\"]=>\n      int(7)"), "{output}");
     assert!(
-        output.contains("[\"\\0DumpSubject\\0secret\"]=>\n    string(6) \"hidden\""),
+        output.contains("[\"secret\":\"DumpSubject\":private]=>\n    string(6) \"hidden\""),
         "{output}"
     );
     assert!(
-        output.contains("[\"\\0*\\0state\"]=>\n    string(5) \"ready\""),
+        output.contains("[\"state\":protected]=>\n    string(5) \"ready\""),
         "{output}"
     );
     assert_eq!(
@@ -78,6 +167,37 @@ fn var_dump_indents_nested_values_and_preserves_object_ids_and_private_propertie
         3,
         "{output}"
     );
+}
+
+#[test]
+fn var_dump_writes_string_bytes_and_array_keys_without_escaping() {
+    let source = r#"<?php
+        $value = "a\n\t" . chr(0) . chr(1) . "\"";
+        var_dump($value, ["k\n" => $value]);
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    let value = "a\n\t\0\u{1}\"";
+    let key = "k\n";
+    let expected = format!(
+        "string(6) \"{value}\"\narray(1) {{\n  [\"{key}\"]=>\n  string(6) \"{value}\"\n}}\n"
+    );
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn var_dump_prints_stream_resource_ids_and_types() {
+    let source = r#"<?php
+        $stream = fopen('Cargo.toml', 'r');
+        var_dump($stream);
+        fclose($stream);
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    let resource_id = output
+        .strip_prefix("resource(")
+        .and_then(|rest| rest.split_once(") of type (stream)\n"))
+        .map(|(id, _)| id)
+        .expect("stream resource dump should include an ID and type");
+    assert!(resource_id.parse::<u64>().is_ok(), "{output}");
 }
 
 #[test]
@@ -385,6 +505,91 @@ fn reflection_class_get_static_properties_reads_current_inherited_slots() {
         compile_source(source).unwrap().execute().unwrap(),
         "4:2:9:5:1::1:0"
     );
+}
+
+#[test]
+fn reflection_class_reads_static_property_values_and_honors_default() {
+    let source = r#"<?php
+        class StaticValueParent { private static $secret = 'parent'; protected static $shared = 3; }
+        class StaticValueChild extends StaticValueParent { public static $shared = 8; public static $local = 11; }
+        $reflection = new ReflectionClass(StaticValueChild::class);
+        echo $reflection->getStaticPropertyValue('shared'), ':', $reflection->getStaticPropertyValue('local'), ':';
+        echo (new ReflectionClass(StaticValueParent::class))->getStaticPropertyValue('secret'), ':';
+        echo $reflection->getStaticPropertyValue('missing', 'fallback'), ':';
+        echo $reflection->getStaticPropertyValue('secret', 'private-fallback'), ':';
+        try { $reflection->getStaticPropertyValue('missing'); }
+        catch (ReflectionException $error) { echo get_class($error), ':'; }
+        echo method_exists('ReflectionClass', 'getStaticPropertyValue');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "8:11:parent:fallback:private-fallback:ReflectionException:1"
+    );
+}
+
+#[test]
+fn reflection_class_sets_static_property_values_across_visibility() {
+    let source = r#"<?php
+        class StaticWriteParent { protected static int $shared = 2; private static string $parentSecret = 'hidden'; }
+        class StaticWriteChild extends StaticWriteParent { private static string $secret = 'old'; public static int $count = 1; }
+        $reflection = new ReflectionClass(StaticWriteChild::class);
+        $reflection->setStaticPropertyValue('shared', 7);
+        $reflection->setStaticPropertyValue(name: 'secret', value: 'new');
+        $reflection->setStaticPropertyValue('count', 9);
+        echo $reflection->getStaticPropertyValue('shared'), ':', $reflection->getStaticPropertyValue('secret'), ':', StaticWriteChild::$count, ':';
+        try { $reflection->setStaticPropertyValue('missing', 5); }
+        catch (ReflectionException $error) { echo get_class($error), ':'; }
+        try { $reflection->setStaticPropertyValue('parentSecret', 'changed'); }
+        catch (ReflectionException $error) { echo get_class($error), ':'; }
+        try { $reflection->setStaticPropertyValue('count', 'wrong'); }
+        catch (TypeError $error) { echo get_class($error), ':'; }
+        echo method_exists('ReflectionClass', 'setStaticPropertyValue');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "7:new:9:ReflectionException:ReflectionException:TypeError:1"
+    );
+}
+
+#[test]
+fn reflection_class_can_instantiate_without_running_constructor() {
+    let source = r#"<?php
+        $constructed = 0;
+        class ReflectionConstructorBypass {
+            public int $ready = 5;
+            public string $uninitialized;
+            public function __construct() { $GLOBALS['constructed']++; $this->ready = 9; }
+        }
+        $reflection = new ReflectionClass(ReflectionConstructorBypass::class);
+        $instance = $reflection->newInstanceWithoutConstructor();
+        echo $instance->ready, ':', $constructed, ':';
+        try { echo $instance->uninitialized; }
+        catch (Error $error) { echo 'uninitialized'; }
+        echo ':';
+        echo method_exists('ReflectionClass', 'newInstanceWithoutConstructor');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "5:0:uninitialized:1"
+    );
+    let abstract_error = compile_source(r#"<?php abstract class ReflectionCannotInstantiate { } (new ReflectionClass(ReflectionCannotInstantiate::class))->newInstanceWithoutConstructor();"#)
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(abstract_error.contains("ReflectionException: Cannot instantiate abstract class ReflectionCannotInstantiate"), "{abstract_error}");
+    let non_classes = compile_source(r#"<?php
+        interface ReflectionCannotInstantiateInterface {}
+        trait ReflectionCannotInstantiateTrait {}
+        enum ReflectionCannotInstantiateEnum { case Ready; }
+        foreach ([ReflectionCannotInstantiateInterface::class, ReflectionCannotInstantiateTrait::class, ReflectionCannotInstantiateEnum::class] as $name) {
+            try { (new ReflectionClass($name))->newInstanceWithoutConstructor(); }
+            catch (ReflectionException $error) { echo get_class($error), ':'; }
+        }
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(non_classes, "ReflectionException:ReflectionException:ReflectionException:");
 }
 
 #[test]
@@ -1106,6 +1311,33 @@ fn interface_variance_parses_parenthesized_dnf_types() {
         };
         assert!(error.to_ascii_lowercase().contains("does not match interface dnfcontract signature"), "{error}");
     }
+}
+
+#[test]
+fn interface_variance_follows_builtin_throwable_stringable_inheritance() {
+    let source = r#"<?php
+        interface StringDisplayContract { public function render(): Stringable; }
+        class ExceptionStringDisplay implements StringDisplayContract {
+            public function render(): Exception { return new Exception('display'); }
+        }
+        class ErrorStringDisplay implements StringDisplayContract {
+            public function render(): Error { return new Error('display'); }
+        }
+    "#;
+    compile_source(source)
+        .expect("Exception and Error satisfy Stringable through the Throwable interface");
+
+    let invalid = r#"<?php
+        interface StringInputContract { public function accept(Stringable $value): void; }
+        class ExceptionOnlyInput implements StringInputContract {
+            public function accept(Exception $value): void {}
+        }
+    "#;
+    let error = match compile_source(invalid) {
+        Err(error) => error,
+        Ok(_) => panic!("narrowing Stringable to Exception must be rejected"),
+    };
+    assert!(error.contains("does not match interface stringinputcontract signature"), "{error}");
 }
 
 #[test]
@@ -2838,9 +3070,9 @@ fn native_runtime_exceptions_capture_source_line_and_active_call_frames() {
 fn builtin_exception_objects_expose_core_fields_and_throwable_hierarchy() {
     let source = r#"<?php
         $base = new Exception('bad input', 12);
-        echo $base->getMessage(), ':', $base->getCode(), ':', $base, ':', is_a($base, 'Throwable'), "\n";
+        echo $base->getMessage(), ':', $base->getCode(), ':', $base->getFile(), ':', $base, ':', is_a($base, 'Throwable'), "\n";
         $error = new TypeError('wrong type');
-        echo get_class($error), ':', get_parent_class($error), ':', ($error instanceof Error), ':', class_exists('Exception'), ':', interface_exists('Throwable'), ':', method_exists('Throwable', 'getMessage') ? 1 : 0, ':', method_exists('Throwable', '__construct') ? 1 : 0, ':', method_exists('Throwable', '__toString') ? 1 : 0, "\n";
+        echo get_class($error), ':', get_parent_class($error), ':', ($error instanceof Error), ':', class_exists('Exception'), ':', interface_exists('Throwable'), ':', method_exists('Throwable', 'getMessage') ? 1 : 0, ':', method_exists('Throwable', '__construct') ? 1 : 0, ':', method_exists('Throwable', '__toString') ? 1 : 0, ':', ($error instanceof Stringable), ':', (new ReflectionClass('Throwable'))->implementsInterface('Stringable') ? 1 : 0, "\n";
         try { throw $error; }
         catch (Exception $wrong) { echo "wrong catch\n"; }
         catch (Throwable $caught) { echo $caught->getMessage(), "\n"; }
@@ -2848,11 +3080,11 @@ fn builtin_exception_objects_expose_core_fields_and_throwable_hierarchy() {
     let output = compile_source(source).unwrap().execute().unwrap();
     assert!(
         output
-            .starts_with("bad input:12:Exception: bad input in :2\nStack trace:\n#0 {main}\n:1\n"),
+            .starts_with("bad input:12:Command line code:Exception: bad input in Command line code:2\nStack trace:\n#0 {main}\n:1\n"),
         "{output}"
     );
     assert!(
-        output.ends_with("TypeError:Error:1:1:1:1:0:0\nwrong type\n"),
+        output.ends_with("TypeError:Error:1:1:1:1:0:1:1:1\nwrong type\n"),
         "{output}"
     );
 }
@@ -2876,6 +3108,92 @@ fn standard_exception_families_have_php_parent_classes_and_catch_behavior() {
 }
 
 #[test]
+fn exception_subclasses_can_override_stringification() {
+    let output = compile_source(r#"<?php
+        class DomainFailureWithString extends RuntimeException {
+            public function __toString(): string { return 'domain failure'; }
+        }
+        class ReflectionFailureChild extends ReflectionException {}
+        $error = new DomainFailureWithString('original message');
+        echo $error, ':', (string) $error, ':', get_parent_class(new ReflectionFailureChild());
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(output, "domain failure:domain failure:ReflectionException");
+}
+
+#[test]
+fn throwable_objects_cannot_be_cloned() {
+    let output = compile_source(r#"<?php
+        class CustomCloneFailure extends Exception {}
+        try { clone new Exception('base'); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(), "\n"; }
+        try { clone new CustomCloneFailure('custom'); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        output,
+        "Error:Trying to clone an uncloneable object of class Exception\nError:Trying to clone an uncloneable object of class CustomCloneFailure"
+    );
+}
+
+#[test]
+fn error_exception_preserves_severity_and_optional_source_location() {
+    let inherited_declaration = compile_source("<?php class ErrorExceptionChild extends ErrorException {} $error = new ErrorExceptionChild('child', 0, E_NOTICE, 'child.php', 11); echo get_class($error), ':', $error->getSeverity(), ':', $error->getFile(), ':', $error->getLine(), ':', method_exists($error, 'getSeverity');")
+        .unwrap()
+        .execute();
+    assert_eq!(inherited_declaration.unwrap(), "ErrorExceptionChild:8:child.php:11:1");
+    let source = r#"<?php
+        $error = new ErrorException(
+            message: 'converted warning',
+            code: 7,
+            severity: E_WARNING,
+            filename: 'warning.php',
+            line: 29,
+        );
+        echo get_class($error), ':', get_parent_class($error), ':', $error instanceof Exception, ':';
+        echo $error->getMessage(), ':', $error->getCode(), ':', $error->getSeverity(), ':';
+        echo $error->getFile(), ':', $error->getLine(), ':';
+        echo class_exists('ErrorException'), ':', method_exists($error, 'getSeverity'), "\n";
+        $defaults = new ErrorException(filename: 'provided.php');
+        echo $defaults->getSeverity(), ':', $defaults->getFile(), ':', $defaults->getLine();
+        $coercedFilename = new ErrorException(filename: 42);
+        echo ':', $coercedFilename->getFile(), ':', $coercedFilename->getLine();
+        $cause = new Exception('cause');
+        $chained = new ErrorException(previous: $cause);
+        echo ':', $chained->getPrevious()->getMessage();
+        try { new ErrorException(filename: []); }
+        catch (TypeError $error) { echo ':', get_class($error); }
+        try { new ErrorException('bad severity', 0, 'invalid'); }
+        catch (TypeError $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ErrorException:Exception:1:converted warning:7:2:warning.php:29:1:1\n1:provided.php:0:42:0:cause:TypeError:TypeError"
+    );
+}
+
+#[test]
+fn error_exception_severity_is_reflectable_and_shared_with_getter() {
+    let source = r#"<?php
+        $error = new ErrorException('notice', 0, E_NOTICE);
+        $severity = (new ReflectionClass(ErrorException::class))->getProperty('severity');
+        echo $severity->getName(), ':', $severity->getType()->getName(), ':', $severity->isProtected(), ':';
+        echo $severity->getValue($error), ':';
+        $severity->setValue($error, E_WARNING);
+        echo $error->getSeverity();
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "severity:int:1:8:2"
+    );
+}
+
+#[test]
 fn native_exception_constructors_bind_named_arguments() {
     let source = r#"<?php
         $previous = new LogicException('inner');
@@ -2884,6 +3202,41 @@ fn native_exception_constructors_bind_named_arguments() {
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "outer:9:inner\n");
+    let coercions = compile_source(r#"<?php
+        echo (new Exception('numeric', '12.8'))->getCode(), ':';
+        try { new Exception('invalid', 'nope'); }
+        catch (TypeError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        coercions,
+        "12:TypeError:Exception::__construct(): Argument #2 ($code) must be of type int, string given"
+    );
+    let invalid_message = compile_source(r#"<?php
+        try { new Exception(['invalid']); }
+        catch (TypeError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        invalid_message,
+        "TypeError:Exception::__construct(): Argument #1 ($message) must be of type string, array given"
+    );
+    let stringable_message = compile_source(r#"<?php
+        class ExceptionMessageText { public function __toString(): string { return 'coerced'; } }
+        class WrappedMessageException extends Exception {
+            public function __construct($message) { parent::__construct($message); }
+        }
+        echo (new Exception(new ExceptionMessageText()))->getMessage(), ':';
+        echo (new WrappedMessageException(new ExceptionMessageText()))->getMessage();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(stringable_message, "coerced:coerced");
 }
 
 #[test]
@@ -2940,6 +3293,30 @@ fn user_exception_subclasses_inherit_native_state_and_catch_types() {
 }
 
 #[test]
+fn exception_subclasses_cannot_override_final_builtin_accessors() {
+    for (source, expected) in [
+        (
+            "<?php class CustomFailure extends Exception { public function getMessage() {} }",
+            "Cannot override final method Exception::getMessage()",
+        ),
+        (
+            "<?php class CustomError extends Error { public function getTrace() {} }",
+            "Cannot override final method Error::getTrace()",
+        ),
+        (
+            "<?php class CustomErrorFailure extends ErrorException { public function getSeverity() {} }",
+            "Cannot override final method ErrorException::getSeverity()",
+        ),
+    ] {
+        let error = match compile_source(source) {
+            Ok(_) => panic!("expected compile failure containing {expected:?}"),
+            Err(error) => error,
+        };
+        assert!(error.contains(expected), "expected {expected:?}, got {error:?}");
+    }
+}
+
+#[test]
 fn invalid_throw_operands_become_errors_and_only_throwables_match_catches() {
     let source = r#"<?php
         class OrdinaryObject {}
@@ -2951,7 +3328,22 @@ fn invalid_throw_operands_become_errors_and_only_throwables_match_catches() {
         catch (Throwable $error) { echo get_class($error), ':', $error->getMessage(), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "Error:Can only throw objects that implement Throwable\nError:Can only throw objects that implement Throwable\n");
+    assert_eq!(output, "Error:Can only throw objects\nError:Cannot throw objects that do not implement Throwable\n");
+}
+
+#[test]
+fn invalid_throw_operand_error_retains_throw_site_location() {
+    let source = r#"<?php
+        try {
+            throw 'not throwable';
+        } catch (Error $error) {
+            echo $error->getFile(), ':', $error->getLine();
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Command line code:3"
+    );
 }
 
 #[test]
@@ -2972,6 +3364,15 @@ fn exception_previous_argument_must_implement_throwable() {
             .execute()
             .unwrap_err();
     assert!(invalid.contains("Argument #3 ($previous) must be of type ?Throwable"));
+    let caught = compile_source(r#"<?php
+        class PlainPrevious {}
+        try { new Exception('outer', 0, new PlainPrevious()); }
+        catch (TypeError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#)
+    .unwrap()
+    .execute()
+    .expect("invalid previous argument should throw a catchable TypeError");
+    assert!(caught.starts_with("TypeError:"), "{caught}");
     let valid = compile_source("<?php class DomainFailure extends Exception {} $previous = new DomainFailure('inner'); $outer = new Exception('outer', 0, $previous); echo $outer->getPrevious()->getMessage();")
         .unwrap().execute().unwrap();
     assert_eq!(valid, "inner");
@@ -3690,6 +4091,22 @@ fn by_reference_arguments_bind_nested_offsets_of_object_properties() {
 }
 
 #[test]
+fn nested_array_references_through_object_property_aliases_remain_connected() {
+    let source = r#"<?php
+        function replaceNested(&$value) { $value = 'updated'; }
+        function updateAlias(&$values) { replaceNested($values['nested']['item']); }
+        class PropertyAliasBox {
+            public $values = ['nested' => ['item' => 'before']];
+            public function update() { updateAlias($this->values); }
+        }
+        $box = new PropertyAliasBox();
+        $box->update();
+        echo $box->values['nested']['item'];
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "updated");
+}
+
+#[test]
 fn dynamic_object_property_array_offsets_bind_variable_references() {
     let source = r#"<?php
         class DynamicReferenceContainer { public $values = ['item' => 'before']; }
@@ -3952,6 +4369,45 @@ fn reflection_closure_and_arrow_parameters_expose_attributes() {
         compile_source(source).unwrap().execute().unwrap(),
         "value:closure:value:arrow:1:0:1"
     );
+}
+
+#[test]
+fn reflection_function_get_static_variables_exposes_closure_captures() {
+    let source = r#"<?php
+        function ordinary_callable() { static $counter = 3; return ++$counter; }
+        function dynamic_static_callable() { static $dynamic = 2 + 3; return $dynamic; }
+        $copied = 'copy';
+        $linked = 'first';
+        $closure = function () use ($copied, &$linked) {};
+        $reflection = new ReflectionFunction($closure);
+        $variables = $reflection->getStaticVariables();
+        $linked = 'updated';
+        $variables = $reflection->getStaticVariables();
+        echo implode(',', array_keys($variables)), ':', $variables['copied'], ':', $variables['linked'], ':';
+        $ordinaryReflection = new ReflectionFunction('ordinary_callable');
+        echo $ordinaryReflection->getStaticVariables()['counter'], ':';
+        ordinary_callable();
+        echo $ordinaryReflection->getStaticVariables()['counter'], ':';
+        $dynamicReflection = new ReflectionFunction('dynamic_static_callable');
+        echo count($dynamicReflection->getStaticVariables()), ':';
+        dynamic_static_callable();
+        echo $dynamicReflection->getStaticVariables()['dynamic'], ':';
+        $staticClosure = function () { static $closureCounter = 8; return ++$closureCounter; };
+        $staticClosureReflection = new ReflectionFunction($staticClosure);
+        echo $staticClosureReflection->getStaticVariables()['closureCounter'], ':';
+        $staticClosure();
+        echo $staticClosureReflection->getStaticVariables()['closureCounter'], ':';
+        echo method_exists('ReflectionFunction', 'getStaticVariables');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "copied,linked:copy:updated:3:4:0:5:8:9:1"
+    );
+    let unknown_named = compile_source("<?php function reflected_empty() {} (new ReflectionFunction('reflected_empty'))->getStaticVariables(unknown: true);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(unknown_named.contains("unknown named parameter '$unknown'"), "{unknown_named}");
 }
 
 #[test]

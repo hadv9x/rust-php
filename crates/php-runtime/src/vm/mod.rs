@@ -220,6 +220,7 @@ impl GlobalVariables {
                 .as_ref()
                 .map(|_| if has_this { "->".into() } else { "::".into() }),
             class,
+            arguments: Vec::new(),
         });
     }
 
@@ -1334,6 +1335,19 @@ pub(super) fn reference_cell_for_path(
         let storage_key = globals.store_reference(reference.clone());
         return Ok((storage_key, reference));
     }
+    if let Some(VariableBinding::ObjectProperty { receiver, property }) = bindings.get(name) {
+        if !keys.is_empty() {
+            let Value::Object(object) = receiver else {
+                return Err("Only object properties can be passed by reference".into());
+            };
+            let mut object = object.borrow_mut();
+            let current = object.properties.get(property).cloned().unwrap_or(Value::Null);
+            let (updated, reference) = current.ensure_array_reference(keys)?;
+            object.properties.insert(property.clone(), updated);
+            let storage_key = globals.store_reference(reference.clone());
+            return Ok((storage_key, reference));
+        }
+    }
     let (storage_key, keys) = match bindings.get(name) {
         Some(VariableBinding::ArrayElement {
             storage_key,
@@ -1343,12 +1357,7 @@ pub(super) fn reference_cell_for_path(
             combined.extend_from_slice(keys);
             (globals.resolve_key(storage_key), combined)
         }
-        Some(VariableBinding::ObjectProperty { .. }) => {
-            return Err(
-                "Array-element references through object-property references are not supported"
-                    .into(),
-            )
-        }
+        Some(VariableBinding::ObjectProperty { .. }) => unreachable!("empty object-property paths are handled by their caller"),
         _ => (
             reference_storage_key(name, variables, bindings, globals, global_scope, frame_id),
             keys.to_vec(),
@@ -1902,6 +1911,11 @@ pub(super) fn is_a_type(
     if actual.eq_ignore_ascii_case(expected) {
         return true;
     }
+    if crate::exception_builtins::is_interface(actual)
+        && crate::exception_builtins::is_a(actual, expected)
+    {
+        return true;
+    }
     if expected.eq_ignore_ascii_case("Traversable")
         && matches!(
             actual.to_ascii_lowercase().as_str(),
@@ -2018,6 +2032,20 @@ fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
     }
     if message.starts_with("Call to undefined function ")
         || message.starts_with("Call to undefined method ")
+        || message.starts_with("Undefined constant ")
+        || message.starts_with("Undefined class constant ")
+        || message.starts_with("Class '") && message.ends_with("' not found")
+        || message.starts_with("Class '") && message.ends_with("' has no constructor")
+        || message.starts_with("Cannot instantiate interface ")
+        || message.starts_with("Cannot instantiate abstract class ")
+        || message.starts_with("Cannot instantiate enum ")
+        || message.starts_with("Attempt to assign property on non-object")
+        || message == "static:: used outside a class method"
+        || message == "Value is not callable"
+        || message == "Array callback must contain exactly two numeric entries"
+        || message.starts_with("Cannot modify enum property ")
+        || (message.starts_with("Typed property ") || message.starts_with("Typed static property "))
+            && message.ends_with(" must not be accessed before initialization")
         || message.starts_with("Object of class ")
             && message.ends_with(" could not be converted to string")
     {
@@ -2042,6 +2070,9 @@ fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
         || message
             .to_ascii_lowercase()
             .contains("cannot be passed by reference")
+        || message
+            .to_ascii_lowercase()
+            .contains("must be a variable passed by reference")
     {
         return Some(("Error", message));
     }
@@ -2057,10 +2088,14 @@ fn runtime_error_class(message: &str) -> Option<(&'static str, &str)> {
     if message.contains("Bit shift by negative number") {
         return Some(("ArithmeticError", message));
     }
+    if message == "clone expects an object" {
+        return Some(("TypeError", message));
+    }
     let lower = message.to_ascii_lowercase();
     if lower.contains("expects exactly")
         || lower.contains("expects at least")
         || lower.contains("expects at most")
+        || lower.contains("expects between")
     {
         return Some(("ArgumentCountError", message));
     }
@@ -2272,6 +2307,58 @@ fn execute_code(
 ) -> Result<Option<Value>, String> {
     let _depth_guard = ExecutionDepthGuard::enter()?;
     global_variables.push_trace_frame(frame_scope, variables.contains_key("this"), classes);
+    if let Some(frame) = global_variables.active_trace_frames.last_mut() {
+        let callable = if let Some((class_name, method_name)) = frame_scope.split_once("::") {
+            classes
+                .get(&class_name.to_ascii_lowercase())
+                .and_then(|class| class.methods.get(&method_name.to_ascii_lowercase()))
+        } else {
+            functions.get(&frame_scope.to_ascii_lowercase())
+        };
+        if let Some(callable) = callable {
+            let visible_argument_count = variables
+                .get("\0func_argument_count")
+                .map(|value| value.number() as usize)
+                .unwrap_or(callable.parameters.len());
+            let variadic_index = callable
+                .parameter_variadic
+                .iter()
+                .position(|variadic| *variadic);
+            for (index, name) in callable.parameters.iter().enumerate() {
+                let Some(value) = variables.get(name.trim_start_matches('$')) else {
+                    continue;
+                };
+                if Some(index) == variadic_index {
+                    if let Value::Array(values) = value.dereference() {
+                        frame
+                            .arguments
+                            .extend(
+                                values
+                                    .iter()
+                                    .take(visible_argument_count.saturating_sub(index))
+                                    .map(|(_, value)| value.dereference()),
+                            );
+                        continue;
+                    }
+                }
+                if index < visible_argument_count {
+                    frame.arguments.push(value.dereference());
+                }
+            }
+            if variadic_index.is_none() {
+                if let Some(Value::Array(extra_arguments)) =
+                    variables.get("\0func_extra_arguments").map(Value::dereference)
+                {
+                    frame.arguments.extend(
+                        extra_arguments
+                            .iter()
+                            .take(visible_argument_count.saturating_sub(callable.parameters.len()))
+                            .map(|(_, value)| value.dereference()),
+                    );
+                }
+            }
+        }
+    }
     let mut continuation = FrameContinuation::new(initial_bindings, *steps);
     let result = execute_frame(
         code,
@@ -3757,13 +3844,21 @@ fn execute_frame(
                         {
                             Value::Object(object)
                         }
-                        _ => crate::exception_builtins::construct(
-                            "Error",
-                            &[Value::String(
-                                "Can only throw objects that implement Throwable".into(),
-                            )],
-                            classes,
-                        )?,
+                        invalid => {
+                            let message = if matches!(
+                                invalid,
+                                Value::Object(_) | Value::Generator(_)
+                            ) {
+                                "Cannot throw objects that do not implement Throwable"
+                            } else {
+                                "Can only throw objects"
+                            };
+                            crate::exception_builtins::construct(
+                                "Error",
+                                &[Value::String(message.into())],
+                                classes,
+                            )?
+                        }
                     };
                     if let (Some(line), Value::Object(object)) = (throw_line, &value) {
                         if let Some(data) = object.borrow_mut().exception.as_mut() {

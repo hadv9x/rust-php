@@ -12,6 +12,8 @@ use std::{
 
 use crate::{ArrayKey, BytecodeFunction, PhpArray, PhpGenerator, PhpObject};
 
+static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Runtime values shared by the compiler, VM, and builtin libraries.
 #[derive(Clone, Debug)]
 /// A PHP runtime value supported by this interpreter.
@@ -33,6 +35,7 @@ pub enum Value {
 
 #[derive(Debug)]
 pub struct PhpStream {
+    id: u64,
     file: Option<File>,
     directory: Option<VecDeque<String>>,
     directory_snapshot: Option<Vec<String>>,
@@ -57,6 +60,7 @@ impl PhpStream {
             {
                 Ok(file) => {
                     return Ok(Self {
+                        id: NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed),
                         file: Some(file),
                         directory: None,
                         directory_snapshot: None,
@@ -108,6 +112,7 @@ impl PhpStream {
         }
         let file = options.open(&path)?;
         Ok(Self {
+            id: NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed),
             file: Some(file),
             directory: None,
             directory_snapshot: None,
@@ -119,6 +124,7 @@ impl PhpStream {
     }
     pub fn directory(path: PathBuf, entries: Vec<String>) -> Self {
         Self {
+            id: NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed),
             file: None,
             directory: Some(entries.clone().into()),
             directory_snapshot: Some(entries),
@@ -152,6 +158,9 @@ impl PhpStream {
     }
     pub fn is_directory(&self) -> bool {
         self.directory.is_some()
+    }
+    pub fn resource_id(&self) -> u64 {
+        self.id
     }
     pub fn directory_path(&self) -> Option<&std::path::Path> {
         self.is_directory().then_some(self.path.as_path())
@@ -316,7 +325,7 @@ impl Value {
             Self::Number(n) => n,
             Self::Bool(true) => 1.0,
             Self::Bool(false) | Self::Null => 0.0,
-            Self::String(s) => s.parse().unwrap_or(0.0),
+            Self::String(s) => s.trim().parse().unwrap_or(0.0),
             Self::Array(_) => 0.0,
             Self::Object(_) | Self::Closure(_) | Self::Generator(_) | Self::Stream(_) => 1.0,
             Self::Reference(_) => unreachable!("dereference removes reference wrappers"),

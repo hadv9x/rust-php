@@ -703,7 +703,9 @@ pub(super) fn execute_instruction(
                 stack.push(crate::pdo::construct(&arguments)?);
                 return Ok(true);
             }
-            if !classes.contains_key(&name.to_ascii_lowercase()) {
+            if crate::exception_builtins::is_class(name)
+                || !classes.contains_key(&name.to_ascii_lowercase())
+            {
                 if let Some(class_name) =
                     crate::exception_builtins::canonical_name(name).or_else(|| {
                         name.rsplit('\\')
@@ -717,8 +719,23 @@ pub(super) fn execute_instruction(
                         &reference_names,
                         &argument_names,
                     )?;
-                    let object =
-                        crate::exception_builtins::construct(class_name, &arguments, classes)?;
+                    let mut stringifier = |value: &Value| {
+                        stringify(
+                            value,
+                            functions,
+                            classes,
+                            static_properties,
+                            global_variables,
+                            output,
+                            steps,
+                        )
+                    };
+                    let object = crate::exception_builtins::construct_with_stringifier(
+                        class_name,
+                        &arguments,
+                        classes,
+                        &mut stringifier,
+                    )?;
                     set_exception_source_location(
                         &object,
                         *source_line,
@@ -847,13 +864,40 @@ pub(super) fn execute_instruction(
                     steps,
                 )?;
             } else if native_throwable {
+                let constructor_signature = if super::is_a_type(
+                    &name.to_ascii_lowercase(),
+                    "errorexception",
+                    classes,
+                    &mut std::collections::HashSet::new(),
+                ) {
+                    "errorexception"
+                } else {
+                    "exception"
+                };
                 let (arguments, _) = super::builtin_arguments::bind(
-                    "exception",
+                    constructor_signature,
                     arguments,
                     &reference_names,
                     &argument_names,
                 )?;
-                crate::exception_builtins::initialize_object(&object, name, &arguments, classes)?;
+                let mut stringifier = |value: &Value| {
+                    stringify(
+                        value,
+                        functions,
+                        classes,
+                        static_properties,
+                        global_variables,
+                        output,
+                        steps,
+                    )
+                };
+                crate::exception_builtins::initialize_object_with_stringifier(
+                    &object,
+                    name,
+                    &arguments,
+                    classes,
+                    &mut stringifier,
+                )?;
             } else if !arguments.is_empty() {
                 return Err(format!("Class '{name}' has no constructor"));
             }
@@ -2008,6 +2052,16 @@ pub(super) fn execute_instruction(
             {
                 return Err(format!(
                     "Trying to clone an uncloneable object of class {class_name}"
+                ));
+            }
+            if super::is_a_type(
+                &class_name.to_ascii_lowercase(),
+                "throwable",
+                classes,
+                &mut HashSet::new(),
+            ) {
+                return Err(format!(
+                    "Error:Trying to clone an uncloneable object of class {class_name}"
                 ));
             }
             let cloned_object =
@@ -4564,7 +4618,11 @@ pub(super) fn collect_properties(
     let class = classes
         .get(&normalized_name)
         .ok_or_else(|| format!("Class '{class_name}' not found"))?;
-    if let Some(parent) = &class.parent {
+    if let Some(parent) = class
+        .parent
+        .as_deref()
+        .filter(|parent| !crate::exception_builtins::is_class(parent))
+    {
         collect_properties(parent, classes, target)?;
     }
     target.extend(class.properties.iter().filter_map(|(name, property)| {
@@ -4585,7 +4643,11 @@ pub(super) fn collect_property_order(
     let class = classes
         .get(&class_name.to_ascii_lowercase())
         .ok_or_else(|| format!("Class '{class_name}' not found"))?;
-    if let Some(parent) = &class.parent {
+    if let Some(parent) = class
+        .parent
+        .as_deref()
+        .filter(|parent| !crate::exception_builtins::is_class(parent))
+    {
         collect_property_order(parent, classes, target)?;
     }
     for property in &class.property_order {
@@ -4696,6 +4758,89 @@ fn store_static_property(
     } else {
         static_properties.insert(key, value);
     }
+}
+
+pub(super) fn set_reflected_static_property(
+    class_name: &str,
+    property: &str,
+    value: Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    globals: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let Some((owner, metadata)) = static_property_owner(class_name, property, classes) else {
+        return Err(format!(
+            "ReflectionException:Class {class_name} does not have a property named ${property}"
+        ));
+    };
+    if !owner.eq_ignore_ascii_case(class_name)
+        && metadata.visibility == MemberVisibility::Private
+    {
+        return Err(format!(
+            "ReflectionException:Class {class_name} does not have a property named ${property}"
+        ));
+    }
+    if let Some(type_name) = &metadata.type_name {
+        ensure_property_type(&value, type_name, property, classes)?;
+    }
+    let key = (owner.to_ascii_lowercase(), property.to_string());
+    let previous = static_properties.get(&key).map(Value::dereference);
+    store_static_property(static_properties, key, value.clone());
+    if let Some(previous) = previous {
+        run_destructors_removed_from_value(
+            previous,
+            &value,
+            functions,
+            classes,
+            static_properties,
+            globals,
+            output,
+            steps,
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn reflected_new_instance_without_constructor(
+    class_name: &str,
+    classes: &HashMap<String, BytecodeClass>,
+    globals: &mut GlobalVariables,
+) -> Result<Value, String> {
+    let class = classes.get(&class_name.to_ascii_lowercase()).ok_or_else(|| {
+        format!("ReflectionException:Class {class_name} does not exist")
+    })?;
+    if class.is_interface || class.is_trait || class.is_enum {
+        return Err(format!(
+            "ReflectionException:Cannot instantiate {class_name}"
+        ));
+    }
+    if class.is_abstract {
+        return Err(format!(
+            "ReflectionException:Cannot instantiate abstract class {class_name}"
+        ));
+    }
+    let mut properties = HashMap::new();
+    collect_properties(&class.name, classes, &mut properties)?;
+    let mut property_order = Vec::new();
+    collect_property_order(&class.name, classes, &mut property_order)?;
+    let throwable = super::is_a_type(
+        &class.name.to_ascii_lowercase(),
+        "throwable",
+        classes,
+        &mut HashSet::new(),
+    );
+    let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+        class_name: class.name.clone(),
+        properties,
+        property_order,
+        active_property_hooks: Default::default(),
+        exception: throwable.then(crate::exception_builtins::empty_data),
+    })));
+    globals.register_destructor_object(&object);
+    Ok(object)
 }
 
 fn static_property_owner<'a>(

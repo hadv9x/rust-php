@@ -25,6 +25,8 @@ pub struct PhpObject {
 pub struct PhpExceptionData {
     pub message: String,
     pub code: i64,
+    pub severity: i64,
+    pub is_error_exception: bool,
     pub previous: Value,
     pub file: String,
     pub line: Option<usize>,
@@ -40,4 +42,6 @@ pub struct PhpTraceFrame {
     pub function: String,
     pub class: Option<String>,
     pub call_type: Option<String>,
+    /// Values of the callable parameters at the time this frame was entered.
+    pub arguments: Vec<Value>,
 }

@@ -136,6 +136,14 @@ pub(super) fn loose_equal(left: &Value, right: &Value) -> bool {
 
 /// Evaluate one supported arithmetic, comparison, or concatenation instruction.
 pub(super) fn apply_binary(operation: &Op, left: Value, right: Value) -> Result<Value, String> {
+    match operation {
+        Op::Add if matches!(left.dereference(), Value::Array(_)) && matches!(right.dereference(), Value::Array(_)) => {}
+        Op::Add | Op::Sub | Op::Mul | Op::Pow | Op::Div | Op::Mod | Op::ShiftLeft | Op::ShiftRight => {
+            ensure_arithmetic_operand(&left)?;
+            ensure_arithmetic_operand(&right)?;
+        }
+        _ => {}
+    }
     let value = match operation {
         Op::BitAnd | Op::BitXor | Op::BitOr => apply_bitwise(operation, left, right),
         Op::ShiftLeft | Op::ShiftRight => {
@@ -168,7 +176,7 @@ pub(super) fn apply_binary(operation: &Op, left: Value, right: Value) -> Result<
                 Value::array(result)
             }
             (Value::Array(_), _) | (_, Value::Array(_)) => {
-                return Err("Unsupported operand types for array union".into());
+                return Err("TypeError:Unsupported operand types for array union".into());
             }
             (Value::Integer(a), Value::Integer(b)) => a
                 .checked_add(b)
@@ -234,6 +242,18 @@ pub(super) fn apply_binary(operation: &Op, left: Value, right: Value) -> Result<
         _ => return Err("Invalid bytecode operation".into()),
     };
     Ok(value)
+}
+
+fn ensure_arithmetic_operand(value: &Value) -> Result<(), String> {
+    match value.dereference() {
+        Value::Array(_) | Value::Object(_) | Value::Closure(_) | Value::Generator(_) | Value::Stream(_) => {
+            Err(format!("TypeError:Unsupported operand type: {}", value.type_name()))
+        }
+        Value::String(value) if value.trim().parse::<f64>().is_err() => {
+            Err("TypeError:Unsupported operand type: string".into())
+        }
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn strict_identical(left: &Value, right: &Value) -> bool {

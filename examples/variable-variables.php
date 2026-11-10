@@ -19,6 +19,7 @@ $suffix = "lor";
 echo ${$prefix . $suffix};
 echo "\n";
 
+$color = "2";
 echo (${$field} += 2), ":", $color, "\n";
 echo ($$field = "purple"), ":", $color, "\n";
 echo (${$field} ??= "fallback"), ":", $color, "\n";

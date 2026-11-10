@@ -595,6 +595,15 @@ class ExampleFunctionTag {
 function exampleWorker() {}
 $workerAttribute = (new ReflectionFunction("exampleWorker"))->getAttributes()[0];
 echo "function-attribute:", $workerAttribute->getTarget(), ":", $workerAttribute->newInstance()->name, "\n";
+$capturedForReflection = "capture-value";
+$reflectionClosure = function () use ($capturedForReflection) {};
+$reflectionVariables = (new ReflectionFunction($reflectionClosure))->getStaticVariables();
+echo "function-captures:", $reflectionVariables["capturedForReflection"], "\n";
+function exampleReflectionCounter() { static $count = 4; return ++$count; }
+$counterReflection = new ReflectionFunction("exampleReflectionCounter");
+echo "function-static-before:", $counterReflection->getStaticVariables()["count"], "\n";
+exampleReflectionCounter();
+echo "function-static-after:", $counterReflection->getStaticVariables()["count"], "\n";
 
 $anonymousTagged = new #[ExampleLabel("anonymous")] class {};
 $anonymousTag = (new ReflectionClass($anonymousTagged))->getAttributes()[0];
@@ -618,6 +627,9 @@ class ReflectionRoot {}
 class ReflectionBranch extends ReflectionRoot {}
 enum ReflectionState { case Ready; }
 $reflectionLeaf = new ReflectionClass("ReflectionLeaf");
+class ReflectionConstructorBypassExample { public $value = "default"; public function __construct() { echo "constructor should be skipped\n"; } }
+$constructorBypass = (new ReflectionClass(ReflectionConstructorBypassExample::class))->newInstanceWithoutConstructor();
+echo "reflection-without-constructor:", $constructorBypass->value, "\n";
 echo "reflection-flags:", $reflectionLeaf->isFinal(), ":", (new ReflectionClass("ReflectionMarker"))->isInterface(), ":", (new ReflectionClass("ReflectionBase"))->isAbstract(), ":", (new ReflectionClass("ReflectionState"))->isEnum(), "\n";
 echo "reflection-name-parts:", $reflectionLeaf->getShortName(), ":", $reflectionLeaf->getNamespaceName(), ":", $reflectionLeaf->inNamespace(), "\n";
 class ReflectionCloneableExample {}
@@ -660,6 +672,9 @@ class StaticPropertyChildExample extends StaticPropertyBaseExample { public stat
 StaticPropertyChildExample::$childCount = 4;
 $reflectedStatics = (new ReflectionClass(StaticPropertyChildExample::class))->getStaticProperties();
 echo "reflection-static-properties:", $reflectedStatics["baseCount"], ":", $reflectedStatics["childCount"], "\n";
+echo "reflection-static-property-value:", (new ReflectionClass(StaticPropertyChildExample::class))->getStaticPropertyValue("childCount"), ":", (new ReflectionClass(StaticPropertyChildExample::class))->getStaticPropertyValue("missing", "fallback"), "\n";
+(new ReflectionClass(StaticPropertyChildExample::class))->setStaticPropertyValue("childCount", 12);
+echo "reflection-static-property-write:", StaticPropertyChildExample::$childCount, "\n";
 echo "reflection-property-filter-count:", count((new ReflectionClass(StaticPropertyChildExample::class))->getProperties(filter: ReflectionProperty::IS_STATIC)), "\n";
 class PropertyHookTemporaryExample { public function __destruct() { echo "hook temporary released\n"; } }
 class PropertyHookLifetimeExample {
@@ -836,6 +851,7 @@ class VarDumpLayoutExample {
     public $nested = ['answer' => 42];
 }
 var_dump([new VarDumpLayoutExample()]);
+var_dump("raw\nbytes: " . chr(0) . chr(1));
 
 interface InstantiableExampleContract { public function run(); }
 abstract class InstantiableExampleBase { abstract public function run(); }
@@ -1013,6 +1029,22 @@ echo 'trait-adaptation:', (new TraitAdaptationPrecedenceExample())->selectAdapta
 $anonymousNameExample = new class {};
 $anonymousNameReflection = new ReflectionClass($anonymousNameExample);
 echo 'anonymous reflection name: ', $anonymousNameReflection->getShortName(), ':', $anonymousNameReflection->isAnonymous(), "\n";
+
+class ExportStateExample {
+    public function __construct(public string $name) {}
+    public static function __set_state(array $state): object {
+        return new self($state['name']);
+    }
+}
+echo "var_export state expression: ", var_export(new ExportStateExample('Ada'), true), "\n";
+enum ExportStateStatus: string { case Ready = 'ready'; }
+echo "var_export enum case: ", var_export(ExportStateStatus::Ready, true), "\n";
+$exportStdClassExample = new stdClass();
+$exportStdClassExample->answer = 42;
+echo "var_export stdClass: ", var_export($exportStdClassExample, true), "\n";
+$exportCycleExample = [];
+$exportCycleExample['self'] =& $exportCycleExample;
+echo "var_export circular state: ", var_export($exportCycleExample, true), "\n";
 
 class ClosureCycleCollectionExample {
     public $link;

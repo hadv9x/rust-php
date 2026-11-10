@@ -1368,6 +1368,122 @@ fn exceptions_expose_the_creation_frame_through_trace_apis() {
 }
 
 #[test]
+fn undefined_constants_raise_catchable_error_objects() {
+    let source = r#"<?php
+        try { echo MISSING_COMPAT_CONSTANT; }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:Undefined constant \"MISSING_COMPAT_CONSTANT\""
+    );
+}
+
+#[test]
+fn invalid_class_instantiation_and_class_constants_raise_errors() {
+    let source = r#"<?php
+        abstract class AbstractRuntimeTarget {}
+        interface RuntimeTargetInterface {}
+        enum RuntimeTargetEnum { case Ready; }
+        class RuntimeTargetConstants {}
+        $operations = [
+            fn() => new MissingRuntimeClass(),
+            fn() => new AbstractRuntimeTarget(),
+            fn() => new RuntimeTargetInterface(),
+            fn() => new RuntimeTargetEnum(),
+            fn() => RuntimeTargetConstants::MISSING,
+        ];
+        foreach ($operations as $operation) {
+            try { $operation(); }
+            catch (Error $error) { echo get_class($error), "\n"; }
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error\nError\nError\nError\nError\n"
+    );
+}
+
+#[test]
+fn uninitialized_typed_properties_and_invalid_clone_are_catchable() {
+    let source = r#"<?php
+        class ConstructorlessRuntimeTarget {}
+        class UninitializedRuntimeProperty { public int $value; }
+        foreach ([
+            fn() => new ConstructorlessRuntimeTarget('unexpected'),
+            fn() => (new UninitializedRuntimeProperty())->value,
+            fn() => clone 1,
+        ] as $operation) {
+            try { $operation(); }
+            catch (TypeError $error) { echo get_class($error), "\n"; }
+            catch (Error $error) { echo get_class($error), "\n"; }
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error\nError\nTypeError\n"
+    );
+}
+
+#[test]
+fn uninitialized_static_typed_property_read_is_catchable_with_location() {
+    let source = r#"<?php
+        class UninitializedStaticRuntimeProperty { public static int $value; }
+        try { echo UninitializedStaticRuntimeProperty::$value; }
+        catch (Error $error) { echo get_class($error), ':', $error->getLine(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:3"
+    );
+}
+
+#[test]
+fn calling_non_callable_values_raises_catchable_error() {
+    let source = r#"<?php
+        foreach ([1, [], new stdClass()] as $value) {
+            try { $value(); }
+            catch (Error $error) { echo get_class($error), "\n"; }
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error\nError\nError\n"
+    );
+}
+
+#[test]
+fn invalid_arithmetic_operands_raise_catchable_type_errors() {
+    let source = r#"<?php
+        foreach ([fn() => [] + 1, fn() => 2 - [], fn() => new stdClass() * 3, fn() => 'not numeric' + 1] as $operation) {
+            try { $operation(); }
+            catch (TypeError $error) { echo get_class($error), "\n"; }
+        }
+        echo json_encode(['a' => 1] + ['b' => 2]);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "TypeError\nTypeError\nTypeError\nTypeError\n{\"a\":1,\"b\":2}"
+    );
+}
+
+#[test]
+fn arithmetic_type_errors_capture_source_line_and_user_frame() {
+    let source = r#"<?php
+        function failArithmeticOperand() { return [] + 1; }
+        try { failArithmeticOperand(); }
+        catch (TypeError $error) {
+            $frame = $error->getTrace()[0];
+            echo get_class($error), ':', $error->getLine(), ':', $frame['function'], ':', $frame['line'];
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "TypeError:2:failArithmeticOperand:2"
+    );
+}
+
+#[test]
 fn exception_stringification_includes_location_trace_and_previous_chain() {
     let source = r#"<?php
         function makeFailure() {
@@ -1404,6 +1520,95 @@ fn exception_trace_records_nested_callers_with_source_lines() {
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
         "2:innerFailure:3:middleFailure:6\n"
+    );
+}
+
+#[test]
+fn exception_traces_retain_callable_arguments() {
+    let source = r#"<?php
+        function failWithArguments($label, $count, $items) {
+            return new RuntimeException('failure');
+        }
+        $error = failWithArguments('quoted \'value\'', 4, [1, 2]);
+        $frame = $error->getTrace()[0];
+        echo count($frame['args']), ':', $frame['args'][1], ':', $frame['args'][2][1], "\n";
+        echo $error->getTraceAsString();
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert!(output.starts_with("3:4:2\n#0 "), "{output}");
+    assert!(output.contains("failWithArguments('quoted \\\'value\\\'', 4, Array)"), "{output}");
+    assert!(output.ends_with("#1 {main}"), "{output}");
+    let long_string = compile_source(r#"<?php
+        function longTraceArgument($value) { return new Exception('long'); }
+        echo longTraceArgument('01234567890123456789')->getTraceAsString();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(long_string.contains("longTraceArgument('012345678901234...')"), "{long_string}");
+    let escaped_string = compile_source(r#"<?php
+        function escapedTraceArgument($value) { return new Exception('escaped'); }
+        echo escapedTraceArgument("line\nbreak")->getTraceAsString();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(escaped_string.contains("escapedTraceArgument('line\\nbreak')"), "{escaped_string}");
+    let variadic = compile_source(r#"<?php
+        function failVariadically($head, ...$rest) { return new Exception('variadic'); }
+        $trace = failVariadically('first', 2, 'last')->getTrace();
+        echo count($trace[0]['args']), ':', $trace[0]['args'][2], ':', failVariadically('first', 2, 'last')->getTraceAsString();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(variadic.starts_with("3:last:#0 "), "{variadic}");
+    assert!(variadic.contains("failVariadically('first', 2, 'last')"), "{variadic}");
+    let supplied_arguments = compile_source(r#"<?php
+        function defaultsAtEnd($first, $second = 'default') { return new Exception('end'); }
+        function skippedDefaults($first = 'one', $second = 'two', $third = 'three') { return new Exception('named'); }
+        function acceptsExtras($first) { return new Exception('extra'); }
+        function namedVariadic($first, ...$rest) { return new Exception('unknown named'); }
+        echo json_encode(defaultsAtEnd('passed')->getTrace()[0]['args']), "\n";
+        echo json_encode(skippedDefaults(third: 'chosen')->getTrace()[0]['args']), "\n";
+        echo json_encode(acceptsExtras('head', 'tail')->getTrace()[0]['args']), "\n";
+        echo json_encode(namedVariadic('head', extra: 'omitted')->getTrace()[0]['args']);
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(supplied_arguments, "[\"passed\"]\n[\"one\",\"two\",\"chosen\"]\n[\"head\",\"tail\"]\n[\"head\"]");
+}
+
+#[test]
+fn exception_trace_string_formats_object_and_stream_arguments() {
+    let source = r#"<?php
+        class TraceArgumentSubject {}
+        function captureTraceArguments($object, $stream) { return new Exception('trace'); }
+        $stream = fopen('php://memory', 'r+');
+        $error = captureTraceArguments(new TraceArgumentSubject(), $stream);
+        echo $error->getTraceAsString();
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert!(
+        output.contains("captureTraceArguments(Object(TraceArgumentSubject), Resource id #"),
+        "{output}"
+    );
+    assert!(output.ends_with(")\n#1 {main}"), "{output}");
+}
+
+#[test]
+fn exception_trace_string_formats_null_and_boolean_arguments_explicitly() {
+    let output = compile_source(r#"<?php
+        function scalarTraceArguments($nothing, $enabled, $disabled) { return new Exception('trace'); }
+        echo scalarTraceArguments(null, true, false)->getTraceAsString();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(
+        output.contains("scalarTraceArguments(NULL, true, false)"),
+        "{output}"
     );
 }
 
@@ -2232,13 +2437,205 @@ fn runtime_value_type_and_arithmetic_errors_are_catchable() {
         function needsInteger(int $value) { return $value; }
         try { needsInteger('not an integer'); } catch (TypeError $error) { echo 'type:', $error->getMessage(), "\n"; }
         try { needsInteger(); } catch (ArgumentCountError $error) { echo 'count:', $error->getMessage(), "\n"; }
+        try { str_word_count(); } catch (ArgumentCountError $error) { echo 'builtin-count:', $error->getMessage(), "\n"; }
         try { intdiv(7, 0); } catch (DivisionByZeroError $error) { echo 'division:', $error->getMessage(), "\n"; }
         try { 7 % 0; } catch (DivisionByZeroError $error) { echo 'modulo:', $error->getMessage(), "\n"; }
         try { 1 << -1; } catch (ArithmeticError $error) { echo 'shift:', $error->getMessage(), "\n"; }
         try { intdiv(PHP_INT_MIN, -1); } catch (ArithmeticError $error) { echo 'overflow:', $error->getMessage(), "\n"; }
     "#;
     let output = compile_source(source).unwrap().execute().unwrap();
-    assert_eq!(output, "value:\"missing\" is not a valid backing value for enum State\ntype:Argument 1 ($value) passed to function::needsinteger() must be of type int\ncount:needsinteger() expects at least 1 arguments, 0 given\ndivision:Division by zero\nmodulo:Modulo by zero\nshift:Bit shift by negative number\noverflow:Division of PHP_INT_MIN by -1 is not an integer\n");
+    assert_eq!(output, "value:\"missing\" is not a valid backing value for enum State\ntype:Argument 1 ($value) passed to function::needsinteger() must be of type int\ncount:needsinteger() expects at least 1 arguments, 0 given\nbuiltin-count:str_word_count() expects between 1 and 3 arguments\ndivision:Division by zero\nmodulo:Modulo by zero\nshift:Bit shift by negative number\noverflow:Division of PHP_INT_MIN by -1 is not an integer\n");
+}
+
+#[test]
+fn invalid_reference_arguments_raise_a_catchable_error() {
+    let source = r#"<?php
+        function needsReference(&$value) {}
+        try { needsReference(1); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Error:Argument 1 to needsreference() must be a variable passed by reference"
+    );
+}
+
+#[test]
+fn serialize_and_unserialize_round_trip_scalars_and_ordered_arrays() {
+    let source = r#"<?php
+        $value = ['text' => "a" . chr(0) . "b", 3 => true, 'nested' => [null, -4, 2.5]];
+        $encoded = serialize(value: $value);
+        echo function_exists('serialize'), ':', function_exists('unserialize'), ':', $encoded, "\n";
+        echo json_encode(unserialize(data: $encoded)), "\n";
+        var_dump(unserialize('not serialized'));
+        try { unserialize(1); }
+        catch (TypeError $error) { echo get_class($error), "\n"; }
+        try { serialize(1, 2); }
+        catch (ArgumentCountError $error) { echo get_class($error), "\n"; }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:a:3:{s:4:\"text\";s:3:\"a\0b\";i:3;b:1;s:6:\"nested\";a:3:{i:0;N;i:1;i:-4;i:2;d:2.5;}}\n{\"text\":\"a\\u0000b\",\"3\":true,\"nested\":[null,-4,2.5]}\nbool(false)\nTypeError\nArgumentCountError\n"
+    );
+}
+
+#[test]
+fn serialize_converts_stream_resources_to_zero() {
+    let source = r#"<?php
+        $stream = fopen('Cargo.toml', 'r');
+        $serialized = serialize($stream);
+        echo $serialized, ':', unserialize($serialized);
+        fclose($stream);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "i:0;:0");
+}
+
+#[test]
+fn serialize_emits_object_properties_with_php_visibility_keys() {
+    let source = r#"<?php
+        class SerializedRecord { public $name = 'Ada'; private $secret = 2; }
+        echo serialize(new SerializedRecord());
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "O:16:\"SerializedRecord\":2:{s:4:\"name\";s:3:\"Ada\";s:24:\"\0SerializedRecord\0secret\";i:2;}"
+    );
+}
+
+#[test]
+fn serialize_dispatches_the_php_serialize_magic_method_recursively() {
+    let source = r#"<?php
+        class SerializedHookRecord {
+            public $secret = 'hidden';
+            public function __serialize(): array { return ['stored' => $this->secret]; }
+        }
+        echo serialize(['record' => new SerializedHookRecord()]);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "a:1:{s:6:\"record\";O:20:\"SerializedHookRecord\":1:{s:6:\"stored\";s:6:\"hidden\";}}"
+    );
+}
+
+#[test]
+fn serialize_uses_sleep_to_select_object_properties() {
+    let source = r#"<?php
+        class SleepRecord {
+            public $kept = 'yes';
+            public $omitted = 'no';
+            public function __sleep(): array { return ['kept']; }
+        }
+        $record = unserialize(serialize(new SleepRecord()));
+        echo $record->kept, ':', isset($record->omitted);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "yes:1");
+}
+
+#[test]
+fn sleep_selects_private_properties_from_the_magic_method_scope() {
+    let source = r#"<?php
+        class SleepParentRecord {
+            private $value = 'parent';
+            public function __sleep(): array { return ['value']; }
+        }
+        class SleepChildRecord extends SleepParentRecord { private $value = 'child'; }
+        echo serialize(new SleepChildRecord());
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "O:16:\"SleepChildRecord\":1:{s:24:\"\0SleepParentRecord\0value\";s:6:\"parent\";}"
+    );
+}
+
+#[test]
+fn unserialize_restores_objects_and_dispatches_unserialize_hooks() {
+    let source = r#"<?php
+        class WakingRecord {
+            public $name = 'default';
+            private $secret = 'private';
+            public $woke = false;
+            public function __wakeup() { $this->woke = true; }
+            public function secret() { return $this->secret; }
+        }
+        class CustomRestoredRecord {
+            public $token;
+            public $restored = false;
+            public function __serialize(): array { return ['token' => $this->token]; }
+            public function __unserialize(array $data): void {
+                $this->token = $data['token'];
+                $this->restored = true;
+            }
+        }
+        $normal = new WakingRecord();
+        $normal->name = 'saved';
+        $normal->woke = false;
+        $restored = unserialize(serialize($normal));
+        echo $restored->name, ':', $restored->secret(), ':', $restored->woke, "\n";
+        $custom = new CustomRestoredRecord();
+        $custom->token = 'abc';
+        $roundTrip = unserialize(serialize(['item' => $custom]), [
+            'allowed_classes' => [CustomRestoredRecord::class],
+        ]);
+        echo $roundTrip['item']->token, ':', $roundTrip['item']->restored;
+        $restricted = unserialize(serialize($custom), ['allowed_classes' => false]);
+        echo ':', get_class($restricted), ':', $restricted->token, ':', $restricted->__PHP_Incomplete_Class_Name;
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "saved:private:1\nabc:1:__PHP_Incomplete_Class:abc:CustomRestoredRecord"
+    );
+}
+
+#[test]
+fn unserialize_honors_max_depth_and_validates_option_types() {
+    let source = r#"<?php
+        $encoded = serialize([[[1]]]);
+        echo json_encode(unserialize($encoded, ['max_depth' => 0])), ':';
+        echo (unserialize($encoded, ['max_depth' => 1]) === false), ':';
+        try { unserialize($encoded, ['max_depth' => '2']); }
+        catch (TypeError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "[[[1]]]:1:TypeError"
+    );
+}
+
+#[test]
+fn unserialize_validates_allowed_class_names_and_types() {
+    let source = r#"<?php
+        $data = 'N;';
+        try { unserialize($data, ['allowed_classes' => [42]]); }
+        catch (TypeError $error) { echo get_class($error), "\n"; }
+        try { unserialize($data, ['allowed_classes' => ['  whitespace  ']]); }
+        catch (ValueError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "TypeError\nValueError"
+    );
+}
+
+#[test]
+fn native_arithmetic_errors_capture_the_active_php_call_frames() {
+    let source = r#"<?php
+        function divideInside() {
+            return intdiv(5, 0);
+        }
+        function callDivider() {
+            return divideInside();
+        }
+        try {
+            callDivider();
+        } catch (DivisionByZeroError $error) {
+            $trace = $error->getTrace();
+            echo $error->getLine(), ':', count($trace), ':', $trace[0]['function'], ':', $trace[1]['function'];
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "3:2:divideInside:callDivider"
+    );
 }
 
 #[test]

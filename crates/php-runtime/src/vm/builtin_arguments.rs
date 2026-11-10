@@ -52,7 +52,7 @@ struct Signature {
 }
 
 fn signature(name: &str) -> Option<Signature> {
-    use DefaultValue::{False as F, Null as N, Number as Num};
+    use DefaultValue::{EmptyArray as A, False as F, Null as N, Number as Num};
     let (names, defaults, variadic): (
         &'static [&'static str],
         &'static [(usize, DefaultValue)],
@@ -220,6 +220,9 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionenum::getdefaultproperties"
         | "reflectionclass::getstaticproperties"
         | "reflectionenum::getstaticproperties" => (&[], &[], false),
+        "reflectionclass::newinstancewithoutconstructor" => (&[], &[], false),
+        "reflectionclass::getstaticpropertyvalue" => (&["name", "default"], &[(1, N)], false),
+        "reflectionclass::setstaticpropertyvalue" => (&["name", "value"], &[], false),
         "reflectionclass::getconstants" | "reflectionenum::getconstants" => {
             (&["filter"], &[(0, N)], false)
         }
@@ -331,6 +334,7 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionnamedtype::allowsnull" => (&[], &[], false),
         "reflectionfunction::getname" => (&[], &[], false),
         "reflectionfunction::getparameters" => (&[], &[], false),
+        "reflectionfunction::getstaticvariables" => (&[], &[], false),
         "reflectionfunction::getattributes" => {
             (&["name", "flags"], &[(0, N), (1, Num(0.0))], false)
         }
@@ -414,6 +418,18 @@ fn signature(name: &str) -> Option<Signature> {
         ),
         "localtime" => (&["timestamp", "associative"], &[(0, N), (1, F)], false),
         "strtotime" => (&["datetime", "baseTimestamp"], &[(1, N)], false),
+        "errorexception" => (
+            &["message", "code", "severity", "filename", "line", "previous"],
+            &[
+                (0, DefaultValue::EmptyString),
+                (1, Num(0.0)),
+                (2, Num(1.0)),
+                (3, N),
+                (4, N),
+                (5, N),
+            ],
+            false,
+        ),
         "exception"
         | "error"
         | "typeerror"
@@ -449,7 +465,8 @@ fn signature(name: &str) -> Option<Signature> {
         | "exception::getfile"
         | "exception::getline"
         | "exception::gettrace"
-        | "exception::gettraceasstring" => (&[], &[], false),
+        | "exception::gettraceasstring"
+        | "errorexception::getseverity" => (&[], &[], false),
         "pdo::__construct" => (
             &["dsn", "username", "password", "options"],
             &[(1, N), (2, N), (3, N)],
@@ -690,6 +707,8 @@ fn signature(name: &str) -> Option<Signature> {
             &[(1, Num(512.0)), (2, Num(0.0))],
             false,
         ),
+        "serialize" => (&["value"], &[], false),
+        "unserialize" => (&["data", "options"], &[(1, A)], false),
         "json_last_error" | "json_last_error_msg" => (&[], &[], false),
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13"
         | "addslashes" | "stripslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment"
@@ -869,6 +888,7 @@ fn signature(name: &str) -> Option<Signature> {
             false,
         ),
         "var_dump" => (&["value"], &[], true),
+        "var_export" => (&["value", "return"], &[(1, F)], false),
         "htmlspecialchars" => (
             &["string", "flags", "encoding", "double_encode"],
             &[
@@ -1423,6 +1443,7 @@ mod tests {
             "json_last_error",
             "json_last_error_msg",
             "json_validate",
+            "serialize",
             "lcfirst",
             "localtime",
             "ltrim",
@@ -1481,6 +1502,7 @@ mod tests {
             "str_split",
             "str_starts_with",
             "str_word_count",
+            "unserialize",
             "strcasecmp",
             "strchr",
             "strcmp",

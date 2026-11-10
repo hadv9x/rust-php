@@ -357,6 +357,9 @@ pub(super) fn declaration_is_a(
     if actual == expected {
         return true;
     }
+    if builtin_type_is_a(actual, expected, &mut std::collections::HashSet::new()) {
+        return true;
+    }
     if !visited.insert(actual.to_string()) {
         return false;
     }
@@ -392,6 +395,42 @@ pub(super) fn declaration_is_a(
                 visited,
             )
         })
+    })
+}
+
+fn builtin_type_is_a(
+    actual: &str,
+    expected: &str,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    if actual.eq_ignore_ascii_case(expected) {
+        return true;
+    }
+    let actual = actual.trim_start_matches('\\').to_ascii_lowercase();
+    let expected = expected.trim_start_matches('\\').to_ascii_lowercase();
+    if !visited.insert(actual.clone()) {
+        return false;
+    }
+    let parent = match actual.as_str() {
+        "throwable" => Some("stringable"),
+        "exception" | "error" => Some("throwable"),
+        "errorexception" | "jsonexception" | "logicexception" | "runtimeexception"
+        | "reflectionexception" => Some("exception"),
+        "typeerror" | "compileerror" | "arithmeticerror" | "assertionerror"
+        | "unhandledmatcherror" | "valueerror" => Some("error"),
+        "argumentcounterror" => Some("typeerror"),
+        "parseerror" => Some("compileerror"),
+        "divisionbyzeroerror" => Some("arithmeticerror"),
+        "badfunctioncallexception" | "domainexception" | "invalidargumentexception"
+        | "lengthexception" | "outofrangeexception" => Some("logicexception"),
+        "badmethodcallexception" => Some("badfunctioncallexception"),
+        "outofboundsexception" | "overflowexception" | "rangeexception"
+        | "underflowexception" | "unexpectedvalueexception" => Some("runtimeexception"),
+        _ => None,
+    };
+    parent.is_some_and(|parent| {
+        parent.eq_ignore_ascii_case(&expected)
+            || builtin_type_is_a(parent, &expected, visited)
     })
 }
 
@@ -441,6 +480,7 @@ pub(super) fn collect_class_interfaces(
         } else if !matches!(
             parent_name.to_ascii_lowercase().as_str(),
             "exception"
+                | "errorexception"
                 | "error"
                 | "typeerror"
                 | "argumentcounterror"
@@ -451,6 +491,21 @@ pub(super) fn collect_class_interfaces(
                 | "assertionerror"
                 | "unhandledmatcherror"
                 | "valueerror"
+                | "jsonexception"
+                | "logicexception"
+                | "badfunctioncallexception"
+                | "badmethodcallexception"
+                | "domainexception"
+                | "invalidargumentexception"
+                | "lengthexception"
+                | "outofrangeexception"
+                | "runtimeexception"
+                | "outofboundsexception"
+                | "overflowexception"
+                | "rangeexception"
+                | "underflowexception"
+                | "unexpectedvalueexception"
+                | "reflectionexception"
         ) {
             return Err(format!("Class '{parent_name}' not found"));
         }

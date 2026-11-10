@@ -1,6 +1,7 @@
 //! Function, instance-method, static-method, and magic-call dispatch.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
@@ -16,7 +17,8 @@ use super::{
 };
 use crate::{
     bytecode::{Op, ReferenceArgument, ReferenceDescriptor},
-    ArrayKey, BytecodeClass, BytecodeFunction, MemberVisibility, PhpArray, PhpClosure, Value,
+    ArrayKey, BytecodeClass, BytecodeFunction, MemberVisibility, PhpArray, PhpClosure, PhpObject,
+    Value,
 };
 
 fn enum_scalar_equal(left: &Value, right: &Value) -> bool {
@@ -24,6 +26,34 @@ fn enum_scalar_equal(left: &Value, right: &Value) -> bool {
         (Value::Integer(left), Value::Integer(right)) => left == right,
         (Value::String(left), Value::String(right)) => left == right,
         _ => false,
+    }
+}
+
+fn append_reflected_static_locals(
+    entries: &mut Vec<(ArrayKey, Value)>,
+    function: &BytecodeFunction,
+    scope: &str,
+    globals: &GlobalVariables,
+) {
+    let mut seen = HashSet::new();
+    for instruction in &function.instructions {
+        let (name, initial) = match instruction {
+            Op::DeclareStatic(name, initial) => (name, Some(initial)),
+            Op::StaticInitializerCheck(name, _) | Op::InitializeStatic(name) => (name, None),
+            _ => continue,
+        };
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let storage_name = format!("\0static:{scope}:{name}");
+        let value = globals
+            .get(&storage_name)
+            .cloned()
+            .or_else(|| initial.cloned())
+            .map(|value| value.dereference());
+        if let Some(value) = value {
+            entries.push((ArrayKey::String(name.clone()), value));
+        }
     }
 }
 
@@ -2047,6 +2077,42 @@ pub(super) fn execute_instruction(
                                 .unwrap_or_else(|| Value::String("cli".into())),
                         );
                     }
+                    "var_export" => {
+                        if arguments.is_empty() || arguments.len() > 2 {
+                            return Err(format!(
+                                "var_export() expects {} argument{}, {} given",
+                                if arguments.is_empty() { "at least 1" } else { "at most 2" },
+                                if arguments.is_empty() { "" } else { "s" },
+                                arguments.len()
+                            ));
+                        }
+                        let mut active_references = HashSet::new();
+                        let mut circular_warnings = 0;
+                        let exported = format_var_export(
+                            &arguments[0],
+                            0,
+                            &mut HashSet::new(),
+                            &mut active_references,
+                            &mut circular_warnings,
+                            classes,
+                        )?;
+                        for _ in 0..circular_warnings {
+                            global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                level: crate::DiagnosticLevel::Warning,
+                                message: "var_export does not handle circular references".into(),
+                                source_file: None,
+                                source_line: None,
+                                output_offset: output.len(),
+                            });
+                        }
+                        if arguments.get(1).is_some_and(Value::truthy) {
+                            stack.push(Value::String(exported));
+                        } else {
+                            output.push_str(&exported);
+                            global_variables.output_offset = output.len();
+                            stack.push(Value::Null);
+                        }
+                    }
                     "var_dump" => {
                         if arguments.is_empty() {
                             return Err("var_dump() expects at least 1 argument, 0 given".into());
@@ -2249,6 +2315,9 @@ pub(super) fn execute_instruction(
                                     "pdostatement" => Some("PDOStatement".into()),
                                     "generator" => Some("Generator".into()),
                                     "stdclass" => Some("stdClass".into()),
+                                    "__php_incomplete_class" => {
+                                        Some("__PHP_Incomplete_Class".into())
+                                    }
                                     "reflectionclass" => Some("ReflectionClass".into()),
                                     "reflectionobject" => Some("ReflectionObject".into()),
                                     "reflectionclassconstant" => {
@@ -2402,10 +2471,13 @@ pub(super) fn execute_instruction(
                                     | "getmethod"
                                     | "getmethods"
                                     | "getconstructor"
+                                    | "newinstancewithoutconstructor"
                                     | "getproperty"
                                     | "getproperties"
                                     | "getdefaultproperties"
                                     | "getstaticproperties"
+                                    | "getstaticpropertyvalue"
+                                    | "setstaticpropertyvalue"
                                     | "getparentclass"
                                     | "getinterfacenames"
                                     | "getinterfaces"
@@ -2447,6 +2519,8 @@ pub(super) fn execute_instruction(
                                     | "getproperties"
                                     | "getdefaultproperties"
                                     | "getstaticproperties"
+                                    | "getstaticpropertyvalue"
+                                    | "setstaticpropertyvalue"
                                     | "getparentclass"
                                     | "getinterfacenames"
                                     | "getinterfaces"
@@ -2594,6 +2668,7 @@ pub(super) fn execute_instruction(
                                 "getname"
                                     | "getattributes"
                                     | "getparameters"
+                                    | "getstaticvariables"
                                     | "getnumberofparameters"
                                     | "getnumberofrequiredparameters"
                                     | "hasreturntype"
@@ -2653,12 +2728,24 @@ pub(super) fn execute_instruction(
                                 &mut std::collections::HashSet::new(),
                             )
                             && crate::exception_builtins::method_exists("Exception", &method);
+                        let inherited_error_exception_method = !class_name.is_empty()
+                            && super::is_a_type(
+                                &class_name.to_ascii_lowercase(),
+                                "errorexception",
+                                classes,
+                                &mut std::collections::HashSet::new(),
+                            )
+                            && crate::exception_builtins::method_exists(
+                                "ErrorException",
+                                &method,
+                            );
                         stack.push(Value::Bool(
                             reflection_method
                                 || enum_interface_method
                                 || generator_method && class_name == "generator"
                                 || crate::exception_builtins::method_exists(&class_name, &method)
                                 || inherited_throwable_method
+                                || inherited_error_exception_method
                                 || !class_name.is_empty()
                                     && (find_method(&class_name, &method, classes).is_some()
                                         || crate::pdo::method_exists(&class_name, &method)
@@ -3676,6 +3763,61 @@ pub(super) fn execute_instruction(
                     "json_validate" => {
                         stack.push(json_validate_builtin(&arguments, global_variables)?)
                     }
+                    "serialize" => {
+                        if arguments.len() != 1 {
+                            return Err(format!(
+                                "ArgumentCountError:serialize() expects exactly 1 argument, {} given",
+                                arguments.len()
+                            ));
+                        }
+                        let value = arguments
+                            .first()
+                            .ok_or("serialize() expects exactly 1 argument")?;
+                        stack.push(Value::String(serialize_builtin(
+                            value,
+                            functions,
+                            classes,
+                            static_properties,
+                            global_variables,
+                            output,
+                            steps,
+                        )?));
+                    }
+                    "unserialize" => {
+                        if arguments.is_empty() || arguments.len() > 2 {
+                            return Err(format!(
+                                "ArgumentCountError:unserialize() expects 1 or 2 arguments, {} given",
+                                arguments.len()
+                            ));
+                        }
+                        let value = arguments
+                            .first()
+                            .ok_or("unserialize() expects at least 1 argument")?;
+                        let Value::String(value) = value.dereference() else {
+                            return Err(format!(
+                                "TypeError:unserialize(): Argument #1 ($data) must be of type string, {} given",
+                                value.type_name()
+                            ));
+                        };
+                        if let Some(options) = arguments.get(1) {
+                            if !matches!(options.dereference(), Value::Array(_)) {
+                                return Err(format!(
+                                    "TypeError:unserialize(): Argument #2 ($options) must be of type array, {} given",
+                                    options.type_name()
+                                ));
+                            }
+                        }
+                        stack.push(unserialize_builtin(
+                            &value,
+                            arguments.get(1),
+                            functions,
+                            classes,
+                            static_properties,
+                            global_variables,
+                            output,
+                            steps,
+                        )?);
+                    }
                     "json_last_error" => {
                         if !arguments.is_empty() {
                             return Err("json_last_error() expects exactly 0 arguments".into());
@@ -4610,6 +4752,52 @@ pub(super) fn execute_instruction(
                         .get("\0function_name")
                         .cloned()
                         .ok_or("Invalid ReflectionFunction")?,
+                    ("reflectionfunction", "getstaticvariables") => {
+                        let mut entries = Vec::new();
+                        if let Some(Value::Closure(closure)) =
+                            internal.get("\0closure").map(Value::dereference)
+                        {
+                            let scope = format!("<closure:{:p}>", Rc::as_ptr(&closure));
+                            let closure = closure.borrow();
+                            entries.extend(closure.capture_order.iter().filter_map(|name| {
+                                let value = closure.captures.get(name).map(Value::dereference).or_else(|| {
+                                    let key = closure.reference_captures.get(name)?;
+                                    let bindings = HashMap::from([(
+                                        name.clone(),
+                                        VariableBinding::Reference(key.clone()),
+                                    )]);
+                                    Some(read_variable(
+                                        name,
+                                        &HashMap::new(),
+                                        &bindings,
+                                        global_variables,
+                                        global_scope,
+                                    ))
+                                })?;
+                                Some((ArrayKey::String(name.clone()), value))
+                            }));
+                            append_reflected_static_locals(
+                                &mut entries,
+                                &closure.function,
+                                &scope,
+                                global_variables,
+                            );
+                        } else {
+                            let name = internal
+                                .get("\0function_name")
+                                .ok_or("Invalid ReflectionFunction")?
+                                .show();
+                            if let Some(function) = functions.get(&name.to_ascii_lowercase()) {
+                                append_reflected_static_locals(
+                                    &mut entries,
+                                    function,
+                                    &function_scope(function),
+                                    global_variables,
+                                );
+                            }
+                        }
+                        Value::from_array_entries(entries)
+                    }
                     ("reflectionfunction", "invoke" | "invokeargs") => {
                         let function_name = internal
                             .get("\0function_name")
@@ -5955,6 +6143,73 @@ pub(super) fn execute_instruction(
                         }
                         Value::Array(properties)
                     }
+                    ("reflectionclass", "getstaticpropertyvalue") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        let name = arguments
+                            .first()
+                            .ok_or("ReflectionClass::getStaticPropertyValue() expects exactly 1 argument")?
+                            .show();
+                        let mut current = Some(target.as_str());
+                        let mut found = None;
+                        while let Some(class_name) = current {
+                            let Some(class) = classes.get(&class_name.to_ascii_lowercase()) else {
+                                break;
+                            };
+                            let is_target = class.name.eq_ignore_ascii_case(&target);
+                            if let Some(property) = class.static_properties.get(&name).filter(|property| {
+                                is_target || property.visibility != MemberVisibility::Private
+                            }) {
+                                let key = (class.name.to_ascii_lowercase(), name.clone());
+                                found = Some(
+                                    static_properties
+                                        .get(&key)
+                                        .cloned()
+                                        .or_else(|| property.default.clone())
+                                        .unwrap_or(Value::Null),
+                                );
+                                break;
+                            }
+                            current = class.parent.as_deref();
+                        }
+                        if let Some(value) = found {
+                            value
+                        } else if let Some(default) = arguments.get(1) {
+                            default.clone()
+                        } else {
+                            return Err(format!(
+                                "ReflectionException:Class {target} does not have a property named ${name}"
+                            ));
+                        }
+                    }
+                    ("reflectionclass", "setstaticpropertyvalue") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        let name = arguments
+                            .first()
+                            .ok_or("ReflectionClass::setStaticPropertyValue() expects exactly 2 arguments")?
+                            .show();
+                        let value = arguments
+                            .get(1)
+                            .ok_or("ReflectionClass::setStaticPropertyValue() expects exactly 2 arguments")?
+                            .dereference();
+                        super::objects::set_reflected_static_property(
+                            &target,
+                            &name,
+                            value,
+                            functions,
+                            classes,
+                            static_properties,
+                            global_variables,
+                            output,
+                            steps,
+                        )?;
+                        Value::Null
+                    }
                     ("reflectionclass", "hasmethod") => {
                         let target = internal
                             .get("\0target_class")
@@ -6341,6 +6596,17 @@ pub(super) fn execute_instruction(
                         } else {
                             Value::Null
                         }
+                    }
+                    ("reflectionclass", "newinstancewithoutconstructor") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        super::objects::reflected_new_instance_without_constructor(
+                            &target,
+                            classes,
+                            global_variables,
+                        )?
                     }
                     ("reflectionclass" | "reflectionenum", "getattributes") => {
                         let target = internal
@@ -8316,11 +8582,23 @@ pub(super) fn execute_instruction(
                     &mut std::collections::HashSet::new(),
                 )
             {
-                crate::exception_builtins::initialize_object(
+                let mut stringifier = |value: &Value| {
+                    super::objects::stringify(
+                        value,
+                        functions,
+                        classes,
+                        static_properties,
+                        global_variables,
+                        output,
+                        steps,
+                    )
+                };
+                crate::exception_builtins::initialize_object_with_stringifier(
                     &Value::Object(object),
                     parent,
                     &arguments,
                     classes,
+                    &mut stringifier,
                 )?;
                 stack.push(Value::Null);
                 return Ok(true);
@@ -11126,6 +11404,172 @@ pub(super) fn apply_exit_status(
     Ok(())
 }
 
+fn format_var_export(
+    value: &Value,
+    depth: usize,
+    seen_objects: &mut HashSet<usize>,
+    active_references: &mut HashSet<usize>,
+    circular_warnings: &mut usize,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Result<String, String> {
+    if depth > 64 {
+        return Err("var_export(): recursion detected".into());
+    }
+    if let Value::Reference(reference) = value {
+        let identity = Rc::as_ptr(reference) as usize;
+        let refers_back = references_export_cycle(
+            &reference.borrow(),
+            identity,
+            active_references,
+            0,
+        );
+        if active_references.contains(&identity) || refers_back {
+            *circular_warnings += 1;
+            return Ok("NULL".into());
+        }
+        active_references.insert(identity);
+        let result = format_var_export(
+            &reference.borrow(),
+            depth,
+            seen_objects,
+            active_references,
+            circular_warnings,
+            classes,
+        );
+        active_references.remove(&identity);
+        return result;
+    }
+    match value.dereference() {
+        Value::Null => Ok("NULL".into()),
+        Value::Bool(true) => Ok("true".into()),
+        Value::Bool(false) => Ok("false".into()),
+        Value::Integer(value) => Ok(value.to_string()),
+        Value::Number(value) => Ok(Value::Number(value).show()),
+        Value::String(value) => Ok(quote_export_string(&value)),
+        Value::Array(array) => {
+            let mut output = String::from("array (\n");
+            for (key, value) in &array.entries {
+                output.push_str(&"  ".repeat(depth + 1));
+                match key {
+                    ArrayKey::Integer(key) => output.push_str(&key.to_string()),
+                    ArrayKey::String(key) => output.push_str(&quote_export_string(key)),
+                }
+                output.push_str(" => ");
+                output.push_str(&format_var_export(
+                    value,
+                    depth + 1,
+                    seen_objects,
+                    active_references,
+                    circular_warnings,
+                    classes,
+                )?);
+                output.push_str(",\n");
+            }
+            output.push_str(&"  ".repeat(depth));
+            output.push(')');
+            Ok(output)
+        }
+        Value::Object(object) => {
+            let identity = Rc::as_ptr(&object) as usize;
+            if !seen_objects.insert(identity) {
+                *circular_warnings += 1;
+                return Ok("NULL".into());
+            }
+            let (class_name, properties, property_order) = {
+                let object = object.borrow();
+                (
+                    object.class_name.clone(),
+                    object.properties.clone(),
+                    object.property_order.clone(),
+                )
+            };
+            if classes
+                .get(&class_name.to_ascii_lowercase())
+                .is_some_and(|class| class.is_enum)
+            {
+                let case_name = properties
+                    .get("name")
+                    .map(Value::show)
+                    .ok_or_else(|| format!("var_export(): missing enum case name for {class_name}"))?;
+                seen_objects.remove(&identity);
+                return Ok(format!("\\{class_name}::{case_name}"));
+            }
+            let mut names = property_order;
+            let mut remaining = properties
+                .keys()
+                .filter(|name| !names.contains(name))
+                .cloned()
+                .collect::<Vec<_>>();
+            remaining.sort();
+            names.extend(remaining);
+            let is_std_class = class_name.eq_ignore_ascii_case("stdClass");
+            let mut output = if is_std_class {
+                String::from("(object) array(\n")
+            } else {
+                format!("\\{class_name}::__set_state(array(\n")
+            };
+            for name in names {
+                let Some(value) = properties.get(&name) else {
+                    continue;
+                };
+                output.push_str(&"  ".repeat(depth + 1));
+                output.push_str(&quote_export_string(&name));
+                output.push_str(" => ");
+                output.push_str(&format_var_export(
+                    value,
+                    depth + 1,
+                    seen_objects,
+                    active_references,
+                    circular_warnings,
+                    classes,
+                )?);
+                output.push_str(",\n");
+            }
+            output.push_str(&"  ".repeat(depth));
+            output.push_str(if is_std_class { ")" } else { "))" });
+            seen_objects.remove(&identity);
+            Ok(output)
+        }
+        Value::Closure(_) | Value::Generator(_) | Value::Stream(_) => Ok("NULL".into()),
+        Value::Reference(_) => unreachable!("reference values are handled before dereferencing"),
+    }
+}
+
+fn references_export_cycle(
+    value: &Value,
+    target: usize,
+    active: &HashSet<usize>,
+    depth: usize,
+) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match value {
+        Value::Reference(reference) => {
+            let identity = Rc::as_ptr(reference) as usize;
+            identity == target || active.contains(&identity)
+        }
+        Value::Array(array) => array
+            .entries
+            .iter()
+            .any(|(_, value)| references_export_cycle(value, target, active, depth + 1)),
+        Value::Object(object) => object
+            .borrow()
+            .properties
+            .values()
+            .any(|value| references_export_cycle(value, target, active, depth + 1)),
+        _ => false,
+    }
+}
+
+fn quote_export_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\0', "' . \"\\0\" . '");
+    format!("'{escaped}'")
+}
+
 fn format_dump_value(
     value: &Value,
     depth: usize,
@@ -11168,11 +11612,7 @@ fn format_dump_value(
         Value::Bool(value) => format!("{indent}bool({value})\n"),
         Value::Integer(value) => format!("{indent}int({value})\n"),
         Value::Number(value) => format!("{indent}float({})\n", Value::Number(value).show()),
-        Value::String(value) => format!(
-            "{indent}string({}) \"{}\"\n",
-            value.len(),
-            escape_dump_string(&value)
-        ),
+        Value::String(value) => format!("{indent}string({}) \"{value}\"\n", value.len()),
         Value::Array(array) => {
             if depth >= 64 {
                 return Err("var_dump(): nesting level too deep".into());
@@ -11181,7 +11621,7 @@ fn format_dump_value(
             for (key, item) in array.iter() {
                 let key = match key {
                     ArrayKey::Integer(key) => format!("[{key}]"),
-                    ArrayKey::String(key) => format!("[\"{}\"]", escape_dump_string(key)),
+                    ArrayKey::String(key) => format!("[\"{key}\"]"),
                 };
                 dump.push_str(&format!("{nested_indent}{key}=>\n"));
                 dump.push_str(&format_dump_value(
@@ -11222,6 +11662,8 @@ fn format_dump_value(
                     object.property_order.clone(),
                 )
             };
+            let has_debug_info =
+                super::objects::find_method(&class_name, "__debuginfo", classes).is_some();
             let properties = if let Some(method) =
                 super::objects::find_method(&class_name, "__debuginfo", classes)
             {
@@ -11296,7 +11738,8 @@ fn format_dump_value(
             for (key, item) in properties.iter() {
                 let key = match key {
                     ArrayKey::Integer(key) => format!("[{key}]"),
-                    ArrayKey::String(key) => format!("[\"{}\"]", escape_dump_string(key)),
+                    ArrayKey::String(key) if has_debug_info => format!("[\"{key}\"]"),
+                    ArrayKey::String(key) => format_object_dump_key(key),
                 };
                 dump.push_str(&format!("{nested_indent}{key}=>\n"));
                 dump.push_str(&format_dump_value(
@@ -11319,7 +11762,10 @@ fn format_dump_value(
         }
         Value::Closure(_) => format!("{indent}object(Closure)\n"),
         Value::Generator(_) => format!("{indent}object(Generator)\n"),
-        Value::Stream(_) => format!("{indent}resource(stream) of type (stream)\n"),
+        Value::Stream(stream) => {
+            let stream = stream.borrow();
+            format!("{indent}resource({}) of type (stream)\n", stream.resource_id())
+        }
         Value::Reference(_) => unreachable!(),
     })
 }
@@ -11367,23 +11813,16 @@ fn dump_property_name(
     storage_name.to_string()
 }
 
-fn escape_dump_string(value: &str) -> String {
-    let mut escaped = String::new();
-    for character in value.chars() {
-        match character {
-            '\0' => escaped.push_str("\\0"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            character if character.is_control() => {
-                escaped.push_str(&format!("\\x{:02x}", character as u32))
+fn format_object_dump_key(key: &str) -> String {
+    if let Some(mangled) = key.strip_prefix('\0') {
+        if let Some((scope, property)) = mangled.split_once('\0') {
+            if scope == "*" {
+                return format!("[\"{property}\":protected]");
             }
-            character => escaped.push(character),
+            return format!("[\"{property}\":\"{scope}\":private]");
         }
     }
-    escaped
+    format!("[\"{key}\"]")
 }
 
 fn getenv_value(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
@@ -11870,6 +12309,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "func_get_arg"
                 | "func_num_args"
                 | "var_dump"
+                | "var_export"
                 | "function_exists"
                 | "gc_collect_cycles"
                 | "php_sapi_name"
@@ -11982,6 +12422,8 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "json_encode"
                 | "json_decode"
                 | "json_validate"
+                | "serialize"
+                | "unserialize"
                 | "json_last_error"
                 | "json_last_error_msg"
                 | "is_uploaded_file"
@@ -12812,7 +13254,7 @@ pub(super) fn prepare_reference_arguments(
         } else if let Some(reference) = &source.direct_reference {
             VariableBinding::Reference(global_variables.store_reference(reference.clone()))
         } else {
-            if let Some(VariableBinding::ObjectProperty { .. }) =
+            if let Some(VariableBinding::ObjectProperty { receiver, property }) =
                 caller_bindings.get(&source.variable)
             {
                 if source.array_keys.is_empty() {
@@ -12821,7 +13263,14 @@ pub(super) fn prepare_reference_arguments(
                         .cloned()
                         .expect("checked property binding")
                 } else {
-                    return Err("Array-element references through object-property references are not supported".into());
+                    let Value::Object(object) = receiver else {
+                        return Err("Only object properties can be passed by reference".into());
+                    };
+                    let mut object = object.borrow_mut();
+                    let current = object.properties.get(property).cloned().unwrap_or(Value::Null);
+                    let (updated, reference) = current.ensure_array_reference(&source.array_keys)?;
+                    object.properties.insert(property.clone(), updated);
+                    VariableBinding::Reference(global_variables.store_reference(reference))
                 }
             } else {
                 let (key, _) = super::reference_cell_for_path(
@@ -13870,6 +14319,379 @@ fn json_encode_builtin(
             Ok(Value::Bool(false))
         }
     }
+}
+
+fn serialize_builtin(
+    value: &Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<String, String> {
+    let mut hook = |receiver: &Value| -> Result<Option<crate::serialization::SerializationHook>, String> {
+        let Value::Object(object) = receiver else {
+            return Ok(None);
+        };
+        let class_name = object.borrow().class_name.clone();
+        let (magic_name, is_sleep) = if super::objects::find_method(&class_name, "__serialize", classes).is_some() {
+            ("__serialize", false)
+        } else if super::objects::find_method(&class_name, "__sleep", classes).is_some() {
+            ("__sleep", true)
+        } else {
+            return Ok(None);
+        };
+        let Some(method) = super::objects::find_method(&class_name, magic_name, classes) else {
+            return Ok(None);
+        };
+        if method.is_static
+            || !method.parameters.is_empty()
+            || method.visibility != crate::MemberVisibility::Public
+        {
+            return Err(format!("{class_name}::{magic_name}() must be a public non-static method without parameters"));
+        }
+        let mut locals = HashMap::from([
+            ("this".to_string(), receiver.clone()),
+            ("\0static_class".to_string(), Value::String(class_name.clone())),
+        ]);
+        super::initialize_local_order(&mut locals, ["this".to_string()]);
+        let result = execute_user_frame(
+            &method.instructions,
+            functions,
+            classes,
+            static_properties,
+            &mut locals,
+            global_variables,
+            false,
+            &super::function_scope(method),
+            HashMap::new(),
+            output,
+            steps,
+        )?
+        .unwrap_or(Value::Null);
+        let result = clean_frame_after_error(
+            super::validate_return_type_in_scope(result, method, classes, Some(&class_name)),
+            &mut locals,
+            functions,
+            classes,
+            static_properties,
+            global_variables,
+            output,
+            steps,
+        )?;
+        finish_user_frame(
+            locals,
+            &result,
+            functions,
+            classes,
+            static_properties,
+            global_variables,
+            output,
+            steps,
+        )?;
+        let Value::Array(array) = result.dereference() else {
+            return Err(format!("TypeError:{class_name}::{magic_name}() must return an array"));
+        };
+        if is_sleep {
+            let selected = array.iter().filter_map(|(_, value)| match value.dereference() {
+                Value::String(name) => Some(name),
+                _ => None,
+            }).collect();
+            Ok(Some(crate::serialization::SerializationHook::Sleep {
+                names: selected,
+                scope: method.declaring_class.clone(),
+            }))
+        } else {
+            Ok(Some(crate::serialization::SerializationHook::Serialize(result)))
+        }
+    };
+    crate::serialization::serialize(value, classes, &mut hook)
+}
+
+fn unserialize_builtin(
+    serialized: &str,
+    options: Option<&Value>,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let mut allowed_classes = None;
+    let mut max_depth = crate::serialization::DEFAULT_UNSERIALIZE_DEPTH;
+    if let Some(Value::Array(options)) = options.map(Value::dereference) {
+        if let Some((_, allowed)) = options.iter().find(|(key, _)| {
+            matches!(key, ArrayKey::String(key) if key == "allowed_classes")
+        }) {
+            match allowed.dereference() {
+                Value::Bool(true) => {}
+                Value::Bool(false) => allowed_classes = Some(HashSet::new()),
+                Value::Array(names) => {
+                    let mut allowlist = HashSet::new();
+                    for (_, name) in names.iter() {
+                        let Value::String(name) = name.dereference() else {
+                            return Err("TypeError:unserialize(): Option \"allowed_classes\" must be an array of class names".into());
+                        };
+                        if !is_valid_unserialize_class_name(&name) {
+                            return Err("ValueError:unserialize(): Option \"allowed_classes\" must be an array of class names".into());
+                        }
+                        allowlist.insert(name.trim_start_matches('\\').to_ascii_lowercase());
+                    }
+                    allowed_classes = Some(allowlist);
+                }
+                value => {
+                    return Err(format!(
+                        "TypeError:unserialize(): Option \"allowed_classes\" must be of type array|bool, {} given",
+                        value.type_name()
+                    ));
+                }
+            }
+        }
+        if let Some((_, depth)) = options
+            .iter()
+            .find(|(key, _)| matches!(key, ArrayKey::String(key) if key == "max_depth"))
+        {
+            match depth.dereference() {
+                Value::Integer(depth) if depth >= 0 => max_depth = depth as usize,
+                Value::Integer(_) => {
+                    global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                        level: crate::DiagnosticLevel::Warning,
+                        message: "unserialize(): max_depth cannot be negative".into(),
+                        source_file: None,
+                        source_line: None,
+                        output_offset: output.len(),
+                    });
+                    return Ok(Value::Bool(false));
+                }
+                value => {
+                    return Err(format!(
+                        "TypeError:unserialize(): Option \"max_depth\" must be of type int, {} given",
+                        value.type_name()
+                    ));
+                }
+            }
+        }
+    }
+    let mut restore = |serialized_class: &str, data: Value| -> Result<Value, String> {
+        let class_key = serialized_class.to_ascii_lowercase();
+        let class = classes.get(&class_key).filter(|_| {
+            allowed_classes
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&class_key))
+        });
+        let Some(class) = class else {
+            let Value::Array(payload) = data else {
+                unreachable!("object serialization payload is represented by an array")
+            };
+            let mut properties = HashMap::from([(
+                "__PHP_Incomplete_Class_Name".into(),
+                Value::String(serialized_class.into()),
+            )]);
+            let mut order = vec!["__PHP_Incomplete_Class_Name".to_string()];
+            for (key, value) in payload.iter() {
+                let key = match key {
+                    ArrayKey::String(key) => key.clone(),
+                    ArrayKey::Integer(key) => key.to_string(),
+                };
+                if !properties.contains_key(&key) {
+                    order.push(key.clone());
+                }
+                properties.insert(key, value.clone());
+            }
+            let incomplete = Value::Object(Rc::new(RefCell::new(PhpObject {
+                class_name: "__PHP_Incomplete_Class".into(),
+                properties,
+                property_order: order,
+                active_property_hooks: HashSet::new(),
+                exception: None,
+            })));
+            return Ok(incomplete);
+        };
+        let class_name = class.name.clone();
+        let mut properties = HashMap::new();
+        super::objects::collect_properties(&class_name, classes, &mut properties)?;
+        let mut property_order = Vec::new();
+        super::objects::collect_property_order(&class_name, classes, &mut property_order)?;
+        let throwable = super::is_a_type(
+            &class_key,
+            "throwable",
+            classes,
+            &mut HashSet::new(),
+        );
+        let receiver = Value::Object(Rc::new(RefCell::new(PhpObject {
+            class_name: class_name.clone(),
+            properties,
+            property_order,
+            active_property_hooks: HashSet::new(),
+            exception: throwable.then(crate::exception_builtins::empty_data),
+        })));
+        global_variables.register_destructor_object(&receiver);
+
+        if let Some(method) = super::objects::find_method(&class_name, "__unserialize", classes) {
+            if method.is_static
+                || method.visibility != MemberVisibility::Public
+                || method.parameters.len() != 1
+            {
+                return Err(format!("{class_name}::__unserialize() must be a public non-static method with one parameter"));
+            }
+            let Value::Array(data) = data else {
+                unreachable!("object serialization payload is represented by an array")
+            };
+            invoke_unserialization_hook(
+                &receiver,
+                &class_name,
+                method,
+                Some(Value::Array(data)),
+                functions,
+                classes,
+                static_properties,
+                global_variables,
+                output,
+                steps,
+            )?;
+        } else {
+            let Value::Array(data_array) = data else {
+                unreachable!("object serialization payload is represented by an array")
+            };
+            let Value::Object(instance) = &receiver else {
+                unreachable!("new object")
+            };
+            for (key, value) in data_array.iter() {
+                let property_name = match key {
+                    ArrayKey::Integer(index) => index.to_string(),
+                    ArrayKey::String(name) => name.clone(),
+                };
+                let (scope, property) = decode_serialized_property_name(&property_name);
+                let metadata = super::objects::find_property_in_scope(
+                    &class_name,
+                    property,
+                    scope,
+                    classes,
+                );
+                let storage_name = metadata.map_or_else(
+                    || property_name.clone(),
+                    |metadata| instance_property_storage_key(metadata, property),
+                );
+                if !instance.borrow().properties.contains_key(&storage_name) {
+                    instance.borrow_mut().property_order.push(storage_name.clone());
+                }
+                instance
+                    .borrow_mut()
+                    .properties
+                    .insert(storage_name, value.clone());
+            }
+            if let Some(method) =
+                super::objects::find_method(&class_name, "__wakeup", classes)
+            {
+                if method.is_static
+                    || method.visibility != MemberVisibility::Public
+                    || !method.parameters.is_empty()
+                {
+                    return Err(format!("{class_name}::__wakeup() must be a public non-static method without parameters"));
+                }
+                invoke_unserialization_hook(
+                    &receiver,
+                    &class_name,
+                    method,
+                    None,
+                    functions,
+                    classes,
+                    static_properties,
+                    global_variables,
+                    output,
+                    steps,
+                )?;
+            }
+        }
+        Ok(receiver)
+    };
+    crate::serialization::unserialize(serialized, max_depth, &mut restore)
+}
+
+fn is_valid_unserialize_class_name(name: &str) -> bool {
+    let name = name.strip_prefix('\\').unwrap_or(name);
+    if name.is_empty() {
+        return false;
+    }
+    name.split('\\').all(|segment| {
+        let mut bytes = segment.bytes();
+        let Some(first) = bytes.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == b'_' || first >= 0x80)
+            && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80)
+    })
+}
+
+fn decode_serialized_property_name(name: &str) -> (Option<&str>, &str) {
+    let Some(mangled) = name.strip_prefix('\0') else {
+        return (None, name);
+    };
+    let Some((scope, property)) = mangled.split_once('\0') else {
+        return (None, name);
+    };
+    (Some(scope), property)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn invoke_unserialization_hook(
+    receiver: &Value,
+    class_name: &str,
+    method: &BytecodeFunction,
+    argument: Option<Value>,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(), String> {
+    let mut locals = HashMap::from([
+        ("this".to_string(), receiver.clone()),
+        ("\0static_class".to_string(), Value::String(class_name.into())),
+    ]);
+    let mut parameter_names = vec!["this".to_string()];
+    if let (Some(argument), Some(parameter)) = (argument, method.parameters.first()) {
+        locals.insert(parameter.clone(), argument);
+        parameter_names.push(parameter.clone());
+    }
+    super::initialize_local_order(&mut locals, parameter_names);
+    let result = execute_user_frame(
+        &method.instructions,
+        functions,
+        classes,
+        static_properties,
+        &mut locals,
+        global_variables,
+        false,
+        &super::function_scope(method),
+        HashMap::new(),
+        output,
+        steps,
+    )?
+    .unwrap_or(Value::Null);
+    let result = clean_frame_after_error(
+        super::validate_return_type_in_scope(result, method, classes, Some(class_name)),
+        &mut locals,
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )?;
+    finish_user_frame(
+        locals,
+        &result,
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )
 }
 
 fn json_decode_builtin(

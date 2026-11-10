@@ -7,6 +7,7 @@ mod json_builtins;
 mod math_builtins;
 mod mongo_php;
 mod pdo;
+mod serialization;
 mod string_builtins;
 mod values;
 pub(crate) mod vm;
