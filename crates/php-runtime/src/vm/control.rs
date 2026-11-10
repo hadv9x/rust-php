@@ -127,10 +127,25 @@ pub(super) fn execute_instruction(
                 )?;
                 aggregate_depth += 1;
             }
-            if aggregate_depth > 0 && matches!(value.dereference(), Value::Array(_)) {
-                return Err(
-                    "IteratorAggregate::getIterator() must return a Traversable object".into(),
-                );
+            if aggregate_depth > 0 {
+                let is_traversable = match value.dereference() {
+                    Value::Generator(_) => true,
+                    Value::Object(object) => {
+                        let class_name = object.borrow().class_name.clone();
+                        super::is_a_type(
+                            &class_name.to_ascii_lowercase(),
+                            "traversable",
+                            classes,
+                            &mut std::collections::HashSet::new(),
+                        ) || class_name.eq_ignore_ascii_case("PDOStatement")
+                    }
+                    _ => false,
+                };
+                if !is_traversable {
+                    return Err(
+                        "TypeError:IteratorAggregate::getIterator() must return a Traversable object".into(),
+                    );
+                }
             }
             let iterator = match value {
                 Value::Array(entries) => ForeachIterator::Array(entries.into_iter().collect(), 0),
@@ -208,7 +223,7 @@ pub(super) fn execute_instruction(
                         )?;
                         match iterator {
                             Value::Array(_) => return Err(
-                                "IteratorAggregate::getIterator() must return a Traversable object"
+                                "TypeError:IteratorAggregate::getIterator() must return a Traversable object"
                                     .into(),
                             ),
                             Value::Generator(generator) => {
@@ -256,7 +271,7 @@ pub(super) fn execute_instruction(
                                     super::objects::find_method(&iterator_class, method, classes)
                                         .is_none()
                                 }) {
-                                    return Err("IteratorAggregate::getIterator() must return a Traversable object".into());
+                                    return Err("TypeError:IteratorAggregate::getIterator() must return a Traversable object".into());
                                 }
                                 let iterator = Value::Object(iterator_object);
                                 let _ = call_iterator_method(
@@ -280,7 +295,7 @@ pub(super) fn execute_instruction(
                                 }
                             }
                             _ => return Err(
-                                "IteratorAggregate::getIterator() must return a Traversable object"
+                                "TypeError:IteratorAggregate::getIterator() must return a Traversable object"
                                     .into(),
                             ),
                         }
@@ -291,14 +306,14 @@ pub(super) fn execute_instruction(
                             classes,
                             &mut std::collections::HashSet::new(),
                         ) {
-                            return Err(format!("Object of type {class_name} is not an Iterator"));
+                            return Err(format!("TypeError:Object of type {class_name} is not an Iterator"));
                         }
                         let required = ["rewind", "valid", "current", "key", "next"];
                         if required.iter().any(|method| {
                             super::objects::find_method(&class_name, method, classes).is_none()
                         }) {
                             return Err(format!(
-                                "Object of type {class_name} does not provide the Iterator methods"
+                                "TypeError:Object of type {class_name} does not provide the Iterator methods"
                             ));
                         }
                         let iterator = Value::Object(object);
@@ -363,16 +378,16 @@ pub(super) fn execute_instruction(
                                         iterable = call_iterator_method(Value::Object(object), "getiterator", stack, variables, bindings, globals,
                                             global_scope, frame_id, functions, classes, static_properties, output, steps)?;
                                         if matches!(iterable.dereference(), Value::Array(_)) {
-                                            return Err("IteratorAggregate::getIterator() must return a Traversable object".into());
+                                            return Err("TypeError:IteratorAggregate::getIterator() must return a Traversable object".into());
                                         }
                                         continue;
                                     }
                                     if !super::is_a_type(&normalized_class, "iterator", classes, &mut std::collections::HashSet::new()) {
-                                        return Err(format!("Object of type {class_name} is not an Iterator"));
+                                        return Err(format!("TypeError:Object of type {class_name} is not an Iterator"));
                                     }
                                     let required = ["rewind", "valid", "current", "key", "next"];
                                     if required.iter().any(|method| super::objects::find_method(&class_name, method, classes).is_none()) {
-                                        return Err(format!("Object of type {class_name} does not provide the Iterator methods"));
+                                        return Err(format!("TypeError:Object of type {class_name} does not provide the Iterator methods"));
                                     }
                                     let iterator = Value::Object(object);
                                     let _ = call_iterator_method(iterator.clone(), "rewind", stack, variables, bindings, globals,
@@ -387,7 +402,7 @@ pub(super) fn execute_instruction(
                                     iterators.insert(*id, ForeachIterator::Generator(generator, true));
                                     return Ok(true);
                                 }
-                                _ => return Err("IteratorAggregate::getIterator() must return a Traversable object".into()),
+                                _ => return Err("TypeError:IteratorAggregate::getIterator() must return a Traversable object".into()),
                             }
                         }
                     }

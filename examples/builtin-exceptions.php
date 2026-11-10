@@ -58,6 +58,13 @@ try {
     echo get_class($error), ":", $error->getMessage(), "\n";
 }
 
+class NotStringableForErrorExample {}
+try {
+    (string) new NotStringableForErrorExample();
+} catch (Error $error) {
+    echo 'string cast:', get_class($error), ':', $error->getMessage(), "\n";
+}
+
 try {
     str_word_count();
 } catch (ArgumentCountError $error) {

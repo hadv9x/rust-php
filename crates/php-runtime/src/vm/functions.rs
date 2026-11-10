@@ -1230,7 +1230,7 @@ fn collect_traversable(
                 )?;
                 if matches!(iterator.dereference(), Value::Array(_)) {
                     return Err(
-                        "IteratorAggregate::getIterator() must return a Traversable object".into(),
+                        "TypeError:IteratorAggregate::getIterator() must return a Traversable object".into(),
                     );
                 }
                 return collect_traversable(
@@ -1264,7 +1264,7 @@ fn collect_traversable(
                 .any(|method| super::objects::find_method(&class_name, method, classes).is_none())
             {
                 return Err(format!(
-                    "Object of type {class_name} does not provide the Iterator methods"
+                    "TypeError:Object of type {class_name} does not provide the Iterator methods"
                 ));
             }
             let iterator = Value::Object(object);
@@ -2101,8 +2101,9 @@ pub(super) fn execute_instruction(
                     | "is_finite" | "is_infinite" | "is_nan" | "exp" | "expm1" | "log"
                     | "log10" | "log1p" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
                     | "atan2" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
-                    | "deg2rad" | "rad2deg" | "hypot" | "max" | "min" | "base_convert"
-                    | "decbin" | "dechex" | "decoct" => {
+                    | "deg2rad" | "rad2deg" | "hypot" | "pow" | "fpow" | "pi" | "max" | "min"
+                    | "base_convert" | "decbin" | "dechex" | "decoct" | "bindec" | "hexdec"
+                    | "octdec" => {
                         stack.push(crate::math_builtins::call(fallback_name, &arguments)?);
                     }
                     "mongo_find"
@@ -2927,6 +2928,7 @@ pub(super) fn execute_instruction(
                                     | "isinitialized"
                                     | "hasdefaultvalue"
                                     | "getdefaultvalue"
+                                    | "isdefault"
                             ),
                             "reflectionattribute" => matches!(
                                 method.as_str(),
@@ -8410,6 +8412,12 @@ pub(super) fn execute_instruction(
                             let initialized = object.borrow().properties.contains_key(&storage_key);
                             Value::Bool(initialized)
                         }
+                    }
+                    ("reflectionproperty", "isdefault") => {
+                        // ReflectionProperty instances in this runtime are created from
+                        // declared class metadata; ReflectionObject dynamic properties are
+                        // not exposed by getProperties() yet.
+                        Value::Bool(true)
                     }
                     ("reflectionproperty", "hasdefaultvalue" | "getdefaultvalue") => {
                         let target = internal

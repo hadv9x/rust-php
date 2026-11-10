@@ -448,8 +448,17 @@ pub(super) fn apply_cast(
         },
         crate::bytecode::CastType::String => match value {
             Value::Array(_) => Value::String("Array".into()),
-            Value::Object(_) | Value::Closure(_) | Value::Generator(_) => {
-                return Err("Object could not be converted to string".into())
+            Value::Object(object) => {
+                return Err(format!(
+                    "Object of class {} could not be converted to string",
+                    object.borrow().class_name
+                ));
+            }
+            Value::Closure(_) => {
+                return Err("Object of class Closure could not be converted to string".into())
+            }
+            Value::Generator(_) => {
+                return Err("Object of class Generator could not be converted to string".into())
             }
             Value::Stream(_) => Value::String(value.show()),
             value => Value::String(value.show()),

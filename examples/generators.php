@@ -175,3 +175,12 @@ $completion = completesWithLocal();
 echo $completion->current(), ";";
 $completion->next();
 echo "done;\n";
+
+class InvalidAggregateExample implements IteratorAggregate {
+    public function getIterator() { return 42; }
+}
+try {
+    foreach (new InvalidAggregateExample() as $value) {}
+} catch (TypeError $error) {
+    echo 'invalid iterator aggregate: ', get_class($error), "\n";
+}

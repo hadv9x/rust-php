@@ -5,6 +5,9 @@ echo sqrt(9), ':', intdiv(-7, 3), ':', is_finite(1), ':', is_infinite(fdiv(1, 0)
 echo log(num: 8, base: 2), ':', sin(deg2rad(30)), ':', hypot(3, 4), ':', fmod(8, 3), ':';
 echo max(1, 9, 3), ':', min([-2, 4, 1]), "\n";
 echo base_convert(num: 'ff', from_base: 16, to_base: 2), ':', decbin(num: 13), ':', dechex(num: 255), ':', decoct(num: 8), "\n";
+echo pow(num: 2, exponent: 10), ':', (int) is_int(pow(2, 10)), ':', fpow(0, -1), ':', pi(), ':';
+echo bindec(binary_string: '1011'), ':', hexdec(hex_string: 'ff'), ':', octdec(octal_string: '77'), ':';
+echo implode(',', array_map('hexdec', ['ff', '0x10'])), "\n";
 echo number_format(num: 1234.5678, decimals: 2), ':', number_format(1234.5678, 2, ',', ' '), "\n";
 echo implode(',', array_map('intval', ['ff', '101'], [16, 2])), "\n";
 echo implode('|', str_getcsv('name,"value, with comma","say ""hi"""', escape: '')), "\n";

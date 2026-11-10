@@ -353,6 +353,20 @@ fn decimal_base_converters_support_named_arguments() {
 }
 
 #[test]
+fn common_math_conversion_and_power_builtins_support_named_calls_and_callbacks() {
+    let source = r#"<?php
+        echo pow(num: 2, exponent: 8), ':', is_int(pow(2, 8)), ':', pi(), ':', function_exists('pi'), ':';
+        echo fpow(num: 0, exponent: -1), ':', is_infinite(fpow(0, -1)), ':';
+        echo bindec(binary_string: '1011'), ':', hexdec(hex_string: 'ff'), ':', octdec(octal_string: '77'), ':';
+        echo implode(',', array_map('hexdec', ['ff', '0x10'])), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "256:1:3.141592653589793:1:inf:1:11:255:63:255,16\n"
+    );
+}
+
+#[test]
 fn bin2hex_is_available_through_php_dispatch() {
     let source = r#"<?php echo bin2hex(string: "aé"), ':', function_exists('bin2hex'), "\n";"#;
     assert_eq!(

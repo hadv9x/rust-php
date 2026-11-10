@@ -688,7 +688,7 @@ $uninitializedReflection = new ReflectionClass("UninitializedPropertyExample");
 echo "reflection-property-initialized:", ($uninitializedReflection->getProperty("value")->isInitialized($uninitializedObject) ? 1 : 0), ":", ($uninitializedReflection->getProperty("optional")->isInitialized($uninitializedObject) ? 1 : 0), "\n";
 class PropertyDefaultsExample { public $implicit; public ?int $uninitialized; public ?int $explicitNull = null; }
 $propertyDefaults = new ReflectionClass("PropertyDefaultsExample");
-echo "reflection-property-defaults:", ($propertyDefaults->getProperty("implicit")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("uninitialized")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("explicitNull")->hasDefaultValue() ? 1 : 0), "\n";
+echo "reflection-property-defaults:", ($propertyDefaults->getProperty("implicit")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("uninitialized")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("explicitNull")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("implicit")->isDefault() ? 1 : 0), "\n";
 class DefaultPropertyBaseExample { protected $inheritedDefault = "base"; }
 class DefaultPropertyChildExample extends DefaultPropertyBaseExample { private $ownDefault = "child"; public $unsetDefault; }
 $reflectedDefaults = (new ReflectionClass(DefaultPropertyChildExample::class))->getDefaultProperties();

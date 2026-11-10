@@ -490,6 +490,39 @@ fn yield_from_delegates_user_iterators_and_iterator_aggregates() {
 }
 
 #[test]
+fn invalid_iterator_aggregate_results_raise_catchable_type_errors() {
+    let foreach_source = r#"<?php
+        class InvalidAggregateResult implements IteratorAggregate {
+            public function getIterator() { return 42; }
+        }
+        try {
+            foreach (new InvalidAggregateResult() as $value) {}
+        } catch (TypeError $error) {
+            echo get_class($error), ':', $error->getMessage(), "\n";
+        }
+    "#;
+    assert_eq!(
+        compile_source(foreach_source).unwrap().execute().unwrap(),
+        "TypeError:IteratorAggregate::getIterator() must return a Traversable object\n"
+    );
+    let yield_from_source = r#"<?php
+        class InvalidAggregateResult implements IteratorAggregate {
+            public function getIterator() { return 42; }
+        }
+        function invalidAggregateDelegation() { yield from new InvalidAggregateResult(); }
+        try {
+            foreach (invalidAggregateDelegation() as $value) {}
+        } catch (TypeError $error) {
+            echo get_class($error), ':', $error->getMessage();
+        }
+    "#;
+    assert_eq!(
+        compile_source(yield_from_source).unwrap().execute().unwrap(),
+        "TypeError:IteratorAggregate::getIterator() must return a Traversable object"
+    );
+}
+
+#[test]
 fn iterator_to_array_copies_arrays_and_consumes_generators_with_key_modes() {
     let source = r#"<?php
         function duplicateKeys() {

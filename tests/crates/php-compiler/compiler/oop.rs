@@ -1230,13 +1230,14 @@ fn reflection_property_distinguishes_implicit_and_declared_default_values() {
         echo ($explicit->hasDefaultValue() ? 1 : 0), ':', ($promoted->hasDefaultValue() ? 1 : 0), ':';
         echo ($implicit->getDefaultValue() === null ? 1 : 0), ':', ($explicit->getDefaultValue() === null ? 1 : 0), ':';
         echo ($typed->getDefaultValue() === null ? 1 : 0), ':', ($promoted->getDefaultValue() === null ? 1 : 0), ':';
-        echo method_exists('ReflectionProperty', 'hasDefaultValue'), ':', method_exists('ReflectionProperty', 'getDefaultValue');
+        echo method_exists('ReflectionProperty', 'hasDefaultValue'), ':', method_exists('ReflectionProperty', 'getDefaultValue'), ':';
+        echo ($implicit->isDefault() ? 1 : 0), ':', ($typed->isDefault() ? 1 : 0), ':', method_exists('ReflectionProperty', 'isDefault');
     "#;
     let result = compile_source(source)
         .unwrap()
         .execute_with_globals(Default::default())
         .unwrap();
-    assert_eq!(result.output, "1:0:1:0:1:1:1:1:1:1");
+    assert_eq!(result.output, "1:0:1:0:1:1:1:1:1:1:1:1:1");
     assert_eq!(result.diagnostics.len(), 2);
     assert!(result
         .diagnostics

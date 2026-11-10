@@ -3720,7 +3720,7 @@ fn execute_frame(
                                         }
                                         let required = ["rewind", "valid", "current", "key", "next"];
                                         if required.iter().any(|method| objects::find_method(&class_name, method, classes).is_none()) {
-                                            return Err(format!("Object of type {class_name} does not provide the Iterator methods"));
+                                            return Err(format!("TypeError:Object of type {class_name} does not provide the Iterator methods"));
                                         }
                                         let value = Value::Object(object);
                                         let _ = control::call_iterator_method(value.clone(), "rewind", &mut stack, variables,
@@ -3729,7 +3729,7 @@ fn execute_frame(
                                         Some(YieldFromIterator::UserIterator { object: value, advance_pending: false })
                                     }
                                 }
-                                _ if aggregate_depth > 0 => return Err("IteratorAggregate::getIterator() must return a Traversable object".into()),
+                                _ if aggregate_depth > 0 => return Err("TypeError:IteratorAggregate::getIterator() must return a Traversable object".into()),
                                 _ => return Err("yield from expects an array or Traversable object".into()),
                             };
                                 if let Some(mut iterator) = iterator {

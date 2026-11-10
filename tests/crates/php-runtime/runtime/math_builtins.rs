@@ -155,3 +155,56 @@ fn decimal_base_converters_format_unsigned_width_for_negative_inputs() {
     );
     assert_eq!(call("decoct", &[Value::Integer(8)]).unwrap().show(), "10");
 }
+
+#[test]
+fn power_and_pi_preserve_php_integer_results_where_supported() {
+    assert!(matches!(
+        call("pow", &[Value::Integer(2), Value::Integer(8)]).unwrap(),
+        Value::Integer(256)
+    ));
+    assert!(matches!(
+        call("pow", &[Value::Integer(2), Value::Integer(63)]).unwrap(),
+        Value::Number(value) if value == 9_223_372_036_854_775_808.0
+    ));
+    assert!(matches!(
+        call("pow", &[Value::Number(2.0), Value::Integer(8)]).unwrap(),
+        Value::Number(value) if value == 256.0
+    ));
+    assert_eq!(
+        call("pi", &[]).unwrap().number(),
+        std::f64::consts::PI
+    );
+    assert!(call("pi", &[Value::Integer(1)]).is_err());
+    assert!(matches!(
+        call("fpow", &[Value::Integer(2), Value::Integer(8)]).unwrap(),
+        Value::Number(256.0)
+    ));
+    assert!(matches!(
+        call("fpow", &[Value::Integer(0), Value::Integer(-1)]).unwrap(),
+        Value::Number(value) if value.is_infinite()
+    ));
+}
+
+#[test]
+fn unsigned_base_decoders_ignore_invalid_digits_and_promote_overflow() {
+    assert!(matches!(
+        call("bindec", &[Value::String("0b1011".into())]).unwrap(),
+        Value::Integer(11)
+    ));
+    assert!(matches!(
+        call("hexdec", &[Value::String("0xFF".into())]).unwrap(),
+        Value::Integer(255)
+    ));
+    assert!(matches!(
+        call("octdec", &[Value::String("77".into())]).unwrap(),
+        Value::Integer(63)
+    ));
+    assert!(matches!(
+        call("hexdec", &[Value::String("that".into())]).unwrap(),
+        Value::Integer(10)
+    ));
+    assert!(matches!(
+        call("hexdec", &[Value::String("ffffffffffffffff".into())]).unwrap(),
+        Value::Number(value) if value == u64::MAX as f64
+    ));
+}

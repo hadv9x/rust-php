@@ -37,12 +37,18 @@ pub(crate) fn is_supported(name: &str) -> bool {
             | "deg2rad"
             | "rad2deg"
             | "hypot"
+            | "pow"
+            | "fpow"
+            | "pi"
             | "max"
             | "min"
             | "base_convert"
             | "decbin"
             | "dechex"
             | "decoct"
+            | "bindec"
+            | "hexdec"
+            | "octdec"
     )
 }
 
@@ -87,6 +93,12 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "decbin",
         "dechex",
         "decoct",
+        "bindec",
+        "hexdec",
+        "octdec",
+        "pow",
+        "fpow",
+        "pi",
     ]
 }
 
@@ -115,6 +127,23 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         };
         return Ok(Value::String(converted));
     }
+    if matches!(function.as_str(), "bindec" | "hexdec" | "octdec") {
+        if args.len() != 1 {
+            return Err(format!("{function}() expects exactly 1 argument"));
+        }
+        let radix = match function.as_str() {
+            "bindec" => 2,
+            "hexdec" => 16,
+            _ => 8,
+        };
+        return Ok(parse_unsigned_base(&args[0].show(), radix));
+    }
+    if function == "pi" {
+        if !args.is_empty() {
+            return Err(format!("pi() expects exactly 0 arguments, {} given", args.len()));
+        }
+        return Ok(Value::Number(std::f64::consts::PI));
+    }
     if function == "max" || function == "min" {
         return extremum(&function, args);
     }
@@ -123,7 +152,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         | "expm1" | "log10" | "log1p" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "deg2rad" | "rad2deg" => (1, 1),
         "round" => (1, 3),
-        "fdiv" | "fmod" | "intdiv" | "atan2" | "hypot" => (2, 2),
+        "fdiv" | "fmod" | "intdiv" | "atan2" | "hypot" | "pow" | "fpow" => (2, 2),
         "log" => (1, 2),
         _ => return Err(format!("Unsupported math function: {name}")),
     };
@@ -169,6 +198,23 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         "deg2rad" => Value::Number(number.to_radians()),
         "rad2deg" => Value::Number(number.to_degrees()),
         "hypot" => Value::Number(args[0].number().hypot(args[1].number())),
+        "pow" => match (args[0].dereference(), args[1].dereference()) {
+            (Value::Integer(base), Value::Integer(exponent)) if exponent >= 0 => {
+                if let Ok(exponent) = u32::try_from(exponent) {
+                    base.checked_pow(exponent)
+                        .map(Value::Integer)
+                        .unwrap_or_else(|| Value::Number((base as f64).powf(exponent as f64)))
+                } else if base == 0 {
+                    Value::Integer(0)
+                } else if base == 1 {
+                    Value::Integer(1)
+                } else {
+                    Value::Number((base as f64).powf(exponent as f64))
+                }
+            }
+            _ => Value::Number(args[0].number().powf(args[1].number())),
+        },
+        "fpow" => Value::Number(args[0].number().powf(args[1].number())),
         "fdiv" => Value::Number(args[0].number() / args[1].number()),
         "fmod" => Value::Number(args[0].number() % args[1].number()),
         "intdiv" => {
@@ -225,6 +271,49 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         _ => unreachable!(),
     };
     Ok(result)
+}
+
+fn parse_unsigned_base(input: &str, radix: u32) -> Value {
+    let trimmed = input.trim();
+    let digits = match radix {
+        2 if trimmed.starts_with("0b") || trimmed.starts_with("0B") => &trimmed[2..],
+        8 if trimmed.starts_with("0o") || trimmed.starts_with("0O") => &trimmed[2..],
+        16 if trimmed.starts_with("0x") || trimmed.starts_with("0X") => &trimmed[2..],
+        _ => trimmed,
+    };
+    let mut integer = 0u128;
+    let mut floating = 0.0f64;
+    let mut overflow = false;
+    let mut found_digit = false;
+    for byte in digits.bytes() {
+        let Some(digit) = (byte as char).to_digit(radix) else {
+            continue;
+        };
+        found_digit = true;
+        if overflow {
+            floating = floating * radix as f64 + digit as f64;
+            continue;
+        }
+        if let Some(next) = integer
+            .checked_mul(radix as u128)
+            .and_then(|value| value.checked_add(digit as u128))
+        {
+            integer = next;
+        } else {
+            overflow = true;
+            floating = integer as f64 * radix as f64 + digit as f64;
+        }
+    }
+    if !found_digit {
+        return Value::Integer(0);
+    }
+    if overflow {
+        Value::Number(floating)
+    } else if integer <= i64::MAX as u128 {
+        Value::Integer(integer as i64)
+    } else {
+        Value::Number(integer as f64)
+    }
 }
 
 fn base_convert(input: &str, from: u32, to: u32) -> Result<String, String> {

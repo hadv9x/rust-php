@@ -1683,11 +1683,18 @@ fn string_cast_dispatches_and_validates_magic_to_string() {
     let output = compile_source(source).unwrap().execute().unwrap();
     assert_eq!(output, "cast value:string\n");
 
-    let missing = compile_source("<?php class NotStringable {} echo (string) new NotStringable();")
-        .unwrap()
-        .execute()
-        .unwrap_err();
-    assert!(missing.contains("could not be converted to string"));
+    let missing = compile_source(r#"<?php
+        class NotStringable {}
+        try { echo (string) new NotStringable(); }
+        catch (Error $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert_eq!(
+        missing,
+        "Error:Object of class NotStringable could not be converted to string"
+    );
 
     let weak_scalar = compile_source("<?php class ScalarStringable { public function __toString() { return 1; } } echo (string) new ScalarStringable();")
         .unwrap().execute().unwrap();
