@@ -159,6 +159,11 @@ fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_
         }
         $dynamicReflection = $reflection->getProperty('dynamic');
         echo ':', ($reflection->hasProperty('dynamic') ? 1 : 0), ':', $dynamicReflection->getName(), ':', ($dynamicReflection->isDefault() ? 1 : 0), ':';
+        $otherObject = new ReflectedObjectSubject();
+        $dynamicReflection->setValue($otherObject, 11);
+        echo (property_exists($otherObject, 'dynamic') ? 1 : 0), ':', $dynamicReflection->getValue($otherObject), ':';
+        foreach ((new ReflectionObject($otherObject))->getProperties() as $otherProperty) { echo $otherProperty->getName(), ','; }
+        echo ':';
         echo is_a($reflection, ReflectionClass::class), ':', class_exists('ReflectionObject'), ':';
         echo method_exists('ReflectionObject', 'getMethod'), ':';
         try { new ReflectionObject('ReflectedObjectSubject'); }
@@ -166,7 +171,7 @@ fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "ReflectionObject:ReflectedObjectSubject:ready:declaredDynamic=0:declared=1:1:3,dynamic=1:0:1:0:0:0:dynamic=0:1:9,:1:dynamic:0:1:1:1:TypeError"
+        "ReflectionObject:ReflectedObjectSubject:ready:declaredDynamic=0:declared=1:1:3,dynamic=1:0:1:0:0:0:dynamic=0:1:9,:1:dynamic:0:1:11:declared,dynamic,:1:1:1:TypeError"
     );
 }
 
