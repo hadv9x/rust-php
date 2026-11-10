@@ -707,6 +707,18 @@ fn instantiate_reflection_class(
     output: &mut String,
     steps: &mut u64,
 ) -> Result<Value, String> {
+    if class_name.eq_ignore_ascii_case("stdClass") {
+        if !arguments.is_empty() {
+            return Err("ReflectionException:Class stdClass does not have a constructor, so you cannot pass any constructor arguments".into());
+        }
+        return Ok(Value::Object(Rc::new(std::cell::RefCell::new(crate::PhpObject {
+            class_name: "stdClass".into(),
+            properties: HashMap::new(),
+            property_order: Vec::new(),
+            active_property_hooks: Default::default(),
+            exception: None,
+        }))));
+    }
     let class = classes
         .get(&class_name.to_ascii_lowercase())
         .ok_or_else(|| format!("ReflectionException:Class {class_name} does not exist"))?;
@@ -5875,6 +5887,8 @@ pub(super) fn execute_instruction(
                         let key = target.to_ascii_lowercase();
                         let is_abstract = if is_builtin_interface_for_autoload(&key) {
                             builtin_interface_is_abstract(&key)
+                        } else if is_builtin_class_for_autoload(&key) {
+                            builtin_class_is_abstract(&key)
                         } else {
                             classes
                                 .get(&key)
@@ -6828,7 +6842,7 @@ pub(super) fn execute_instruction(
                                     !class.is_interface && !class.is_trait && !class.is_enum
                                 });
                         Value::Bool(
-                            cloneable_kind
+                            (cloneable_kind || target.eq_ignore_ascii_case("stdClass"))
                                 && find_method(&target, "__clone", classes).is_none_or(|method| {
                                     method.visibility != crate::MemberVisibility::Private
                                 }),
@@ -13330,6 +13344,7 @@ pub(super) fn is_builtin_class_for_autoload(name: &str) -> bool {
                 | "reflectionuniontype"
                 | "reflectionintersectiontype"
                 | "reflectionfunction"
+                | "reflectionfunctionabstract"
                 | "reflectionmethod"
                 | "reflectionproperty"
                 | "reflectionattribute"
@@ -13382,6 +13397,10 @@ fn builtin_interface_is_abstract(name: &str) -> bool {
             | "unitenum"
             | "backedenum"
     )
+}
+
+fn builtin_class_is_abstract(name: &str) -> bool {
+    matches!(name, "reflectiontype" | "reflectionfunctionabstract")
 }
 
 pub(super) fn invoke_registered_autoloaders(

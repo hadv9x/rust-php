@@ -451,6 +451,7 @@ pub(super) fn execute_instruction(
                         "stdclass" => "stdClass".into(),
                         "pdostatement" => "PDOStatement".into(),
                         "reflectionclass" => "ReflectionClass".into(),
+                        "reflection" => "Reflection".into(),
                         "reflectionobject" => "ReflectionObject".into(),
                         "reflectionclassconstant" => "ReflectionClassConstant".into(),
                         "reflectionconstant" => "ReflectionConstant".into(),
@@ -458,9 +459,11 @@ pub(super) fn execute_instruction(
                         "reflectionenumunitcase" => "ReflectionEnumUnitCase".into(),
                         "reflectionenumbackedcase" => "ReflectionEnumBackedCase".into(),
                         "reflectionnamedtype" => "ReflectionNamedType".into(),
+                        "reflectiontype" => "ReflectionType".into(),
                         "reflectionuniontype" => "ReflectionUnionType".into(),
                         "reflectionintersectiontype" => "ReflectionIntersectionType".into(),
                         "reflectionfunction" => "ReflectionFunction".into(),
+                        "reflectionfunctionabstract" => "ReflectionFunctionAbstract".into(),
                         "reflectionmethod" => "ReflectionMethod".into(),
                         "reflectionproperty" => "ReflectionProperty".into(),
                         "reflectionattribute" => "ReflectionAttribute".into(),
@@ -4846,6 +4849,15 @@ pub(super) fn reflected_new_instance_without_constructor(
     classes: &HashMap<String, BytecodeClass>,
     globals: &mut GlobalVariables,
 ) -> Result<Value, String> {
+    if class_name.eq_ignore_ascii_case("stdClass") {
+        return Ok(Value::Object(Rc::new(RefCell::new(PhpObject {
+            class_name: "stdClass".into(),
+            properties: HashMap::new(),
+            property_order: Vec::new(),
+            active_property_hooks: Default::default(),
+            exception: None,
+        }))));
+    }
     let class = classes.get(&class_name.to_ascii_lowercase()).ok_or_else(|| {
         format!("ReflectionException:Class {class_name} does not exist")
     })?;

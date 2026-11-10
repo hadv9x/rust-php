@@ -103,6 +103,40 @@ fn reflection_class_recognizes_builtin_interfaces() {
 }
 
 #[test]
+fn reflection_class_reports_abstract_internal_reflection_bases() {
+    let source = r#"<?php
+        foreach (['ReflectionType', 'ReflectionFunctionAbstract'] as $name) {
+            $reflection = new ReflectionClass($name);
+            echo (int) $reflection->isInternal(), (int) $reflection->isUserDefined(),
+                (int) $reflection->isAbstract(), (int) $reflection->isInstantiable(), ':';
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1010:1010:"
+    );
+}
+
+#[test]
+fn reflection_class_constructs_and_clones_stdclass() {
+    let source = r#"<?php
+        $reflection = new ReflectionClass('stdClass');
+        $first = $reflection->newInstance();
+        $first->value = 7;
+        $second = $reflection->newInstanceWithoutConstructor();
+        $second->value = 9;
+        echo get_class($first), ':', $first->value, ':', get_class($second), ':', $second->value,
+            ':', (int) $reflection->isCloneable(), ':', (int) ($first == clone $first);
+        try { $reflection->newInstance(1); }
+        catch (ReflectionException $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "stdClass:7:stdClass:9:1:1:ReflectionException"
+    );
+}
+
+#[test]
 fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_apis() {
     let source = r#"<?php
         class ReflectedObjectSubject { public function ready() { return 'yes'; } }
