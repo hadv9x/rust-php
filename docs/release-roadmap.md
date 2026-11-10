@@ -16,7 +16,7 @@ This roadmap proposes release goals for `php-rust`. It is a planning document, n
 
 ### Release gates
 
-- [ ] Review and commit the intended source and documentation changes; start the release from a clean commit.
+- [x] Review and commit the intended source and documentation changes; release preparation is committed as `e8652a9` on a clean working tree.
 - [x] Prepare versioned release notes with the tested Rust toolchain, Linux x86_64 target, install/run instructions, and known limitations.
 - [x] Confirm README, CLI/server guides, examples, and release assets agree about what is supported.
 - [x] Establish a deterministic CI example set and document that live database/application checks require separate setup; all 124 examples pass locally.
