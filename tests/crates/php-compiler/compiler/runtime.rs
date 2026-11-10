@@ -7,6 +7,25 @@ fn php_sapi_name_reports_cli_and_is_discoverable() {
 }
 
 #[test]
+fn getmypid_returns_the_current_process_id_and_is_discoverable() {
+    let source = r#"<?php
+        $pid = getmypid();
+        $callbackPid = call_user_func('getmypid');
+        echo is_int($pid), ':', $pid > 0, ':', is_int($callbackPid), ':', $callbackPid > 0, ':', function_exists('getmypid');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1:1:1:1");
+}
+
+#[test]
+fn getmypid_rejects_arguments() {
+    let error = compile_source("<?php getmypid(1);")
+        .unwrap()
+        .execute()
+        .unwrap_err();
+    assert!(error.contains("getmypid() expects exactly 0 arguments"), "{error}");
+}
+
+#[test]
 fn recursive_php_calls_stop_at_a_safe_vm_depth() {
     let error = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)

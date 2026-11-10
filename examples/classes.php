@@ -13,6 +13,11 @@ class TypedStringExample {
 }
 echo new TypedStringExample(), "\n";
 
+class ReflectionOriginExample {}
+$userReflection = new ReflectionClass(ReflectionOriginExample::class);
+$internalReflection = new ReflectionClass('stdClass');
+echo 'reflection-origin:', (int) $userReflection->isUserDefined(), ':', (int) $internalReflection->isInternal(), "\n";
+
 interface Describable {
     const KIND = "describable";
 

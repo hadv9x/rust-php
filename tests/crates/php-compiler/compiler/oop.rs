@@ -67,6 +67,7 @@ fn reflection_class_distinguishes_internal_and_user_defined_types() {
         $internal = new ReflectionClass('stdClass');
         $exception = new ReflectionClass('Exception');
         $reflection = new ReflectionClass(ReflectionClass::class);
+        $internalException = new ReflectionClass('Exception');
         echo json_encode([
             $user->isInternal(), $user->isUserDefined(),
             $interface->isInternal(), $interface->isUserDefined(),
@@ -74,12 +75,14 @@ fn reflection_class_distinguishes_internal_and_user_defined_types() {
             $internal->isInternal(), $internal->isUserDefined(),
             $exception->isInternal(), $exception->isUserDefined(),
             $reflection->isInternal(), $reflection->isUserDefined(),
+            $internalException->isAbstract(), $internalException->isFinal(), $internalException->isInstantiable(),
+            $internal->isInstantiable(),
         ]), ':';
         echo method_exists('ReflectionClass', 'isInternal'), ':', method_exists('ReflectionEnum', 'isUserDefined');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "[false,true,false,true,false,true,true,false,true,false,true,false]:1:1"
+        "[false,true,false,true,false,true,true,false,true,false,true,false,false,false,true,true]:1:1"
     );
 }
 

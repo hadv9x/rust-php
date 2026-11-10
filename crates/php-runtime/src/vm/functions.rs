@@ -2253,6 +2253,15 @@ pub(super) fn execute_instruction(
                                 .unwrap_or_else(|| Value::String("cli".into())),
                         );
                     }
+                    "getmypid" => {
+                        if !arguments.is_empty() {
+                            return Err(format!(
+                                "getmypid() expects exactly 0 arguments, {} given",
+                                arguments.len()
+                            ));
+                        }
+                        stack.push(Value::Integer(std::process::id() as i64));
+                    }
                     "var_export" => {
                         if arguments.is_empty() || arguments.len() > 2 {
                             return Err(format!(
@@ -5832,7 +5841,10 @@ pub(super) fn execute_instruction(
                             .show();
                         Value::Bool(
                             classes.contains_key(&target.to_ascii_lowercase())
-                                && !crate::exception_builtins::is_class(&target),
+                                && !crate::exception_builtins::is_class(&target)
+                                && !super::functions::is_builtin_class_for_autoload(
+                                    &target.to_ascii_lowercase(),
+                                ),
                         )
                     }
                     ("reflectionclass", "isinterface") => {
@@ -5862,7 +5874,11 @@ pub(super) fn execute_instruction(
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionClass target")?
                             .show();
-                        let instantiable =
+                        let instantiable = if crate::exception_builtins::is_class(&target) {
+                            true
+                        } else if target.eq_ignore_ascii_case("stdClass") {
+                            true
+                        } else {
                             classes
                                 .get(&target.to_ascii_lowercase())
                                 .is_some_and(|class| {
@@ -5881,7 +5897,8 @@ pub(super) fn execute_instruction(
                                                     == crate::MemberVisibility::Public
                                             },
                                         )
-                                });
+                                })
+                        };
                         Value::Bool(instantiable)
                     }
                     ("reflectionclass", "isfinal") => {
@@ -12704,6 +12721,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "function_exists"
                 | "gc_collect_cycles"
                 | "php_sapi_name"
+                | "getmypid"
                 | "error_reporting"
                 | "ini_get"
                 | "ini_set"

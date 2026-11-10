@@ -75,7 +75,7 @@ Even where an extension family exists (JSON, PDO, database drivers, sessions), i
 | Affecting PHP behaviour / runtime configuration | Selected `.ini` settings only; no full PHP configuration or error-reporting surface |
 | Audio, image processing, GUI | Absent |
 | Authentication, mail, search-engine integrations | Absent |
-| CLI | Project CLI and `$argc`/`$argv` exist; PHP's full CLI option, stream and process contracts are absent |
+| CLI | Project CLI and `$argc`/`$argv` exist; `getmypid()` reports the current process ID. PHP's full CLI option, stream and process contracts are absent |
 | Compression/archive | Absent |
 | Cryptography | Absent |
 | Database | PDO-like layer and PostgreSQL/MySQL/ODBC/MongoDB drivers exist; API and backend parity remains partial |
