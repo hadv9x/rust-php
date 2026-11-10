@@ -192,6 +192,7 @@ fn signature(name: &str) -> Option<Signature> {
         | "error_clear_last" | "gc_collect_cycles" => (&[], &[], false),
         "func_get_arg" => (&["position"], &[], false),
         "reflectionclass::__construct" => (&["objectOrClass"], &[], false),
+        "reflection::getmodifiernames" => (&["modifiers"], &[], false),
         "reflectionobject::__construct" => (&["object"], &[], false),
         "reflectionenum::__construct" => (&["objectOrClass"], &[], false),
         "reflectionenum::getattributes" => (&["name", "flags"], &[(0, N), (1, Num(0.0))], false),
@@ -219,8 +220,12 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionclass::getdefaultproperties"
         | "reflectionenum::getdefaultproperties"
         | "reflectionclass::getstaticproperties"
-        | "reflectionenum::getstaticproperties" => (&[], &[], false),
+        | "reflectionenum::getstaticproperties"
+        | "reflectionclass::getmodifiers"
+        | "reflectionenum::getmodifiers" => (&[], &[], false),
         "reflectionclass::newinstancewithoutconstructor" => (&[], &[], false),
+        "reflectionclass::newinstance" => (&[], &[], true),
+        "reflectionclass::newinstanceargs" => (&["args"], &[(0, A)], false),
         "reflectionclass::getstaticpropertyvalue" => (&["name", "default"], &[(1, N)], false),
         "reflectionclass::setstaticpropertyvalue" => (&["name", "value"], &[], false),
         "reflectionclass::getconstants" | "reflectionenum::getconstants" => {
@@ -271,6 +276,8 @@ fn signature(name: &str) -> Option<Signature> {
         "reflectionclass::isenum"
         | "reflectionclass::isinterface"
         | "reflectionclass::isabstract"
+        | "reflectionclass::isinternal"
+        | "reflectionclass::isuserdefined"
         | "reflectionclass::isinstantiable"
         | "reflectionclass::isfinal"
         | "reflectionclass::isreadonly"
@@ -288,7 +295,9 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionclass::getshortname"
         | "reflectionclass::getnamespacename"
         | "reflectionclass::innamespace" => (&[], &[], false),
-        "reflectionenum::iscloneable" => (&[], &[], false),
+        "reflectionenum::iscloneable"
+        | "reflectionenum::isinternal"
+        | "reflectionenum::isuserdefined" => (&[], &[], false),
         "reflectionclass::issubclassof" => (&["class"], &[], false),
         "reflectionclass::implementsinterface" => (&["interface"], &[], false),
         "reflectionenum::getcase" | "reflectionenum::hascase" => (&["name"], &[], false),
@@ -538,6 +547,8 @@ fn signature(name: &str) -> Option<Signature> {
         "putenv" => (&["assignment"], &[], false),
         "php_sapi_name" => (&[], &[], false),
         "error_reporting" => (&["error_level"], &[], false),
+        "ini_get" => (&["option"], &[], false),
+        "ini_set" => (&["option", "value"], &[], false),
         "trigger_error" | "user_error" => (&["message", "error_level"], &[(1, Num(1024.0))], false),
         "set_error_handler" => (&["callback", "error_levels"], &[(1, Num(32767.0))], false),
         "restore_error_handler" => (&[], &[], false),
@@ -1730,6 +1741,9 @@ mod tests {
     fn implemented_reflection_methods_have_named_parameter_metadata() {
         for method in [
             "reflectionclass::getName",
+            "reflection::getModifierNames",
+            "reflectionclass::getModifiers",
+            "reflectionenum::getModifiers",
             "reflectionclass::getAttributes",
             "reflectionclass::getMethod",
             "reflectionclass::getMethods",
@@ -1742,6 +1756,10 @@ mod tests {
             "reflectionenum::getStaticProperties",
             "reflectionclass::isEnum",
             "reflectionclass::isInterface",
+            "reflectionclass::isInternal",
+            "reflectionclass::isUserDefined",
+            "reflectionenum::isInternal",
+            "reflectionenum::isUserDefined",
             "reflectionclass::isAbstract",
             "reflectionclass::isFinal",
             "reflectionclass::isReadOnly",

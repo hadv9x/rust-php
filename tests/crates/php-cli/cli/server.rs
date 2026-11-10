@@ -185,7 +185,7 @@ fn derives_http_keep_alive_from_version_and_connection_header() {
 fn parses_php_ini_style_server_settings_and_comments() {
     let fixture = Fixture::new();
     let path = fixture.path().join("php-rust.ini");
-    std::fs::write(&path, "; comment\nroot = \"site public\"\ninclude_path = \"shared:vendor/php\"\nbind = 127.0.0.1:4321\n[server]\nmax_in_flight = 32\ncookie_secure = On\nlog = debug\n[PHP]\nmax_input_nesting_level = 12\ndisplay_errors = stderr\n").unwrap();
+    std::fs::write(&path, "; comment\nroot = \"site public\"\ninclude_path = \"shared:vendor/php\"\nbind = 127.0.0.1:4321\n[server]\nmax_in_flight = 32\ncookie_secure = On\nlog = debug\n[PHP]\nmax_input_nesting_level = 12\ndisplay_errors = stderr\nzend.exception_string_param_max_len = 5\n").unwrap();
     let settings = parse_ini(&path).unwrap();
     assert_eq!(
         settings.get("PHP_RUST_ROOT").map(String::as_str),
@@ -216,6 +216,12 @@ fn parses_php_ini_style_server_settings_and_comments() {
         Some("stderr")
     );
     assert_eq!(
+        settings
+            .get("PHP_RUST_EXCEPTION_STRING_PARAM_MAX_LEN")
+            .map(String::as_str),
+        Some("5")
+    );
+    assert_eq!(
         DisplayErrors::parse(settings.get("PHP_RUST_DISPLAY_ERRORS").unwrap()).unwrap(),
         DisplayErrors::Stderr
     );
@@ -224,6 +230,14 @@ fn parses_php_ini_style_server_settings_and_comments() {
         Some("On")
     );
     assert!(config_bool(&settings, "PHP_RUST_COOKIE_SECURE", false).unwrap());
+
+    std::fs::write(
+        &path,
+        "zend.exception_string_param_max_len = 1000001\n",
+    )
+    .unwrap();
+    let error = parse_ini(&path).unwrap_err();
+    assert!(error.contains("invalid zend.exception_string_param_max_len"), "{error}");
 }
 
 #[test]
@@ -285,7 +299,7 @@ fn server_ini_include_path_resolves_static_includes_inside_document_root() {
     .unwrap();
     std::fs::write(
         fixture.path().join("index.php"),
-        "<?php include 'bootstrap.php'; echo ':', get_include_path();",
+        "<?php include 'bootstrap.php'; echo ':', get_include_path(); function trace_limit($value) { throw new Exception('x'); } try { trace_limit('abcdef'); } catch (Throwable $error) { echo ':', $error->getTraceAsString(); }",
     )
     .unwrap();
     let response = execute_request_with_context_and_include_path(
@@ -309,12 +323,12 @@ fn server_ini_include_path_resolves_static_includes_inside_document_root() {
         DEFAULT_MAX_INPUT_VARS,
         DEFAULT_MAX_INPUT_NESTING_LEVEL,
         &[include_dir.clone()],
+        2,
     )
     .unwrap();
-    assert_eq!(
-        response.output,
-        format!("bootstrapped:{}", include_dir.display()).as_bytes()
-    );
+    let output = String::from_utf8(response.output).unwrap();
+    assert!(output.starts_with(&format!("bootstrapped:{}", include_dir.display())));
+    assert!(output.contains("trace_limit('ab...')"), "{output}");
 }
 
 #[test]

@@ -87,6 +87,8 @@ function traceLongArgumentExample($value) {
 }
 $longTrace = traceLongArgumentExample('01234567890123456789')->getTraceAsString();
 echo $longTrace, "\n";
+$previousTraceLimit = ini_set('zend.exception_string_param_max_len', 5);
+echo "trace-limit:", ini_get('zend.exception_string_param_max_len'), ":", ini_set('zend.exception_string_param_max_len', $previousTraceLimit), "\n";
 
 class MissingMethodExample {}
 try {

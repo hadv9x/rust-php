@@ -134,6 +134,24 @@ pub fn reflection_method_class_constant(class: &str, constant: &str) -> Option<i
     }
 }
 
+/// Resolve the modifier constants exposed by PHP's built-in ReflectionClass class.
+pub fn reflection_class_class_constant(class: &str, constant: &str) -> Option<i64> {
+    let owner = class.rsplit('\\').next()?;
+    if !["ReflectionClass", "ReflectionObject", "ReflectionEnum"]
+        .iter()
+        .any(|name| owner.eq_ignore_ascii_case(name))
+    {
+        return None;
+    }
+    match constant.to_ascii_uppercase().as_str() {
+        "IS_IMPLICIT_ABSTRACT" => Some(16),
+        "IS_FINAL" => Some(32),
+        "IS_EXPLICIT_ABSTRACT" => Some(64),
+        "IS_READONLY" => Some(65_536),
+        _ => None,
+    }
+}
+
 /// Resolve the modifier constants exposed by PHP's built-in ReflectionProperty class.
 pub fn reflection_property_class_constant(class: &str, constant: &str) -> Option<i64> {
     if !class
@@ -148,9 +166,12 @@ pub fn reflection_property_class_constant(class: &str, constant: &str) -> Option
         "IS_PROTECTED" => Some(2),
         "IS_PRIVATE" => Some(4),
         "IS_STATIC" => Some(16),
-        "IS_PRIVATE_SET" => Some(32),
-        "IS_PROTECTED_SET" => Some(64),
+        "IS_FINAL" => Some(32),
+        "IS_ABSTRACT" => Some(64),
         "IS_READONLY" => Some(128),
+        "IS_VIRTUAL" => Some(512),
+        "IS_PROTECTED_SET" => Some(2_048),
+        "IS_PRIVATE_SET" => Some(4_096),
         _ => None,
     }
 }

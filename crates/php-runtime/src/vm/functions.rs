@@ -690,6 +690,138 @@ fn instantiate_reflection_attribute(
         .ok_or_else(|| "Invalid ReflectionAttribute construction result".into())
 }
 
+fn instantiate_reflection_class(
+    class_name: String,
+    arguments: Vec<Value>,
+    argument_names: Vec<Option<String>>,
+    reference_names: Vec<Option<crate::bytecode::ReferenceArgument>>,
+    strict_types: bool,
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    frame_id: u64,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Value, String> {
+    let class = classes
+        .get(&class_name.to_ascii_lowercase())
+        .ok_or_else(|| format!("ReflectionException:Class {class_name} does not exist"))?;
+    if class.is_interface || class.is_trait || class.is_enum || class.is_abstract {
+        return Err(format!(
+            "ReflectionException:Cannot instantiate {}",
+            class.name
+        ));
+    }
+    match find_method(&class_name, "__construct", classes) {
+        Some(constructor) if constructor.visibility != MemberVisibility::Public => {
+            return Err(format!(
+                "ReflectionException:Access to non-public constructor of class {}",
+                class.name
+            ));
+        }
+        None if !arguments.is_empty() => {
+            return Err(format!(
+                "ReflectionException:Class {} does not have a constructor, so you cannot pass any constructor arguments",
+                class.name
+            ));
+        }
+        _ => {}
+    }
+
+    let mut stack = Vec::with_capacity(arguments.len());
+    let mut descriptors = Vec::with_capacity(arguments.len());
+    for (index, mut value) in arguments.into_iter().enumerate() {
+        match reference_names.get(index).cloned().flatten() {
+            Some(reference) => {
+                let cell = if let Some(cell) = reference.direct_reference {
+                    cell
+                } else if let Some((receiver, property)) = reference.object_property {
+                    let Value::Object(object) = receiver else {
+                        return Err("Only object properties can be passed by reference".into());
+                    };
+                    let mut object = object.borrow_mut();
+                    let current = object
+                        .properties
+                        .get(&property)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    if reference.array_keys.is_empty() {
+                        match current {
+                            Value::Reference(cell) => cell,
+                            value => {
+                                let cell = Rc::new(std::cell::RefCell::new(value));
+                                object
+                                    .properties
+                                    .insert(property, Value::Reference(cell.clone()));
+                                cell
+                            }
+                        }
+                    } else {
+                        let (updated, cell) = current.ensure_array_reference(&reference.array_keys)?;
+                        object.properties.insert(property, updated);
+                        cell
+                    }
+                } else {
+                    super::reference_cell_for_path(
+                        &reference.variable,
+                        &reference.array_keys,
+                        variables,
+                        bindings,
+                        global_variables,
+                        global_scope,
+                        frame_id,
+                    )?
+                    .1
+                };
+                value = Value::Reference(cell);
+                descriptors.push(Some(ReferenceDescriptor {
+                    variable: String::new(),
+                    array_key_count: 0,
+                    object_property: None,
+                    access_scope: None,
+                    direct_reference: true,
+                }));
+            }
+            _ => descriptors.push(None),
+        }
+        stack.push(value);
+    }
+    let instruction = Op::NewObject(
+        class_name,
+        stack.len(),
+        descriptors,
+        argument_names,
+        vec![false; stack.len()],
+        None,
+        None,
+        strict_types,
+    );
+    let mut program_counter = 0;
+    super::objects::execute_instruction(
+        &instruction,
+        &mut stack,
+        variables,
+        bindings,
+        global_variables,
+        global_scope,
+        frame_id,
+        "<main>",
+        functions,
+        classes,
+        static_properties,
+        output,
+        steps,
+        &mut program_counter,
+    )?;
+    stack
+        .pop()
+        .ok_or_else(|| "Invalid ReflectionClass instantiation result".into())
+}
+
 pub(super) fn take_call_arguments(
     stack: &mut Vec<Value>,
     descriptors: &[Option<ReferenceDescriptor>],
@@ -1695,6 +1827,50 @@ pub(super) fn execute_instruction(
                     stack.push(Value::Integer(previous));
                     return Ok(true);
                 }
+                if fallback_name.eq_ignore_ascii_case("ini_get") {
+                    let option = arguments
+                        .first()
+                        .ok_or("ini_get() expects exactly 1 argument")?
+                        .show();
+                    if option.eq_ignore_ascii_case("zend.exception_string_param_max_len") {
+                        stack.push(Value::String(
+                            global_variables
+                                .exception_string_param_max_len
+                                .unwrap_or(15)
+                                .to_string(),
+                        ));
+                    } else {
+                        stack.push(Value::Bool(false));
+                    }
+                    return Ok(true);
+                }
+                if fallback_name.eq_ignore_ascii_case("ini_set") {
+                    let option = arguments
+                        .first()
+                        .ok_or("ini_set() expects exactly 2 arguments")?
+                        .show();
+                    let value = arguments
+                        .get(1)
+                        .ok_or("ini_set() expects exactly 2 arguments")?
+                        .show();
+                    if !option.eq_ignore_ascii_case("zend.exception_string_param_max_len") {
+                        stack.push(Value::Bool(false));
+                        return Ok(true);
+                    }
+                    let previous = global_variables
+                        .exception_string_param_max_len
+                        .unwrap_or(15);
+                    let parsed = parse_ini_integer_prefix(&value);
+                    match parsed.filter(|value| (0..=1_000_000).contains(value)) {
+                        Some(value) => {
+                            global_variables.exception_string_param_max_len =
+                                Some(value as usize);
+                            stack.push(Value::String(previous.to_string()));
+                        }
+                        None => stack.push(Value::Bool(false)),
+                    }
+                    return Ok(true);
+                }
                 if fallback_name.eq_ignore_ascii_case("set_error_handler") {
                     if arguments.is_empty() || arguments.len() > 2 {
                         return Err(
@@ -2179,6 +2355,7 @@ pub(super) fn execute_instruction(
                                 | "pdo"
                                 | "pdostatement"
                                 | "reflectionclass"
+                                | "reflection"
                                 | "reflectionobject"
                                 | "reflectionclassconstant"
                                 | "reflectionconstant"
@@ -2319,6 +2496,7 @@ pub(super) fn execute_instruction(
                                         Some("__PHP_Incomplete_Class".into())
                                     }
                                     "reflectionclass" => Some("ReflectionClass".into()),
+                                    "reflection" => Some("Reflection".into()),
                                     "reflectionobject" => Some("ReflectionObject".into()),
                                     "reflectionclassconstant" => {
                                         Some("ReflectionClassConstant".into())
@@ -2461,6 +2639,7 @@ pub(super) fn execute_instruction(
                                 | "valid"
                         );
                         let reflection_method = match class_name.to_ascii_lowercase().as_str() {
+                            "reflection" => method == "getmodifiernames",
                             "reflectionclass" | "reflectionobject" => matches!(
                                 method.as_str(),
                                 "getname"
@@ -2468,10 +2647,13 @@ pub(super) fn execute_instruction(
                                     | "getnamespacename"
                                     | "innamespace"
                                     | "getattributes"
+                                    | "getmodifiers"
                                     | "getmethod"
                                     | "getmethods"
                                     | "getconstructor"
                                     | "newinstancewithoutconstructor"
+                                    | "newinstance"
+                                    | "newinstanceargs"
                                     | "getproperty"
                                     | "getproperties"
                                     | "getdefaultproperties"
@@ -2492,6 +2674,8 @@ pub(super) fn execute_instruction(
                                     | "hasconstant"
                                     | "isenum"
                                     | "isinterface"
+                                    | "isinternal"
+                                    | "isuserdefined"
                                     | "isabstract"
                                     | "isinstantiable"
                                     | "isfinal"
@@ -2511,6 +2695,9 @@ pub(super) fn execute_instruction(
                                     | "getshortname"
                                     | "getnamespacename"
                                     | "innamespace"
+                                    | "getmodifiers"
+                                    | "isinternal"
+                                    | "isuserdefined"
                                     | "getattributes"
                                     | "getmethod"
                                     | "getmethods"
@@ -5604,6 +5791,50 @@ pub(super) fn execute_instruction(
                                 .is_some_and(|class| class.is_enum),
                         )
                     }
+                    ("reflectionclass" | "reflectionenum", "getmodifiers") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        let modifiers = classes
+                            .get(&target.to_ascii_lowercase())
+                            .map_or(0_i64, |class| {
+                                let mut flags = 0;
+                                if class.is_abstract && !class.is_interface {
+                                    flags |= 64; // IS_EXPLICIT_ABSTRACT
+                                }
+                                if class.is_final {
+                                    flags |= 32; // IS_FINAL
+                                }
+                                if class.is_readonly {
+                                    flags |= 65_536; // IS_READONLY
+                                }
+                                flags
+                            });
+                        Value::Integer(modifiers)
+                    }
+                    ("reflectionclass" | "reflectionenum", "isinternal") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        Value::Bool(
+                            crate::exception_builtins::is_class(&target)
+                                || super::functions::is_builtin_class_for_autoload(
+                                    &target.to_ascii_lowercase(),
+                                ),
+                        )
+                    }
+                    ("reflectionclass" | "reflectionenum", "isuserdefined") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        Value::Bool(
+                            classes.contains_key(&target.to_ascii_lowercase())
+                                && !crate::exception_builtins::is_class(&target),
+                        )
+                    }
                     ("reflectionclass", "isinterface") => {
                         let target = internal
                             .get("\0target_class")
@@ -6176,7 +6407,10 @@ pub(super) fn execute_instruction(
                         }
                         if let Some(value) = found {
                             value
-                        } else if let Some(default) = arguments.get(1) {
+                        } else if argument_names.len() > 1 {
+                            let default = arguments
+                                .get(1)
+                                .ok_or("Invalid ReflectionClass::getStaticPropertyValue arguments")?;
                             default.clone()
                         } else {
                             return Err(format!(
@@ -6608,6 +6842,81 @@ pub(super) fn execute_instruction(
                             global_variables,
                         )?
                     }
+                    ("reflectionclass", "newinstance") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        instantiate_reflection_class(
+                            target,
+                            arguments,
+                            argument_names,
+                            reference_names,
+                            *strict_types,
+                            variables,
+                            bindings,
+                            global_variables,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?
+                    }
+                    ("reflectionclass", "newinstanceargs") => {
+                        let target = internal
+                            .get("\0target_class")
+                            .ok_or("Invalid ReflectionClass target")?
+                            .show();
+                        let args = arguments
+                            .first()
+                            .map(Value::dereference)
+                            .ok_or("ReflectionClass::newInstanceArgs() expects at most 1 argument")?;
+                        let Value::Array(args) = args else {
+                            return Err(format!(
+                                "TypeError:ReflectionClass::newInstanceArgs(): Argument #1 ($args) must be of type array, {} given",
+                                args.type_name()
+                            ));
+                        };
+                        let mut values = Vec::with_capacity(args.len());
+                        let mut references = Vec::with_capacity(args.len());
+                        let mut names = Vec::with_capacity(args.len());
+                        for (key, value) in args.iter() {
+                            values.push(value.clone());
+                            references.push(match value {
+                                Value::Reference(reference) => Some(ReferenceArgument {
+                                    variable: String::new(),
+                                    array_keys: Vec::new(),
+                                    object_property: None,
+                                    direct_reference: Some(reference.clone()),
+                                }),
+                                _ => None,
+                            });
+                            names.push(match key {
+                                ArrayKey::Integer(_) => None,
+                                ArrayKey::String(name) => Some(name.clone()),
+                            });
+                        }
+                        instantiate_reflection_class(
+                            target,
+                            values,
+                            names,
+                            references,
+                            *strict_types,
+                            variables,
+                            bindings,
+                            global_variables,
+                            global_scope,
+                            frame_id,
+                            functions,
+                            classes,
+                            static_properties,
+                            output,
+                            steps,
+                        )?
+                    }
                     ("reflectionclass" | "reflectionenum", "getattributes") => {
                         let target = internal
                             .get("\0target_class")
@@ -6734,8 +7043,8 @@ pub(super) fn execute_instruction(
                                         MemberVisibility::Private => 4,
                                     };
                                     let set_modifier = match metadata.set_visibility {
-                                        Some(MemberVisibility::Private) => 32,
-                                        Some(MemberVisibility::Protected) => 64,
+                                        Some(MemberVisibility::Private) => 4_096,
+                                        Some(MemberVisibility::Protected) => 2_048,
                                         _ => 0,
                                     };
                                     let modifiers = visibility
@@ -7949,8 +8258,8 @@ pub(super) fn execute_instruction(
                                 crate::MemberVisibility::Private => 4,
                             };
                             let set_modifier = match metadata.set_visibility {
-                                Some(crate::MemberVisibility::Private) => 32,
-                                Some(crate::MemberVisibility::Protected) => 64,
+                                Some(crate::MemberVisibility::Private) => 4_096,
+                                Some(crate::MemberVisibility::Protected) => 2_048,
                                 _ => 0,
                             };
                             let modifiers = visibility
@@ -8324,6 +8633,9 @@ pub(super) fn execute_instruction(
                     &Value::Object(object),
                     &method,
                     &arguments,
+                    global_variables
+                        .exception_string_param_max_len
+                        .unwrap_or(15),
                 )?);
                 return Ok(true);
             }
@@ -8761,6 +9073,85 @@ pub(super) fn execute_instruction(
             }
             let functions = merged_functions.as_ref().unwrap_or(functions);
             let classes = merged_classes.as_ref().unwrap_or(classes);
+            if class_name.eq_ignore_ascii_case("Reflection")
+                && method.eq_ignore_ascii_case("getModifierNames")
+            {
+                let (arguments, _) = super::builtin_arguments::bind(
+                    "reflection::getmodifiernames",
+                    arguments,
+                    &reference_names,
+                    &argument_names,
+                )?;
+                let value = arguments
+                    .first()
+                    .ok_or("Reflection::getModifierNames() expects exactly 1 argument")?;
+                if arguments.len() != 1 {
+                    return Err(format!(
+                        "Reflection::getModifierNames() expects exactly 1 argument, {} given",
+                        arguments.len()
+                    ));
+                }
+                let modifiers = match value.dereference() {
+                    Value::Integer(value) => value,
+                    Value::Number(value) => value.trunc() as i64,
+                    Value::Bool(value) => i64::from(value),
+                    Value::String(value) => {
+                        let value = value.trim();
+                        if let Ok(value) = value.parse::<i64>() {
+                            value
+                        } else if let Some(value) = value
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|value| value.is_finite())
+                        {
+                            value.trunc() as i64
+                        } else {
+                            return Err("TypeError:Reflection::getModifierNames(): Argument #1 ($modifiers) must be of type int, string given".into());
+                        }
+                    }
+                    other => return Err(format!(
+                        "TypeError:Reflection::getModifierNames(): Argument #1 ($modifiers) must be of type int, {} given",
+                        other.type_name()
+                    )),
+                };
+                let mut names = Vec::<String>::new();
+                if modifiers & 64 != 0 {
+                    names.push("abstract".into());
+                }
+                if modifiers & 32 != 0 {
+                    names.push("final".into());
+                }
+                if modifiers & 512 != 0 {
+                    names.push("virtual".into());
+                }
+                match modifiers & 7 {
+                    1 => names.push("public".into()),
+                    2 => names.push("protected".into()),
+                    4 => names.push("private".into()),
+                    _ => {}
+                }
+                match modifiers & (2_048 | 4_096) {
+                    2_048 => names.push("protected(set)".into()),
+                    4_096 => names.push("private(set)".into()),
+                    _ => {}
+                }
+                if modifiers & 16 != 0 {
+                    names.push("static".into());
+                }
+                if modifiers & (128 | 65_536) != 0 {
+                    names.push("readonly".into());
+                }
+                stack.push(Value::from_array_entries(
+                    names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, name)| {
+                            (ArrayKey::Integer(index as i64), Value::String(name))
+                        })
+                        .collect(),
+                ));
+                return Ok(true);
+            }
             if class_name.eq_ignore_ascii_case("ReflectionMethod")
                 && method.eq_ignore_ascii_case("createFromMethodName")
             {
@@ -12314,6 +12705,8 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "gc_collect_cycles"
                 | "php_sapi_name"
                 | "error_reporting"
+                | "ini_get"
+                | "ini_set"
                 | "error_get_last"
                 | "error_clear_last"
                 | "class_exists"
@@ -12516,6 +12909,20 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "is_numeric"
         )
         || super::builtin_arguments::is_vm_function(&name)
+}
+
+fn parse_ini_integer_prefix(value: &str) -> Option<i64> {
+    let value = value.trim_start();
+    let bytes = value.as_bytes();
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let digits_start = end;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    if end == digits_start {
+        return None;
+    }
+    value[..end].parse().ok()
 }
 
 fn type_builtin(
@@ -12870,14 +13277,16 @@ fn autoload_callback_identity(value: &Value) -> String {
     }
 }
 
-fn is_builtin_class_for_autoload(name: &str) -> bool {
+pub(super) fn is_builtin_class_for_autoload(name: &str) -> bool {
     crate::exception_builtins::is_class(name)
         || matches!(
             name,
             "generator"
+                | "stdclass"
                 | "pdo"
                 | "pdostatement"
                 | "reflectionclass"
+                | "reflection"
                 | "reflectionclassconstant"
                 | "reflectionconstant"
                 | "reflectionenum"

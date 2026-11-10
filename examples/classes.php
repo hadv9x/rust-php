@@ -630,7 +630,18 @@ $reflectionLeaf = new ReflectionClass("ReflectionLeaf");
 class ReflectionConstructorBypassExample { public $value = "default"; public function __construct() { echo "constructor should be skipped\n"; } }
 $constructorBypass = (new ReflectionClass(ReflectionConstructorBypassExample::class))->newInstanceWithoutConstructor();
 echo "reflection-without-constructor:", $constructorBypass->value, "\n";
+class ReflectionFactoryExample { public $label; public function __construct($label, $suffix = "!") { $this->label = $label . $suffix; } }
+$reflectionFactory = new ReflectionClass(ReflectionFactoryExample::class);
+echo "reflection-new-instance:", $reflectionFactory->newInstance("direct")->label, ":", $reflectionFactory->newInstanceArgs(["args", "suffix" => "?"])->label, "\n";
+class ReflectionPrivateFactoryExample { private function __construct() {} }
+try { (new ReflectionClass(ReflectionPrivateFactoryExample::class))->newInstance(); }
+catch (ReflectionException $error) { echo "reflection-private-constructor:", get_class($error), "\n"; }
+class ReflectionNoConstructorExample {}
+try { (new ReflectionClass(ReflectionNoConstructorExample::class))->newInstanceArgs(["unexpected"]); }
+catch (ReflectionException $error) { echo "reflection-no-constructor-arguments:", get_class($error), "\n"; }
 echo "reflection-flags:", $reflectionLeaf->isFinal(), ":", (new ReflectionClass("ReflectionMarker"))->isInterface(), ":", (new ReflectionClass("ReflectionBase"))->isAbstract(), ":", (new ReflectionClass("ReflectionState"))->isEnum(), "\n";
+echo "reflection-modifiers:", (new ReflectionClass("ReflectionBase"))->getModifiers(), ":", ReflectionClass::IS_EXPLICIT_ABSTRACT, ":", (new ReflectionClass("ReflectionLeaf"))->getModifiers(), ":", ReflectionClass::IS_FINAL, "\n";
+echo "reflection-modifier-names:", implode(',', Reflection::getModifierNames($reflectionLeaf->getModifiers())), ":", implode(',', Reflection::getModifierNames(ReflectionClass::IS_EXPLICIT_ABSTRACT)), "\n";
 echo "reflection-name-parts:", $reflectionLeaf->getShortName(), ":", $reflectionLeaf->getNamespaceName(), ":", $reflectionLeaf->inNamespace(), "\n";
 class ReflectionCloneableExample {}
 class ReflectionNonCloneableExample { private function __clone() {} }
@@ -888,6 +899,9 @@ $asymmetricReflection = new ReflectionClass(AsymmetricPropertyReflectionExample:
 echo "asymmetric-set:",
     $asymmetricReflection->getProperty('protected')->isProtectedSet() ? 'protected' : 'other', ':',
     $asymmetricReflection->getProperty('private')->isPrivateSet() ? 'private' : 'other', "\n";
+echo "asymmetric-modifiers:",
+    implode(',', Reflection::getModifierNames($asymmetricReflection->getProperty('protected')->getModifiers())), ':',
+    implode(',', Reflection::getModifierNames($asymmetricReflection->getProperty('private')->getModifiers())), "\n";
 
 readonly class ReadonlyClassReflectionExample { public int $id; }
 echo "readonly-class:", (new ReflectionClass(ReadonlyClassReflectionExample::class))->isReadOnly() ? 'yes' : 'no', "\n";

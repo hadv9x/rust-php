@@ -138,6 +138,8 @@ pub(super) enum VariableBinding {
 #[derive(Default)]
 pub(super) struct GlobalVariables {
     pub(super) source_file: String,
+    /// Request-local override for the exception trace string argument limit; `None` means PHP's 15-byte default.
+    pub(super) exception_string_param_max_len: Option<usize>,
     exit_code: i32,
     exiting: bool,
     values: HashMap<String, Value>,
@@ -2185,6 +2187,11 @@ pub(crate) fn execute_with_globals_and_limits_and_diagnostics(
     global_variables.source_file = source_file.to_string();
     if let Some(Value::String(include_path)) = predefined_globals.get("\0php_include_path") {
         global_variables.include_path = Some(include_path.clone());
+    }
+    if let Some(Value::Integer(value)) = predefined_globals.get("\0zend.exception_string_param_max_len") {
+        if (0..=1_000_000).contains(value) {
+            global_variables.exception_string_param_max_len = Some(*value as usize);
+        }
     }
     for diagnostic in initial_diagnostics {
         global_variables.report_diagnostic(diagnostic);

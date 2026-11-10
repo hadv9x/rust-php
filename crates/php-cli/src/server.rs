@@ -98,6 +98,7 @@ struct ServerConfig {
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: Vec<PathBuf>,
+    exception_string_param_max_len: usize,
     execution_limits: ExecutionLimits,
     secure_session_cookies: bool,
     display_errors: DisplayErrors,
@@ -326,6 +327,11 @@ fn parse_ini_into(
             ),
             "max_input_vars" => ("PHP_RUST_MAX_INPUT_VARS", value.clone()),
             "max_input_nesting_level" => ("PHP_RUST_MAX_INPUT_NESTING_LEVEL", value.clone()),
+            "zend.exception_string_param_max_len" => {
+                let parsed = value.parse::<usize>().ok().filter(|n| *n <= 1_000_000)
+                    .ok_or_else(|| format!("{}:{}: invalid zend.exception_string_param_max_len", path.display(), line_index + 1))?;
+                ("PHP_RUST_EXCEPTION_STRING_PARAM_MAX_LEN", parsed.to_string())
+            }
             "root" => ("PHP_RUST_ROOT", value.clone()),
             "bind" => ("PHP_RUST_BIND", value.clone()),
             "max_in_flight" => ("PHP_RUST_MAX_IN_FLIGHT", value.clone()),
@@ -714,6 +720,12 @@ fn parse_args() -> Result<ServerConfig, String> {
                     vec![PathBuf::from("."), PathBuf::from("/usr/share/php")]
                 }
             }),
+        exception_string_param_max_len: config_value(
+            &settings,
+            "PHP_RUST_EXCEPTION_STRING_PARAM_MAX_LEN",
+            "PHP_RUST_EXCEPTION_STRING_PARAM_MAX_LEN",
+            15usize,
+        )?,
         execution_limits: ExecutionLimits {
             max_instructions: config_value(
                 &settings,
@@ -844,6 +856,9 @@ fn parse_args() -> Result<ServerConfig, String> {
     }
     if config.max_input_nesting_level > 256 {
         return Err("max input nesting level must be between 0 and 256".into());
+    }
+    if config.exception_string_param_max_len > 1_000_000 {
+        return Err("zend.exception_string_param_max_len must be between 0 and 1000000".into());
     }
     if config.default_mimetype.is_empty()
         || config
@@ -1044,6 +1059,7 @@ async fn handle_connection(
         let max_input_vars = config.max_input_vars;
         let max_input_nesting_level = config.max_input_nesting_level;
         let include_path = config.include_path.clone();
+        let exception_string_param_max_len = config.exception_string_param_max_len;
         let default_content_type = format!(
             "{}; charset={}",
             config.default_mimetype, config.default_charset
@@ -1079,6 +1095,7 @@ async fn handle_connection(
                 max_input_vars,
                 max_input_nesting_level,
                 &include_path,
+                exception_string_param_max_len,
             )
         })
         .await;
@@ -1649,6 +1666,7 @@ fn execute_request_with_session_and_limits(
         max_input_vars,
         max_input_nesting_level,
         &[],
+        15,
     )
 }
 
@@ -1674,6 +1692,7 @@ fn execute_request_with_session_and_limits_and_include_path(
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: &[PathBuf],
+    exception_string_param_max_len: usize,
 ) -> Result<WebResponse, RequestError> {
     execute_request_with_context_and_include_path(
         root,
@@ -1696,6 +1715,7 @@ fn execute_request_with_session_and_limits_and_include_path(
         max_input_vars,
         max_input_nesting_level,
         include_path,
+        exception_string_param_max_len,
     )
 }
 
@@ -1742,6 +1762,7 @@ fn execute_request_with_context(
         max_input_vars,
         max_input_nesting_level,
         &[],
+        15,
     )
 }
 
@@ -1767,6 +1788,7 @@ fn execute_request_with_context_and_include_path(
     max_input_vars: usize,
     max_input_nesting_level: usize,
     include_path: &[PathBuf],
+    exception_string_param_max_len: usize,
 ) -> Result<WebResponse, RequestError> {
     let decoded_path = decode_url_path(url_path).ok_or(RequestError::BadPath)?;
     let trimmed = decoded_path
@@ -1968,6 +1990,10 @@ fn execute_request_with_context_and_include_path(
         Value::String(root.display().to_string()),
     );
     globals.insert("\0sapi_name".into(), Value::String("cli-server".into()));
+    globals.insert(
+        "\0zend.exception_string_param_max_len".into(),
+        Value::Integer(exception_string_param_max_len as i64),
+    );
     for diagnostic in &mut input_diagnostics {
         diagnostic.source_file = Some(file.display().to_string());
     }

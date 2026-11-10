@@ -441,14 +441,47 @@ pub(super) fn execute_instruction(
                     Value::Object(object) => object.borrow().class_name.clone(),
                     value => value.show(),
                 };
-                let class = classes
-                    .get(&requested.to_ascii_lowercase())
-                    .ok_or_else(|| format!("Class \"{requested}\" does not exist"))?;
+                let key = requested.trim_start_matches('\\').to_ascii_lowercase();
+                let target_name = if let Some(class) = classes.get(&key) {
+                    class.name.clone()
+                } else if let Some(name) = crate::exception_builtins::canonical_name(&key) {
+                    name.to_string()
+                } else if super::functions::is_builtin_class_for_autoload(&key) {
+                    match key.as_str() {
+                        "stdclass" => "stdClass".into(),
+                        "pdostatement" => "PDOStatement".into(),
+                        "reflectionclass" => "ReflectionClass".into(),
+                        "reflectionobject" => "ReflectionObject".into(),
+                        "reflectionclassconstant" => "ReflectionClassConstant".into(),
+                        "reflectionconstant" => "ReflectionConstant".into(),
+                        "reflectionenum" => "ReflectionEnum".into(),
+                        "reflectionenumunitcase" => "ReflectionEnumUnitCase".into(),
+                        "reflectionenumbackedcase" => "ReflectionEnumBackedCase".into(),
+                        "reflectionnamedtype" => "ReflectionNamedType".into(),
+                        "reflectionuniontype" => "ReflectionUnionType".into(),
+                        "reflectionintersectiontype" => "ReflectionIntersectionType".into(),
+                        "reflectionfunction" => "ReflectionFunction".into(),
+                        "reflectionmethod" => "ReflectionMethod".into(),
+                        "reflectionproperty" => "ReflectionProperty".into(),
+                        "reflectionattribute" => "ReflectionAttribute".into(),
+                        "reflectionparameter" => "ReflectionParameter".into(),
+                        "attribute" => "Attribute".into(),
+                        "countable" => "Countable".into(),
+                        "iterator" => "Iterator".into(),
+                        "iteratoraggregate" => "IteratorAggregate".into(),
+                        "traversable" => "Traversable".into(),
+                        "stringable" => "Stringable".into(),
+                        "jsonserializable" => "JsonSerializable".into(),
+                        other => other.to_string(),
+                    }
+                } else {
+                    return Err(format!("Class \"{requested}\" does not exist"));
+                };
                 let object = Value::Object(Rc::new(RefCell::new(PhpObject {
                     class_name: "ReflectionClass".into(),
                     properties: HashMap::from([(
                         "\0target_class".into(),
-                        Value::String(class.name.clone()),
+                        Value::String(target_name),
                     )]),
                     property_order: Vec::new(),
                     active_property_hooks: Default::default(),
@@ -3376,6 +3409,10 @@ pub(super) fn execute_instruction(
                 return Ok(true);
             }
             if let Some(value) = crate::reflection_method_class_constant(class_name, constant) {
+                stack.push(Value::Integer(value));
+                return Ok(true);
+            }
+            if let Some(value) = crate::reflection_class_class_constant(class_name, constant) {
                 stack.push(Value::Integer(value));
                 return Ok(true);
             }

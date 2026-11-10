@@ -1613,6 +1613,26 @@ fn exception_trace_string_formats_null_and_boolean_arguments_explicitly() {
 }
 
 #[test]
+fn exception_trace_string_length_follows_ini_setting_and_validates_range() {
+    let output = compile_source(r#"<?php
+        function configuredTraceArgument($value) { return new Exception('trace'); }
+        $error = configuredTraceArgument('01234567890123456789');
+        $setting = 'zend.exception_string_param_max_len';
+        echo ini_get(option: $setting), ':', ini_set(option: $setting, value: 5), ':', ini_get($setting), "\n";
+        echo $error->getTraceAsString(), "\n";
+        echo ini_set($setting, 1000001) === false, ':', ini_get($setting), ':';
+        ini_set($setting, 0);
+        echo ini_get($setting), ':', function_exists('ini_get'), ':', function_exists('ini_set');
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(output.starts_with("15:15:5\n#0 "), "{output}");
+    assert!(output.contains("configuredTraceArgument('01234...')"), "{output}");
+    assert!(output.ends_with("1:5:0:1:1"), "{output}");
+}
+
+#[test]
 fn builtin_pdo_constructor_and_static_methods_validate_named_arguments() {
     let constructor = compile_source("<?php new PDO(username: 'user');")
         .unwrap()

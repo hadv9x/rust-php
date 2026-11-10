@@ -455,6 +455,7 @@ pub(crate) fn call_method(
     receiver: &Value,
     method: &str,
     arguments: &[Value],
+    string_param_max_len: usize,
 ) -> Result<Value, String> {
     let Value::Object(object) = receiver else {
         return Err("Exception method receiver must be an object".into());
@@ -557,7 +558,7 @@ pub(crate) fn call_method(
                     let rendered_arguments = frame
                         .arguments
                         .iter()
-                        .map(render_trace_argument)
+                        .map(|argument| render_trace_argument(argument, string_param_max_len))
                         .collect::<Vec<_>>()
                         .join(", ");
                     let callable = match (&frame.class, &frame.call_type) {
@@ -583,13 +584,15 @@ pub(crate) fn call_method(
     }
 }
 
-const TRACE_STRING_MAX_BYTES: usize = 15;
-
-fn render_trace_argument(value: &Value) -> String {
+fn render_trace_argument(value: &Value, max_len: usize) -> String {
     match value.dereference() {
         Value::String(value) => {
-            let truncated = value.len() > TRACE_STRING_MAX_BYTES;
-            let mut boundary = value.len().min(TRACE_STRING_MAX_BYTES);
+            let truncated = max_len > 0 && value.len() > max_len;
+            let mut boundary = if max_len == 0 {
+                value.len()
+            } else {
+                value.len().min(max_len)
+            };
             while !value.is_char_boundary(boundary) {
                 boundary -= 1;
             }
@@ -700,7 +703,7 @@ fn stringify_exception(receiver: &Value, seen: &mut HashSet<usize>) -> Result<St
 }
 
 pub(crate) fn stringify(receiver: &Value) -> Result<String, String> {
-    match call_method(receiver, "__toString", &[])? {
+    match call_method(receiver, "__toString", &[], 15)? {
         Value::String(value) => Ok(value),
         _ => Err("Exception::__toString() must return a string".into()),
     }

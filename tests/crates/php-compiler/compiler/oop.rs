@@ -1,6 +1,89 @@
 use php_compiler::compile_source;
 
 #[test]
+fn reflection_class_get_modifiers_reports_class_kind_flags() {
+    let source = r#"<?php
+        interface ModifierContract {}
+        abstract class ModifierAbstract {}
+        final class ModifierFinal {}
+        readonly class ModifierReadonly { public int $value; }
+        trait ModifierTrait {}
+        enum ModifierEnum { case Item; }
+        $abstract = new ReflectionClass(ModifierAbstract::class);
+        $readonly = new ReflectionClass(ModifierReadonly::class);
+        $interface = new ReflectionClass(ModifierContract::class);
+        $trait = new ReflectionClass(ModifierTrait::class);
+        $enum = new ReflectionEnum(ModifierEnum::class);
+        echo $abstract->getModifiers(), ':', ReflectionClass::IS_EXPLICIT_ABSTRACT, ':';
+        echo (new ReflectionClass(ModifierFinal::class))->getModifiers(), ':', ReflectionClass::IS_FINAL, ':';
+        echo $readonly->getModifiers(), ':', ReflectionClass::IS_READONLY, ':';
+        echo $interface->getModifiers(), ':', $trait->getModifiers(), ':', $enum->getModifiers(), ':';
+        echo ReflectionClass::IS_IMPLICIT_ABSTRACT, ':';
+        echo method_exists('ReflectionClass', 'getModifiers'), ':', method_exists('ReflectionEnum', 'getModifiers');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "64:64:32:32:65536:65536:0:0:32:16:1:1"
+    );
+}
+
+#[test]
+fn reflection_get_modifier_names_decodes_class_and_method_flags() {
+    let source = r#"<?php
+        final class ModifierNamesSubject {
+            public protected(set) string $protected = 'p';
+            public private(set) string $private = 'q';
+            final public static function run() {}
+        }
+        abstract class ModifierNamesAbstract {}
+        $class = new ReflectionClass(ModifierNamesSubject::class);
+        $method = new ReflectionMethod(ModifierNamesSubject::class, 'run');
+        echo class_exists('Reflection'), ':', method_exists('Reflection', 'getModifierNames'), ':';
+        echo implode(',', Reflection::getModifierNames($class->getModifiers())), ':';
+        echo implode(',', Reflection::getModifierNames(modifiers: $method->getModifiers())), ':';
+        echo implode(',', Reflection::getModifierNames(ReflectionClass::IS_READONLY)), ':';
+        echo implode(',', Reflection::getModifierNames((new ReflectionClass(ModifierNamesAbstract::class))->getModifiers())), ':';
+        echo implode(',', Reflection::getModifierNames($class->getProperty('protected')->getModifiers())), ':';
+        echo implode(',', Reflection::getModifierNames($class->getProperty('private')->getModifiers())), ':';
+        echo implode(',', Reflection::getModifierNames(512)), "\n";
+        try { Reflection::getModifierNames([]); }
+        catch (TypeError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:final:final,public,static:readonly:abstract:public,protected(set):public,private(set):virtual\nTypeError:Reflection::getModifierNames(): Argument #1 ($modifiers) must be of type int, array given"
+    );
+}
+
+#[test]
+fn reflection_class_distinguishes_internal_and_user_defined_types() {
+    let source = r#"<?php
+        class UserReflectionTarget {}
+        interface UserReflectionContract {}
+        enum UserReflectionEnum { case Item; }
+        $user = new ReflectionClass(UserReflectionTarget::class);
+        $interface = new ReflectionClass(UserReflectionContract::class);
+        $enum = new ReflectionEnum(UserReflectionEnum::class);
+        $internal = new ReflectionClass('stdClass');
+        $exception = new ReflectionClass('Exception');
+        $reflection = new ReflectionClass(ReflectionClass::class);
+        echo json_encode([
+            $user->isInternal(), $user->isUserDefined(),
+            $interface->isInternal(), $interface->isUserDefined(),
+            $enum->isInternal(), $enum->isUserDefined(),
+            $internal->isInternal(), $internal->isUserDefined(),
+            $exception->isInternal(), $exception->isUserDefined(),
+            $reflection->isInternal(), $reflection->isUserDefined(),
+        ]), ':';
+        echo method_exists('ReflectionClass', 'isInternal'), ':', method_exists('ReflectionEnum', 'isUserDefined');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "[false,true,false,true,false,true,true,false,true,false,true,false]:1:1"
+    );
+}
+
+#[test]
 fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_apis() {
     let source = r#"<?php
         class ReflectedObjectSubject { public function ready() { return 'yes'; } }
@@ -516,14 +599,17 @@ fn reflection_class_reads_static_property_values_and_honors_default() {
         echo $reflection->getStaticPropertyValue('shared'), ':', $reflection->getStaticPropertyValue('local'), ':';
         echo (new ReflectionClass(StaticValueParent::class))->getStaticPropertyValue('secret'), ':';
         echo $reflection->getStaticPropertyValue('missing', 'fallback'), ':';
+        echo $reflection->getStaticPropertyValue(default: 'named-fallback', name: 'missing'), ':';
         echo $reflection->getStaticPropertyValue('secret', 'private-fallback'), ':';
         try { $reflection->getStaticPropertyValue('missing'); }
+        catch (ReflectionException $error) { echo get_class($error), ':'; }
+        try { $reflection->getStaticPropertyValue(name: 'missing'); }
         catch (ReflectionException $error) { echo get_class($error), ':'; }
         echo method_exists('ReflectionClass', 'getStaticPropertyValue');
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "8:11:parent:fallback:private-fallback:ReflectionException:1"
+        "8:11:parent:fallback:named-fallback:private-fallback:ReflectionException:ReflectionException:1"
     );
 }
 
@@ -590,6 +676,45 @@ fn reflection_class_can_instantiate_without_running_constructor() {
     .execute()
     .unwrap();
     assert_eq!(non_classes, "ReflectionException:ReflectionException:ReflectionException:");
+}
+
+#[test]
+fn reflection_class_new_instance_factories_forward_arguments_to_constructor() {
+    let source = r#"<?php
+        class ReflectionFactoryTarget {
+            public $label;
+            public function __construct($label, $suffix = '!') { $this->label = $label . $suffix; }
+        }
+        class ReflectionFactoryReferenceTarget { public function __construct(&$value) { $value++; } }
+        $reflection = new ReflectionClass(ReflectionFactoryTarget::class);
+        echo $reflection->newInstance('direct')->label, ':';
+        echo $reflection->newInstanceArgs(['args', 'suffix' => '?'])->label, ':';
+        echo $reflection->newInstanceArgs(['suffix' => '.', 'label' => 'named'])->label, ':';
+        echo method_exists('ReflectionClass', 'newInstance'), ':', method_exists('ReflectionClass', 'newInstanceArgs');
+        $directReference = 4;
+        (new ReflectionClass(ReflectionFactoryReferenceTarget::class))->newInstance($directReference);
+        $arrayReference = 6;
+        (new ReflectionClass(ReflectionFactoryReferenceTarget::class))->newInstanceArgs([&$arrayReference]);
+        echo ':', $directReference, ':', $arrayReference;
+        class ReflectionFactoryPrivateConstructor { private function __construct() {} }
+        try { (new ReflectionClass(ReflectionFactoryPrivateConstructor::class))->newInstance(); }
+        catch (ReflectionException $error) { echo ':', get_class($error); }
+        class ReflectionFactoryNoConstructor {}
+        try { (new ReflectionClass(ReflectionFactoryNoConstructor::class))->newInstanceArgs([1]); }
+        catch (ReflectionException $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "direct!:args?:named.:1:1:5:7:ReflectionException:ReflectionException"
+    );
+    let missing = compile_source(r#"<?php
+        class ReflectionFactoryNeedsArgument { public function __construct($required) {} }
+        (new ReflectionClass(ReflectionFactoryNeedsArgument::class))->newInstance();
+    "#)
+    .unwrap()
+    .execute()
+    .unwrap_err();
+    assert!(missing.contains("ArgumentCountError"), "{missing}");
 }
 
 #[test]
@@ -882,7 +1007,7 @@ fn reflection_property_reports_asymmetric_set_visibility() {
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        ":1:65|1::33|::1|::4|32:64:private:protected:1:1"
+        ":1:2049|1::4097|::1|::4|4096:2048:private:protected:1:1"
     );
 }
 
