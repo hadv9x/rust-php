@@ -512,7 +512,10 @@ pub(super) fn execute_instruction(
                 let target = reflected.borrow().class_name.clone();
                 stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
                     class_name: "ReflectionObject".into(),
-                    properties: HashMap::from([("\0target_class".into(), Value::String(target))]),
+                    properties: HashMap::from([
+                        ("\0target_class".into(), Value::String(target)),
+                        ("\0target_object".into(), Value::Object(reflected)),
+                    ]),
                     property_order: Vec::new(),
                     active_property_hooks: Default::default(),
                     exception: None,

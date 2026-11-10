@@ -2929,6 +2929,7 @@ pub(super) fn execute_instruction(
                                     | "hasdefaultvalue"
                                     | "getdefaultvalue"
                                     | "isdefault"
+                                    | "isdynamic"
                             ),
                             "reflectionattribute" => matches!(
                                 method.as_str(),
@@ -6552,6 +6553,21 @@ pub(super) fn execute_instruction(
                             }
                             current = class.parent.as_deref();
                         }
+                        if !found && class_name.eq_ignore_ascii_case("ReflectionObject") {
+                            found = internal
+                                .get("\0target_object")
+                                .and_then(|value| match value {
+                                    Value::Object(object) => Some(object.borrow().properties.contains_key(&name)),
+                                    _ => None,
+                                })
+                                .unwrap_or(false)
+                                && !declared_property_exists(
+                                    &target.to_ascii_lowercase(),
+                                    &name,
+                                    classes,
+                                    &mut HashSet::new(),
+                                );
+                        }
                         Value::Bool(found)
                     }
                     ("reflectionclass", "getmethods") => {
@@ -7145,6 +7161,41 @@ pub(super) fn execute_instruction(
                             }
                             current = class.parent.as_deref();
                         }
+                        if class_name.eq_ignore_ascii_case("ReflectionObject") {
+                            if let Some(Value::Object(reflected_object)) = internal.get("\0target_object") {
+                                let reflected = reflected_object.borrow();
+                                for name in &reflected.property_order {
+                                    if name.starts_with('\0')
+                                        || declared_property_exists(
+                                            &target.to_ascii_lowercase(),
+                                            name,
+                                            classes,
+                                            &mut HashSet::new(),
+                                        )
+                                        || filter.is_some_and(|mask| mask & 1 == 0)
+                                    {
+                                        continue;
+                                    }
+                                    properties.push((
+                                        ArrayKey::Integer(properties.len() as i64),
+                                        Value::Object(Rc::new(std::cell::RefCell::new(
+                                            crate::PhpObject {
+                                                class_name: "ReflectionProperty".into(),
+                                                properties: HashMap::from([
+                                                    ("\0target_class".into(), Value::String(target.clone())),
+                                                    ("\0property_name".into(), Value::String(name.clone())),
+                                                    ("\0dynamic_property".into(), Value::Bool(true)),
+                                                    ("\0target_object".into(), Value::Object(reflected_object.clone())),
+                                                ]),
+                                                property_order: Vec::new(),
+                                                active_property_hooks: Default::default(),
+                                                exception: None,
+                                            },
+                                        ))),
+                                    ));
+                                }
+                            }
+                        }
                         Value::from_array_entries(properties)
                     }
                     ("reflectionclass" | "reflectionenum", "getmethod") => {
@@ -7216,6 +7267,42 @@ pub(super) fn execute_instruction(
                                 break;
                             }
                             current = class.parent.as_deref();
+                        }
+                        if declaring.is_none() && class_name.eq_ignore_ascii_case("ReflectionObject") {
+                            let reflected_object = internal
+                                .get("\0target_object")
+                                .and_then(|value| match value {
+                                    Value::Object(object) => Some(object.clone()),
+                                    _ => None,
+                                });
+                            if let Some(reflected_object) = reflected_object {
+                                let is_dynamic = reflected_object.borrow().properties.contains_key(&name)
+                                    && !declared_property_exists(
+                                        &target.to_ascii_lowercase(),
+                                        &name,
+                                        classes,
+                                        &mut HashSet::new(),
+                                    );
+                                if is_dynamic {
+                                    return {
+                                        stack.push(Value::Object(Rc::new(std::cell::RefCell::new(
+                                            crate::PhpObject {
+                                                class_name: "ReflectionProperty".into(),
+                                                properties: HashMap::from([
+                                                    ("\0target_class".into(), Value::String(target)),
+                                                    ("\0property_name".into(), Value::String(name)),
+                                                    ("\0dynamic_property".into(), Value::Bool(true)),
+                                                    ("\0target_object".into(), Value::Object(reflected_object)),
+                                                ]),
+                                                property_order: Vec::new(),
+                                                active_property_hooks: Default::default(),
+                                                exception: None,
+                                            },
+                                        ))));
+                                        Ok(true)
+                                    };
+                                }
+                            }
                         }
                         let declaring = declaring.ok_or_else(|| {
                             format!("ReflectionException:Property {target}::${name} does not exist")
@@ -8142,6 +8229,45 @@ pub(super) fn execute_instruction(
                         .cloned()
                         .ok_or("Invalid ReflectionProperty")?,
                     ("reflectionproperty", "getvalue") => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            let property = internal
+                                .get("\0property_name")
+                                .ok_or("Invalid ReflectionProperty name")?
+                                .show();
+                            let object = match arguments.first().map(Value::dereference) {
+                                Some(Value::Object(object)) => object,
+                                Some(value) if !matches!(value, Value::Null) => {
+                                    return Err(format!("TypeError:ReflectionProperty::getValue(): Argument #1 ($object) must be of type ?object, {} given", value.type_name()));
+                                }
+                                _ => internal
+                                    .get("\0target_object")
+                                    .and_then(|value| match value {
+                                        Value::Object(object) => Some(object.clone()),
+                                        _ => None,
+                                    })
+                                    .ok_or("Invalid dynamic ReflectionProperty target")?,
+                            };
+                            let target = internal
+                                .get("\0target_class")
+                                .ok_or("Invalid ReflectionProperty target")?
+                                .show();
+                            if !super::is_a_type(
+                                &object.borrow().class_name.to_ascii_lowercase(),
+                                &target,
+                                classes,
+                                &mut HashSet::new(),
+                            ) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {target}"));
+                            }
+                            let (class_name, value) = {
+                                let reflected = object.borrow();
+                                (reflected.class_name.clone(), reflected.properties.get(&property).cloned())
+                            };
+                            value.ok_or_else(|| format!("Error:Undefined property: {class_name}::${property}"))?
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8189,8 +8315,53 @@ pub(super) fn execute_instruction(
                             )?
                             .dereference()
                         }
+                        }
                     }
                     ("reflectionproperty", "setvalue") => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            let property = internal
+                                .get("\0property_name")
+                                .ok_or("Invalid ReflectionProperty name")?
+                                .show();
+                            let object = match arguments.first().map(Value::dereference) {
+                                Some(Value::Object(object)) => object,
+                                Some(value) if !matches!(value, Value::Null) => {
+                                    return Err(format!("TypeError:ReflectionProperty::setValue(): Argument #1 ($object) must be of type ?object, {} given", value.type_name()));
+                                }
+                                _ => internal
+                                    .get("\0target_object")
+                                    .and_then(|value| match value {
+                                        Value::Object(object) => Some(object.clone()),
+                                        _ => None,
+                                    })
+                                    .ok_or("Invalid dynamic ReflectionProperty target")?,
+                            };
+                            let target = internal
+                                .get("\0target_class")
+                                .ok_or("Invalid ReflectionProperty target")?
+                                .show();
+                            if !super::is_a_type(
+                                &object.borrow().class_name.to_ascii_lowercase(),
+                                &target,
+                                classes,
+                                &mut HashSet::new(),
+                            ) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {target}"));
+                            }
+                            let value = arguments
+                                .get(1)
+                                .ok_or("ReflectionProperty::setValue() expects exactly 2 arguments")?
+                                .dereference();
+                            let mut object = object.borrow_mut();
+                            if !object.properties.contains_key(&property) {
+                                object.property_order.push(property.clone());
+                            }
+                            object.properties.insert(property, value);
+                            Value::Null
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8262,6 +8433,7 @@ pub(super) fn execute_instruction(
                             )?;
                         }
                         Value::Null
+                        }
                     }
                     ("reflectionproperty", "setaccessible") => {
                         let _accessible = arguments
@@ -8296,6 +8468,22 @@ pub(super) fn execute_instruction(
                         | "isprivate" | "isstatic" | "isreadonly" | "isprivateset"
                         | "isprotectedset" | "ispromoted",
                     ) => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            match method.as_str() {
+                                "hastype" => Value::Bool(false),
+                                "gettype" => Value::Null,
+                                "getmodifiers" => Value::Integer(1),
+                                "ispublic" => Value::Bool(true),
+                                "isprotected" | "isprivate" | "isstatic" | "isreadonly"
+                                | "isprivateset" | "isprotectedset" | "ispromoted" => {
+                                    Value::Bool(false)
+                                }
+                                _ => unreachable!(),
+                            }
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8368,8 +8556,45 @@ pub(super) fn execute_instruction(
                                 _ => unreachable!(),
                             }
                         }
+                        }
                     }
                     ("reflectionproperty", "isinitialized") => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            let property = internal
+                                .get("\0property_name")
+                                .ok_or("Invalid ReflectionProperty name")?
+                                .show();
+                            let object = match arguments.first().map(Value::dereference) {
+                                Some(Value::Object(object)) => object,
+                                Some(value) if !matches!(value, Value::Null) => {
+                                    return Err(format!("TypeError:ReflectionProperty::isInitialized(): Argument #1 ($object) must be of type ?object, {} given", value.type_name()));
+                                }
+                                _ => internal
+                                    .get("\0target_object")
+                                    .and_then(|value| match value {
+                                        Value::Object(object) => Some(object.clone()),
+                                        _ => None,
+                                    })
+                                    .ok_or("Invalid dynamic ReflectionProperty target")?,
+                            };
+                            let target = internal
+                                .get("\0target_class")
+                                .ok_or("Invalid ReflectionProperty target")?
+                                .show();
+                            if !super::is_a_type(
+                                &object.borrow().class_name.to_ascii_lowercase(),
+                                &target,
+                                classes,
+                                &mut HashSet::new(),
+                            ) {
+                                return Err(format!("ReflectionException:Given object is not an instance of the class {target}"));
+                            }
+                            let initialized = object.borrow().properties.contains_key(&property);
+                            Value::Bool(initialized)
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8412,14 +8637,34 @@ pub(super) fn execute_instruction(
                             let initialized = object.borrow().properties.contains_key(&storage_key);
                             Value::Bool(initialized)
                         }
+                        }
                     }
                     ("reflectionproperty", "isdefault") => {
-                        // ReflectionProperty instances in this runtime are created from
-                        // declared class metadata; ReflectionObject dynamic properties are
-                        // not exposed by getProperties() yet.
-                        Value::Bool(true)
+                        Value::Bool(!internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy))
                     }
+                    ("reflectionproperty", "isdynamic") => Value::Bool(
+                        internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy),
+                    ),
                     ("reflectionproperty", "hasdefaultvalue" | "getdefaultvalue") => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            if method == "hasdefaultvalue" {
+                                Value::Bool(false)
+                            } else {
+                                global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                    level: crate::DiagnosticLevel::Deprecated,
+                                    message: "ReflectionProperty::getDefaultValue() for a property without a default value is deprecated, use ReflectionProperty::hasDefaultValue() to check if the default value exists".into(),
+                                    source_file: None, source_line: None, output_offset: 0,
+                                });
+                                Value::Null
+                            }
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8450,8 +8695,15 @@ pub(super) fn execute_instruction(
                             }
                             metadata.default.clone().unwrap_or(Value::Null)
                         }
+                        }
                     }
                     ("reflectionproperty", "getattributes") => {
+                        if internal
+                            .get("\0dynamic_property")
+                            .is_some_and(Value::truthy)
+                        {
+                            Value::from_array_entries(Vec::new())
+                        } else {
                         let target = internal
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionProperty target")?
@@ -8529,6 +8781,7 @@ pub(super) fn execute_instruction(
                             })
                             .collect();
                         Value::from_array_entries(entries)
+                        }
                     }
                     ("reflectionattribute", "getname") => internal
                         .get("\0attribute_name")

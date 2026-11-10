@@ -142,10 +142,23 @@ fn reflection_class_constructs_and_clones_stdclass() {
 #[test]
 fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_apis() {
     let source = r#"<?php
-        class ReflectedObjectSubject { public function ready() { return 'yes'; } }
+        class ReflectedObjectSubject { public $declared = 3; public function ready() { return 'yes'; } }
         $object = new ReflectedObjectSubject();
+        $object->dynamic = 8;
         $reflection = new ReflectionObject($object);
         echo get_class($reflection), ':', $reflection->getName(), ':', $reflection->getMethod('ready')->getName(), ':';
+        foreach ($reflection->getProperties() as $property) {
+            if ($property->getName() === 'dynamic') {
+                $property->setValue($object, 9);
+                echo 'dynamic=', (int) $property->isDynamic(), ':', (int) $property->hasType(), ':',
+                    (int) $property->isPublic(), ':', (int) $property->isStatic(), ':',
+                    (int) $property->hasDefaultValue(), ':', count($property->getAttributes()), ':';
+            }
+            if ($property->getName() === 'declared') { echo 'declaredDynamic=', (int) $property->isDynamic(), ':'; }
+            echo $property->getName(), '=', ($property->isDefault() ? 1 : 0), ':', ($property->isInitialized($object) ? 1 : 0), ':', $property->getValue($object), ',';
+        }
+        $dynamicReflection = $reflection->getProperty('dynamic');
+        echo ':', ($reflection->hasProperty('dynamic') ? 1 : 0), ':', $dynamicReflection->getName(), ':', ($dynamicReflection->isDefault() ? 1 : 0), ':';
         echo is_a($reflection, ReflectionClass::class), ':', class_exists('ReflectionObject'), ':';
         echo method_exists('ReflectionObject', 'getMethod'), ':';
         try { new ReflectionObject('ReflectedObjectSubject'); }
@@ -153,7 +166,7 @@ fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "ReflectionObject:ReflectedObjectSubject:ready:1:1:1:TypeError"
+        "ReflectionObject:ReflectedObjectSubject:ready:declaredDynamic=0:declared=1:1:3,dynamic=1:0:1:0:0:0:dynamic=0:1:9,:1:dynamic:0:1:1:1:TypeError"
     );
 }
 

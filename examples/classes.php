@@ -689,6 +689,15 @@ echo "reflection-property-initialized:", ($uninitializedReflection->getProperty(
 class PropertyDefaultsExample { public $implicit; public ?int $uninitialized; public ?int $explicitNull = null; }
 $propertyDefaults = new ReflectionClass("PropertyDefaultsExample");
 echo "reflection-property-defaults:", ($propertyDefaults->getProperty("implicit")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("uninitialized")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("explicitNull")->hasDefaultValue() ? 1 : 0), ":", ($propertyDefaults->getProperty("implicit")->isDefault() ? 1 : 0), "\n";
+class ReflectedDynamicPropertyExample { public $declared = 3; }
+$dynamicPropertyObject = new ReflectedDynamicPropertyExample();
+$dynamicPropertyObject->dynamic = 8;
+foreach ((new ReflectionObject($dynamicPropertyObject))->getProperties() as $dynamicProperty) {
+    if ($dynamicProperty->getName() === "dynamic") { $dynamicProperty->setValue($dynamicPropertyObject, 9); }
+    echo "reflection-object-property:", $dynamicProperty->getName(), ":", ($dynamicProperty->isDefault() ? 1 : 0), ":", ($dynamicProperty->isInitialized($dynamicPropertyObject) ? 1 : 0), ":", $dynamicProperty->getValue($dynamicPropertyObject), "\n";
+}
+$dynamicPropertyReflection = new ReflectionObject($dynamicPropertyObject);
+echo "reflection-object-has-dynamic:", ($dynamicPropertyReflection->hasProperty("dynamic") ? 1 : 0), ":", $dynamicPropertyReflection->getProperty("dynamic")->getName(), "\n";
 class DefaultPropertyBaseExample { protected $inheritedDefault = "base"; }
 class DefaultPropertyChildExample extends DefaultPropertyBaseExample { private $ownDefault = "child"; public $unsetDefault; }
 $reflectedDefaults = (new ReflectionClass(DefaultPropertyChildExample::class))->getDefaultProperties();
