@@ -87,6 +87,22 @@ fn reflection_class_distinguishes_internal_and_user_defined_types() {
 }
 
 #[test]
+fn reflection_class_recognizes_builtin_interfaces() {
+    let source = r#"<?php
+        foreach (['Countable', 'Iterator', 'IteratorAggregate', 'Traversable', 'Stringable', 'JsonSerializable', 'Throwable', 'UnitEnum', 'BackedEnum'] as $name) {
+            $reflection = new ReflectionClass($name);
+            echo (int) $reflection->isInternal(), (int) $reflection->isUserDefined(),
+                (int) $reflection->isInterface(), (int) $reflection->isInstantiable(),
+                (int) $reflection->isAbstract(), ':';
+        }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "10101:10101:10101:10100:10101:10101:10101:10101:10101:"
+    );
+}
+
+#[test]
 fn reflection_object_inspects_the_concrete_object_and_inherits_reflection_class_apis() {
     let source = r#"<?php
         class ReflectedObjectSubject { public function ready() { return 'yes'; } }

@@ -17,6 +17,8 @@ class ReflectionOriginExample {}
 $userReflection = new ReflectionClass(ReflectionOriginExample::class);
 $internalReflection = new ReflectionClass('stdClass');
 echo 'reflection-origin:', (int) $userReflection->isUserDefined(), ':', (int) $internalReflection->isInternal(), "\n";
+$countableReflection = new ReflectionClass('Countable');
+echo 'reflection-interface:', (int) $countableReflection->isInterface(), ':', (int) $countableReflection->isInstantiable(), ':', (int) $countableReflection->isAbstract(), "\n";
 
 interface Describable {
     const KIND = "describable";

@@ -5831,6 +5831,9 @@ pub(super) fn execute_instruction(
                             crate::exception_builtins::is_class(&target)
                                 || super::functions::is_builtin_class_for_autoload(
                                     &target.to_ascii_lowercase(),
+                                )
+                                || is_builtin_interface_for_autoload(
+                                    &target.to_ascii_lowercase(),
                                 ),
                         )
                     }
@@ -5844,6 +5847,9 @@ pub(super) fn execute_instruction(
                                 && !crate::exception_builtins::is_class(&target)
                                 && !super::functions::is_builtin_class_for_autoload(
                                     &target.to_ascii_lowercase(),
+                                )
+                                && !is_builtin_interface_for_autoload(
+                                    &target.to_ascii_lowercase(),
                                 ),
                         )
                     }
@@ -5855,7 +5861,10 @@ pub(super) fn execute_instruction(
                         Value::Bool(
                             classes
                                 .get(&target.to_ascii_lowercase())
-                                .is_some_and(|class| class.is_interface),
+                                .is_some_and(|class| class.is_interface)
+                                || is_builtin_interface_for_autoload(
+                                    &target.to_ascii_lowercase(),
+                                ),
                         )
                     }
                     ("reflectionclass", "isabstract") => {
@@ -5863,11 +5872,15 @@ pub(super) fn execute_instruction(
                             .get("\0target_class")
                             .ok_or("Invalid ReflectionClass target")?
                             .show();
-                        Value::Bool(
+                        let key = target.to_ascii_lowercase();
+                        let is_abstract = if is_builtin_interface_for_autoload(&key) {
+                            builtin_interface_is_abstract(&key)
+                        } else {
                             classes
-                                .get(&target.to_ascii_lowercase())
-                                .is_some_and(|class| class.is_abstract),
-                        )
+                                .get(&key)
+                                .is_some_and(|class| class.is_abstract)
+                        };
+                        Value::Bool(is_abstract)
                     }
                     ("reflectionclass" | "reflectionenum", "isinstantiable") => {
                         let target = internal
@@ -5876,6 +5889,8 @@ pub(super) fn execute_instruction(
                             .show();
                         let instantiable = if crate::exception_builtins::is_class(&target) {
                             true
+                        } else if is_builtin_interface_for_autoload(&target.to_ascii_lowercase()) {
+                            false
                         } else if target.eq_ignore_ascii_case("stdClass") {
                             true
                         } else {
@@ -13326,6 +13341,9 @@ pub(super) fn is_builtin_class_for_autoload(name: &str) -> bool {
                 | "traversable"
                 | "stringable"
                 | "jsonserializable"
+                | "throwable"
+                | "unitenum"
+                | "backedenum"
                 | "mongodb\\client"
                 | "mongodb\\database"
                 | "mongodb\\collection"
@@ -13335,6 +13353,35 @@ pub(super) fn is_builtin_class_for_autoload(name: &str) -> bool {
                 | "mongodb\\updateresult"
                 | "mongodb\\deleteresult"
         )
+}
+
+fn is_builtin_interface_for_autoload(name: &str) -> bool {
+    matches!(
+        name,
+        "countable"
+            | "iterator"
+            | "iteratoraggregate"
+            | "traversable"
+            | "stringable"
+            | "jsonserializable"
+            | "throwable"
+            | "unitenum"
+            | "backedenum"
+    )
+}
+
+fn builtin_interface_is_abstract(name: &str) -> bool {
+    matches!(
+        name,
+        "countable"
+            | "iterator"
+            | "iteratoraggregate"
+            | "stringable"
+            | "jsonserializable"
+            | "throwable"
+            | "unitenum"
+            | "backedenum"
+    )
 }
 
 pub(super) fn invoke_registered_autoloaders(
