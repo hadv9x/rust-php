@@ -875,6 +875,7 @@ fn signature(name: &str) -> Option<Signature> {
         ),
         "dirname" => (&["path", "levels"], &[(1, Num(1.0))], false),
         "pathinfo" => (&["path", "flags"], &[(1, Num(15.0))], false),
+        "parse_url" => (&["url", "component"], &[(1, Num(-1.0))], false),
         "strip_tags" => (
             &["string", "allowed_tags"],
             &[(1, DefaultValue::EmptyString)],
@@ -885,6 +886,15 @@ fn signature(name: &str) -> Option<Signature> {
         "vprintf" | "vsprintf" => (&["format", "values"], &[], false),
         "fprintf" => (&["stream", "format"], &[], true),
         "parse_str" => (&["string", "result"], &[], false),
+        "http_build_query" => (
+            &["data", "numeric_prefix", "arg_separator", "encoding_type"],
+            &[
+                (1, DefaultValue::EmptyString),
+                (2, N),
+                (3, Num(1.0)),
+            ],
+            false,
+        ),
         "stripcslashes" => (&["string"], &[], false),
         "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" => (&["string"], &[], false),
         "explode" => (

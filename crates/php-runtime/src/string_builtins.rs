@@ -91,6 +91,8 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "strip_tags",
         "sprintf",
         "parse_str",
+        "http_build_query",
+        "parse_url",
         "printf",
         "vprintf",
         "vsprintf",
@@ -133,6 +135,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         "basename" => &[0, 1],
         "dirname" => &[0],
         "pathinfo" => &[0],
+        "parse_url" => &[0],
         "strip_tags" => &[0, 1],
         "urlencode" | "urldecode" | "rawurlencode" | "rawurldecode" | "sprintf" | "parse_str"
         | "printf" | "vprintf" | "vsprintf" => &[0],
@@ -1969,7 +1972,12 @@ fn sha512_digest_with_state(input: &[u8], mut state: [u64; 8]) -> Vec<u8> {
 /// Execute one of the string builtins implemented by this runtime.
 pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     let function = name.to_ascii_lowercase();
-
+    if function == "parse_url" {
+        return parse_url(arguments);
+    }
+    if function == "http_build_query" {
+        return http_build_query(arguments, &std::collections::HashMap::new());
+    }
     if function == "hash" {
         if arguments.len() < 2 || arguments.len() > 3 {
             return Err(format!(
@@ -2479,7 +2487,8 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         | "urlencode"
         | "urldecode"
         | "rawurlencode"
-        | "rawurldecode" => 1,
+        | "rawurldecode"
+        | "parse_url" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
@@ -2528,6 +2537,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "str_getcsv" => 4,
         "levenshtein" => 5,
         "similar_text" => 3,
+        "parse_url" => 2,
         "htmlspecialchars" | "htmlentities" => 4,
         "htmlspecialchars_decode" => 2,
         "nl2br" => 2,
@@ -3717,6 +3727,246 @@ fn parse_str(arguments: &[Value]) -> Result<Value, String> {
         result = set_query_path(result, &path, value)?;
     }
     Ok(result)
+}
+
+fn parse_url(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!(
+            "ArgumentCountError:parse_url() expects 1 or 2 arguments, {} given",
+            arguments.len()
+        ));
+    }
+    let input = arguments[0].show();
+    let component = match arguments.get(1).map(Value::dereference) {
+        None | Some(Value::Integer(-1)) => None,
+        Some(Value::Integer(value @ 0..=7)) => Some(value),
+        Some(Value::Number(-1.0)) => None,
+        Some(Value::Number(value)) if (0.0..=7.0).contains(&value) && value.fract() == 0.0 => {
+            Some(value as i64)
+        }
+        Some(value) => {
+            return Err(format!(
+                "ValueError:parse_url(): Argument #2 ($component) must be a valid URL component, {} given",
+                value.show()
+            ));
+        }
+    };
+    let mut values: [Option<Value>; 8] = std::array::from_fn(|_| None);
+    let (without_fragment, fragment) = match input.split_once('#') {
+        Some((before, after)) => (before, Some(after.to_owned())),
+        None => (input.as_str(), None),
+    };
+    let (without_query, query) = match without_fragment.split_once('?') {
+        Some((before, after)) => (before, Some(after.to_owned())),
+        None => (without_fragment, None),
+    };
+    let mut rest = without_query;
+    if let Some(colon) = rest.find(':') {
+        let candidate = &rest[..colon];
+        let before_slash = rest.find('/').is_none_or(|slash| colon < slash);
+        let mut chars = candidate.chars();
+        let valid_scheme = chars.next().is_some_and(|first| first.is_ascii_alphabetic())
+            && chars.all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '+' | '.' | '-')
+            });
+        if before_slash && valid_scheme {
+            values[0] = Some(Value::String(candidate.to_owned()));
+            rest = &rest[colon + 1..];
+        }
+    }
+    if let Some(authority_and_path) = rest.strip_prefix("//") {
+        let authority_end = authority_and_path.find('/').unwrap_or(authority_and_path.len());
+        let authority = &authority_and_path[..authority_end];
+        let path = &authority_and_path[authority_end..];
+        if !path.is_empty() {
+            values[5] = Some(Value::String(path.to_owned()));
+        }
+        let host_port = if let Some((userinfo, host_port)) = authority.rsplit_once('@') {
+            if let Some((user, password)) = userinfo.split_once(':') {
+                values[3] = Some(Value::String(user.to_owned()));
+                values[4] = Some(Value::String(password.to_owned()));
+            } else {
+                values[3] = Some(Value::String(userinfo.to_owned()));
+            }
+            host_port
+        } else {
+            authority
+        };
+        let (host, port) = if let Some(bracketed) = host_port.strip_prefix('[') {
+            let Some(end) = bracketed.find(']') else {
+                return Ok(Value::Bool(false));
+            };
+            let host = &bracketed[..end];
+            let suffix = &bracketed[end + 1..];
+            if suffix.is_empty() {
+                (host, None)
+            } else if let Some(port) = suffix.strip_prefix(':') {
+                (host, Some(port))
+            } else {
+                return Ok(Value::Bool(false));
+            }
+        } else if let Some((host, port)) = host_port.rsplit_once(':') {
+            if !host.contains(':') {
+                (host, Some(port))
+            } else {
+                (host_port, None)
+            }
+        } else {
+            (host_port, None)
+        };
+        if !host.is_empty() {
+            values[1] = Some(Value::String(host.to_owned()));
+        }
+        if let Some(port) = port {
+            let Ok(port) = port.parse::<u16>() else {
+                return Ok(Value::Bool(false));
+            };
+            values[2] = Some(Value::Integer(port as i64));
+        }
+    } else if !rest.is_empty() {
+        values[5] = Some(Value::String(rest.to_owned()));
+    } else if values[0].is_none() {
+        values[5] = Some(Value::String(String::new()));
+    }
+    values[6] = query.map(Value::String);
+    values[7] = fragment.map(Value::String);
+
+    if let Some(component) = component {
+        return Ok(values[component as usize].take().unwrap_or(Value::Null));
+    }
+    let names = ["scheme", "host", "port", "user", "pass", "path", "query", "fragment"];
+    let entries = names
+        .iter()
+        .zip(values)
+        .filter_map(|(name, value)| value.map(|value| (crate::ArrayKey::String((*name).into()), value)))
+        .collect();
+    Ok(Value::from_array_entries(entries))
+}
+
+pub(crate) fn http_build_query(
+    arguments: &[Value],
+    classes: &std::collections::HashMap<String, crate::BytecodeClass>,
+) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 4 {
+        return Err(format!(
+            "ArgumentCountError:http_build_query() expects between 1 and 4 arguments, {} given",
+            arguments.len()
+        ));
+    }
+    let prefix = arguments.get(1).map(Value::show).unwrap_or_default();
+    let separator = match arguments.get(2).map(Value::dereference) {
+        None | Some(Value::Null) => "&".to_owned(),
+        Some(value) => value.show(),
+    };
+    let rfc3986 = match arguments.get(3).map(Value::dereference) {
+        None | Some(Value::Integer(1)) => false,
+        Some(Value::Integer(2)) => true,
+        Some(Value::Number(1.0)) => false,
+        Some(Value::Number(2.0)) => true,
+        Some(value) => {
+            return Err(format!(
+                "ValueError:http_build_query(): Argument #4 ($encoding_type) must be one of PHP_QUERY_RFC1738 or PHP_QUERY_RFC3986, {} given",
+                value.show()
+            ));
+        }
+    };
+    let data = arguments[0].dereference();
+    let mut pairs = Vec::new();
+    match data {
+        Value::Array(array) => query_array(&array, "", &prefix, rfc3986, &mut pairs, 0, classes),
+        Value::Object(object) => {
+            let object = object.borrow();
+            let class = classes.get(&object.class_name.to_ascii_lowercase());
+            for name in &object.property_order {
+                if name.starts_with('\0') {
+                    continue;
+                }
+                if class
+                    .and_then(|class| class.properties.get(name))
+                    .is_some_and(|property| property.visibility != crate::MemberVisibility::Public)
+                {
+                    continue;
+                }
+                if let Some(value) = object.properties.get(name) {
+                    query_value(value, name, &prefix, rfc3986, &mut pairs, 0, classes);
+                }
+            }
+        }
+        other => {
+            return Err(format!(
+                "TypeError:http_build_query(): Argument #1 ($data) must be of type array|object, {} given",
+                other.type_name()
+            ));
+        }
+    }
+    Ok(Value::String(pairs.join(&separator)))
+}
+
+fn query_array(
+    array: &crate::PhpArray,
+    parent: &str,
+    prefix: &str,
+    rfc3986: bool,
+    pairs: &mut Vec<String>,
+    depth: usize,
+    classes: &std::collections::HashMap<String, crate::BytecodeClass>,
+) {
+    if depth >= 64 {
+        return;
+    }
+    for (key, value) in array.iter() {
+        let (key, is_numeric) = match key {
+            crate::ArrayKey::Integer(index) => (index.to_string(), true),
+            crate::ArrayKey::String(key) => (key.clone(), false),
+        };
+        let key = if parent.is_empty() {
+            if is_numeric { format!("{prefix}{key}") } else { key }
+        } else {
+            format!("{parent}[{key}]")
+        };
+        query_value(value, &key, prefix, rfc3986, pairs, depth + 1, classes);
+    }
+}
+
+fn query_value(
+    value: &Value,
+    key: &str,
+    prefix: &str,
+    rfc3986: bool,
+    pairs: &mut Vec<String>,
+    depth: usize,
+    classes: &std::collections::HashMap<String, crate::BytecodeClass>,
+) {
+    if depth >= 64 {
+        return;
+    }
+    match value.dereference() {
+        Value::Null => {}
+        Value::Array(array) => query_array(&array, key, prefix, rfc3986, pairs, depth + 1, classes),
+        Value::Object(object) => {
+            let object = object.borrow();
+            let class = classes.get(&object.class_name.to_ascii_lowercase());
+            for name in &object.property_order {
+                if name.starts_with('\0') {
+                    continue;
+                }
+                if class
+                    .and_then(|class| class.properties.get(name))
+                    .is_some_and(|property| property.visibility != crate::MemberVisibility::Public)
+                {
+                    continue;
+                }
+                if let Some(value) = object.properties.get(name) {
+                    query_value(value, &format!("{key}[{name}]"), prefix, rfc3986, pairs, depth + 1, classes);
+                }
+            }
+        }
+        value => {
+            let encoded_key = url_encode(key, !rfc3986);
+            let encoded_value = url_encode(&value.show(), !rfc3986);
+            pairs.push(format!("{encoded_key}={encoded_value}"));
+        }
+    }
 }
 
 fn parse_query_path(suffix: &str) -> Vec<Option<crate::ArrayKey>> {

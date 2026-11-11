@@ -4304,9 +4304,13 @@ pub(super) fn execute_instruction(
                         )?;
                         stack.push(crate::string_builtins::call(fallback_name, &arguments)?);
                     }
+                    "http_build_query" => {
+                        stack.push(crate::string_builtins::http_build_query(&arguments, classes)?);
+                    }
                     "basename"
                     | "dirname"
                     | "pathinfo"
+                    | "parse_url"
                     | "strip_tags"
                     | "urlencode"
                     | "urldecode"

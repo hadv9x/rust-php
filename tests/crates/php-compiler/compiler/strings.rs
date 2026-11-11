@@ -468,6 +468,49 @@ fn sprintf_supports_custom_padding_and_dynamic_width_precision() {
 }
 
 #[test]
+fn http_build_query_encodes_nested_arrays_and_supports_named_callbacks() {
+    let source = r#"<?php
+        $data = ['space key' => 'two words', 'nested' => ['x' => 'a/b', 3 => null, 4 => true], 0 => 'root value'];
+        $object = new class { public string $visible = 'public value'; protected string $hidden = 'skip'; private string $secret = 'skip'; };
+        echo http_build_query($data), "\n";
+        echo http_build_query(data: $data, numeric_prefix: 'item_', arg_separator: '|', encoding_type: PHP_QUERY_RFC3986), "\n";
+        echo http_build_query(data: ['named' => 'two words']), "\n";
+        echo http_build_query($object), "\n";
+        echo array_map('http_build_query', [['a' => 'b c', 'x' => null]])[0], ':';
+        echo function_exists('http_build_query');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "space+key=two+words&nested%5Bx%5D=a%2Fb&nested%5B4%5D=1&0=root+value\nspace%20key=two%20words|nested%5Bx%5D=a%2Fb|nested%5B4%5D=1|item_0=root%20value\nnamed=two+words\nvisible=public+value\na=b+c:1"
+    );
+}
+
+#[test]
+fn parse_url_returns_components_without_decoding_and_preserves_empty_delimiters() {
+    let source = r#"<?php
+        $url = 'https://user:p%40ss@example.test:8443/a/b?q=one%20two#section';
+        $parts = parse_url($url);
+        echo $parts['scheme'], ':', $parts['host'], ':', $parts['port'], ':';
+        echo $parts['user'], ':', $parts['pass'], ':', $parts['path'], ':';
+        echo $parts['query'], ':', $parts['fragment'], "\n";
+        echo parse_url($url, PHP_URL_HOST), ':', parse_url($url, PHP_URL_PORT), ':';
+        echo parse_url('https://example.test/path?', PHP_URL_QUERY) === '', ':';
+        echo parse_url('https://example.test/path', PHP_URL_QUERY) === null, ':';
+        echo parse_url('https://example.test/path#', PHP_URL_FRAGMENT) === '', ':';
+        echo function_exists('parse_url'), ':';
+        echo parse_url(url: $url, component: PHP_URL_PATH), ':';
+        echo parse_url(url: $url)['host'], ':';
+        echo array_map('parse_url', ['https://one.test/a', 'https://two.test/b'])[0]['host'];
+        try { parse_url($url, 8); } catch (ValueError $error) { echo ':', get_class($error); }
+        echo ':', parse_url('https://example.test:99999') === false;
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "https:example.test:8443:user:p%40ss:/a/b:q=one%20two:section\nexample.test:8443:1:1:1:1:/a/b:example.test:one.test:ValueError:1"
+    );
+}
+
+#[test]
 fn parse_str_decodes_query_values_and_builds_nested_arrays_by_reference() {
     let source = r#"<?php
         $result = ['old' => true];
