@@ -35,6 +35,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "number_format",
         "str_increment",
         "str_decrement",
+        "quotemeta",
         "count_chars",
         "ucwords",
         "trim",
@@ -155,6 +156,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         | "lcfirst"
         | "strrev"
         | "str_rot13"
+        | "quotemeta"
         | "addslashes"
         | "stripslashes"
         | "stripcslashes"
@@ -2488,6 +2490,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         | "urldecode"
         | "rawurlencode"
         | "rawurldecode"
+        | "quotemeta"
         | "parse_url" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
@@ -2509,7 +2512,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes"
         | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5"
         | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode"
-        | "rawurldecode" => 1,
+        | "rawurldecode" | "quotemeta" => 1,
         "base64_decode" => 2,
         "html_entity_decode" => 3,
         "addcslashes" => 2,
@@ -2598,6 +2601,20 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "rawurlencode" => Value::String(url_encode(&string, false)),
         "urldecode" => Value::String(url_decode(&string, true)),
         "rawurldecode" => Value::String(url_decode(&string, false)),
+        "quotemeta" => {
+            if string.is_empty() {
+                Value::Bool(false)
+            } else {
+                let mut quoted = String::with_capacity(string.len());
+                for character in string.chars() {
+                    if matches!(character, '.' | '\\' | '+' | '*' | '?' | '[' | '^' | ']' | '(' | ')' | '$') {
+                        quoted.push('\\');
+                    }
+                    quoted.push(character);
+                }
+                Value::String(quoted)
+            }
+        }
         "strtoupper" => Value::String(string.to_ascii_uppercase()),
         "strrev" => Value::String(
             String::from_utf8_lossy(&string.as_bytes().iter().rev().copied().collect::<Vec<_>>())

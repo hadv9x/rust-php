@@ -123,3 +123,5 @@ Trying to implement every page in the manual means supporting hundreds of option
 5. Compare runtime dispatch with `function_exists()` and callback dispatch, and add PHP 8.5 differential tests for supported APIs.
 
 Current status: **the project implements a useful but narrow PHP subset. The manual sections and extension categories are classified here; function-by-function reconciliation across every optional extension remains incomplete.**
+
+String helper additions include `quotemeta()` for PHP's documented regex metacharacter set; its empty-input result is `false`.

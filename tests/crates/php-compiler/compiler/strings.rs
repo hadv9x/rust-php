@@ -1,6 +1,20 @@
 use php_compiler::compile_source;
 
 #[test]
+fn quotemeta_escapes_php_regex_metacharacters_and_dispatches_by_name() {
+    let source = r#"<?php
+        echo quotemeta(string: '.\\+*?[^]($)'), '|';
+        echo quotemeta('') === false, '|';
+        echo implode(',', array_map('quotemeta', ['a.b', 'x|y', 'é.'])), '|';
+        echo function_exists('quotemeta');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        r#"\.\\\+\*\?\[\^\]\(\$\)|1|a\.b,x|y,é\.|1"#
+    );
+}
+
+#[test]
 fn md5_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
     let source = r#"<?php
         echo md5(''), '|', md5(string: 'abc'), '|', md5(str_repeat('a', 1000000)), '|';

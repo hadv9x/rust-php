@@ -729,7 +729,7 @@ fn signature(name: &str) -> Option<Signature> {
         "serialize" => (&["value"], &[], false),
         "unserialize" => (&["data", "options"], &[(1, A)], false),
         "json_last_error" | "json_last_error_msg" => (&[], &[], false),
-        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13"
+        "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13" | "quotemeta"
         | "addslashes" | "stripslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment"
         | "str_decrement" => (&["string"], &[], false),
         "crc32" => (&["string"], &[], false),
