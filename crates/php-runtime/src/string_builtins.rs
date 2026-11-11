@@ -61,6 +61,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "str_starts_with",
         "str_ends_with",
         "strstr",
+        "strrchr",
         "strchr",
         "stristr",
         "strcmp",
@@ -115,7 +116,7 @@ pub(crate) fn is_supported(name: &str) -> bool {
 pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
     match name.to_ascii_lowercase().as_str() {
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" | "strncmp" | "strncasecmp"
-        | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr"
+        | "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strrchr" | "strchr"
         | "stristr" | "strpos" | "stripos" | "strrpos" | "strripos" | "strspn" | "strcspn"
         | "strpbrk" | "substr_count" | "substr_compare" | "explode" | "str_getcsv" => &[0, 1, 2, 3],
         "strtok" => &[0, 1],
@@ -2496,7 +2497,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "strspn" | "strcspn" | "strpbrk" => 2,
         "str_pad" => 2,
         "str_replace" | "str_ireplace" => 3,
-        "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strchr" | "stristr" => 2,
+        "str_contains" | "str_starts_with" | "str_ends_with" | "strstr" | "strrchr" | "strchr" | "stristr" => 2,
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" => 2,
         "similar_text" => 2,
         "levenshtein" => 2,
@@ -2522,7 +2523,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "str_word_count" => 3,
         "ucwords" => 2,
         "str_contains" | "str_starts_with" | "str_ends_with" => 2,
-        "strstr" | "strchr" | "stristr" => 3,
+        "strstr" | "strrchr" | "strchr" | "stristr" => 3,
         "strcmp" | "strcasecmp" | "strnatcmp" | "strnatcasecmp" => 2,
         "strncmp" | "strncasecmp" => 3,
         "strtr" => 3,
@@ -2852,6 +2853,20 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         "str_contains" => Value::Bool(string.contains(&arguments[1].show())),
         "str_starts_with" => Value::Bool(string.starts_with(&arguments[1].show())),
         "str_ends_with" => Value::Bool(string.ends_with(&arguments[1].show())),
+        "strrchr" => {
+            let needle = arguments[1].show();
+            let bytes = string.as_bytes();
+            let index = needle.as_bytes().first().map_or(Some(bytes.len()), |first| {
+                bytes.iter().rposition(|byte| byte == first)
+            });
+            match index {
+                Some(index) if arguments.get(2).is_some_and(Value::truthy) => {
+                    Value::String(String::from_utf8_lossy(&bytes[..index]).into_owned())
+                }
+                Some(index) => Value::String(String::from_utf8_lossy(&bytes[index..]).into_owned()),
+                None => Value::Bool(false),
+            }
+        }
         "strstr" | "strchr" | "stristr" => {
             let needle = arguments[1].show();
             if needle.is_empty() {

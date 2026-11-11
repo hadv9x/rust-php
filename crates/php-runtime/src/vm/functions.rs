@@ -4391,6 +4391,7 @@ pub(super) fn execute_instruction(
                     | "str_starts_with"
                     | "str_ends_with"
                     | "strstr"
+                    | "strrchr"
                     | "strchr"
                     | "stristr" => {
                         coerce_stringable_builtin_args(
@@ -13215,6 +13216,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "strnatcasecmp"
                 | "strtr"
                 | "strstr"
+                | "strrchr"
                 | "strchr"
                 | "stristr"
                 | "ucwords"

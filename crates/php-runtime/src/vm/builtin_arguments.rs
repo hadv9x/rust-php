@@ -815,7 +815,7 @@ fn signature(name: &str) -> Option<Signature> {
         "str_contains" | "str_starts_with" | "str_ends_with" => {
             (&["haystack", "needle"], &[], false)
         }
-        "strstr" | "strchr" | "stristr" => {
+        "strstr" | "strrchr" | "strchr" | "stristr" => {
             (&["haystack", "needle", "before_needle"], &[(2, F)], false)
         }
         "str_replace" | "str_ireplace" => {

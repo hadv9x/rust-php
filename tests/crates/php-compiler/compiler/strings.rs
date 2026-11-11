@@ -15,6 +15,23 @@ fn quotemeta_escapes_php_regex_metacharacters_and_dispatches_by_name() {
 }
 
 #[test]
+fn strrchr_returns_the_suffix_from_the_last_character_and_supports_before_needle() {
+    let source = r#"<?php
+        echo strrchr(haystack: 'alpha.beta.gamma', needle: '.'), '|';
+        echo strrchr('alpha.beta.gamma', '.', true), '|';
+        echo strrchr('first-x-middle-x-last', 'xy'), '|';
+        echo strrchr('abc', 'z') === false, '|';
+        echo strrchr('abc', '') === '', ':', strrchr('abc', '', true) === 'abc', '|';
+        echo implode(',', array_map('strrchr', ['a.b', 'x.y'], ['.', '.'])), '|';
+        echo function_exists('strrchr');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        ".gamma|alpha.beta|x-last|1|1:1|.b,.y|1"
+    );
+}
+
+#[test]
 fn md5_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
     let source = r#"<?php
         echo md5(''), '|', md5(string: 'abc'), '|', md5(str_repeat('a', 1000000)), '|';

@@ -125,3 +125,4 @@ Trying to implement every page in the manual means supporting hundreds of option
 Current status: **the project implements a useful but narrow PHP subset. The manual sections and extension categories are classified here; function-by-function reconciliation across every optional extension remains incomplete.**
 
 String helper additions include `quotemeta()` for PHP's documented regex metacharacter set; its empty-input result is `false`.
+The string inventory also includes `strrchr()` with last-character matching and the PHP 8.3 `before_needle` parameter.
