@@ -481,7 +481,7 @@ pub(super) fn execute_instruction(
                         other => other.to_string(),
                     }
                 } else {
-                    return Err(format!("Class \"{requested}\" does not exist"));
+                    return Err(format!("ReflectionException:Class \"{requested}\" does not exist"));
                 };
                 let object = Value::Object(Rc::new(RefCell::new(PhpObject {
                     class_name: "ReflectionClass".into(),
@@ -537,7 +537,7 @@ pub(super) fn execute_instruction(
                     value => (value.show(), None),
                 };
                 if closure.is_none() && !functions.contains_key(&requested.to_ascii_lowercase()) {
-                    return Err(format!("Function {requested}() does not exist"));
+                    return Err(format!("ReflectionException:Function {requested}() does not exist"));
                 }
                 let mut properties =
                     HashMap::from([("\0function_name".into(), Value::String(requested))]);
