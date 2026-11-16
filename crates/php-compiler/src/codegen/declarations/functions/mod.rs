@@ -14,6 +14,14 @@ pub(super) fn compile(
 ) -> Result<HashMap<String, BytecodeFunction>, String> {
     let mut functions = HashMap::new();
     for function in declarations {
+        super::validate_function_type_positions(
+            &function.parameter_types,
+            function.return_type.as_deref(),
+            "function",
+        )?;
+        for property in &function.promoted_properties {
+            super::validate_property_type_position(property.type_name.as_deref())?;
+        }
         let function_name = function
             .name
             .rsplit('\\')

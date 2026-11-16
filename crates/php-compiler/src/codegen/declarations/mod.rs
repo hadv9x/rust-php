@@ -8,6 +8,43 @@ use super::CodeGenerator;
 mod classes;
 mod functions;
 
+fn contains_never_type(type_name: &str) -> bool {
+    type_name
+        .split(|character: char| matches!(character, '|' | '&' | '?' | '(' | ')'))
+        .any(|part| part.trim().eq_ignore_ascii_case("never"))
+}
+
+pub(super) fn validate_function_type_positions(
+    parameter_types: &[Option<String>],
+    return_type: Option<&str>,
+    context: &str,
+) -> Result<(), String> {
+    if parameter_types
+        .iter()
+        .flatten()
+        .any(|type_name| contains_never_type(type_name))
+    {
+        return Err(format!(
+            "CompileError:never can only be used as a return type in {context}"
+        ));
+    }
+    if return_type.is_some_and(contains_never_type)
+        && !return_type.is_some_and(|type_name| type_name.trim().eq_ignore_ascii_case("never"))
+    {
+        return Err(format!(
+            "CompileError:never can only be used as a standalone return type in {context}"
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_property_type_position(type_name: Option<&str>) -> Result<(), String> {
+    if type_name.is_some_and(contains_never_type) {
+        return Err("CompileError:never can only be used as a return type".into());
+    }
+    Ok(())
+}
+
 pub(super) fn strict_mode_for_body(body: &[php_syntax::Stmt], fallback: bool) -> bool {
     match body.first() {
         Some(php_syntax::Stmt::SourceFile(_, strict_types, _)) => *strict_types,

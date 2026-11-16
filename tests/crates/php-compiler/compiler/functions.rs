@@ -33,6 +33,26 @@ fn never_return_type_throws_type_error_on_implicit_fallthrough() {
 }
 
 #[test]
+fn never_is_rejected_outside_standalone_return_type_positions() {
+    for source in [
+        "<?php function takes(never $value): void {}",
+        "<?php function bad(): never|string { throw new Exception(); }",
+        "<?php function bad(): ?never { throw new Exception(); }",
+        "<?php $closure = function (never $value): void {};",
+        "<?php class Holder { public never $value; }",
+        "<?php class Handler { public function takes(never $value): void {} }",
+        "<?php interface Contract { public function bad(): never|string; }",
+        "<?php trait Shared { public never $value; }",
+    ] {
+        let error = match compile_source(source) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid never declaration was accepted: {source}"),
+        };
+        assert!(error.contains("never can only be used"), "{error}");
+    }
+}
+
+#[test]
 fn unpack_expands_positional_named_and_reference_arguments() {
     let source = r#"<?php
         function collect($first, ...$rest) { echo $first, ':', $rest['label'], ':', $rest[0], "\n"; }

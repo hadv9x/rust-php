@@ -629,6 +629,42 @@ fn expanded_trait_methods(
 /// Resolve traits, compile methods, assemble class metadata, and check interfaces.
 pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass>, String> {
     validate_attribute_class_declarations(program)?;
+    for class in &program.classes {
+        for property in &class.properties {
+            super::validate_property_type_position(property.type_name.as_deref())?;
+        }
+        for method in &class.methods {
+            super::validate_function_type_positions(
+                &method.parameter_types,
+                method.return_type.as_deref(),
+                "method",
+            )?;
+            for property in &method.promoted_properties {
+                super::validate_property_type_position(property.type_name.as_deref())?;
+            }
+        }
+    }
+    for interface in &program.interfaces {
+        for method in &interface.methods {
+            super::validate_function_type_positions(
+                &method.parameter_types,
+                method.return_type.as_deref(),
+                "interface method",
+            )?;
+        }
+    }
+    for trait_decl in &program.traits {
+        for property in &trait_decl.properties {
+            super::validate_property_type_position(property.type_name.as_deref())?;
+        }
+        for method in &trait_decl.methods {
+            super::validate_function_type_positions(
+                &method.parameter_types,
+                method.return_type.as_deref(),
+                "trait method",
+            )?;
+        }
+    }
     let builtin_classes = [
         ("arrayobject", None),
         ("stdclass", None),

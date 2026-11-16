@@ -721,6 +721,14 @@ impl CodeGenerator<'_> {
                 declaration,
                 captures,
             } => {
+                if let Err(error) = super::declarations::validate_function_type_positions(
+                    &declaration.parameter_types,
+                    declaration.return_type.as_deref(),
+                    "closure",
+                ) {
+                    self.errors.push(error);
+                    return;
+                }
                 let mut captures = captures.clone();
                 if !declaration.is_static
                     && self.current_class.is_some()
