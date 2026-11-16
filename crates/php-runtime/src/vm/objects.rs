@@ -2044,6 +2044,28 @@ pub(super) fn execute_instruction(
                 *program_counter = *target;
             }
         }
+        Op::CoalesceDynamicPropertyJump(target, access_scope) => {
+            let property = stack.pop().ok_or("Invalid bytecode stack")?.show();
+            let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
+            let current = read_property_for_coalesce(
+                &receiver,
+                &property,
+                access_scope.as_deref(),
+                functions,
+                classes,
+                static_properties,
+                global_variables,
+                output,
+                steps,
+            )?;
+            if matches!(current, Value::Null) {
+                stack.push(receiver);
+                stack.push(Value::String(property));
+            } else {
+                stack.push(current);
+                *program_counter = *target;
+            }
+        }
         Op::CoalesceAssignProperty(property, access_scope, in_constructor) => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?.dereference();
             let receiver = stack.pop().ok_or("Invalid bytecode stack")?;

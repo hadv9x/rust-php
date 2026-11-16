@@ -305,6 +305,8 @@ pub enum Op {
     CompoundAssignDynamicProperty(CompoundOperation, Option<String>, bool),
     /// Branch past a property coalescing assignment when its current value is non-null.
     CoalescePropertyJump(usize, String, Option<String>),
+    /// Branch past a computed-property `??=` when its current value is non-null.
+    CoalesceDynamicPropertyJump(usize, Option<String>),
     /// Assign the right-hand value through property visibility and magic hooks.
     CoalesceAssignProperty(String, Option<String>, bool),
     CoalescePropertyArrayJump(usize, String, usize, Option<String>),

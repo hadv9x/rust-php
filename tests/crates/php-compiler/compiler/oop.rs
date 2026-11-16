@@ -1053,6 +1053,30 @@ fn null_coalescing_handles_uninitialized_typed_properties_like_isset() {
 }
 
 #[test]
+fn null_coalescing_assignment_supports_computed_object_properties() {
+    let source = r#"<?php
+        class DynamicCoalesceAssignmentBox { public $value = null; }
+        function dynamicCoalesceName(&$calls) { $calls++; return 'value'; }
+        function dynamicCoalesceFallback(&$calls) { $calls++; return 4; }
+        $object = new DynamicCoalesceAssignmentBox();
+        $nameCalls = 0;
+        $fallbackCalls = 0;
+        $object->{dynamicCoalesceName($nameCalls)} ??= dynamicCoalesceFallback($fallbackCalls);
+        echo $object->value, ':', $nameCalls, ':', $fallbackCalls, ':';
+        $object->value = 12;
+        $computedName = 'value';
+        $object->{$computedName} ??= dynamicCoalesceFallback($fallbackCalls);
+        echo $object->value, ':', $nameCalls, ':', $fallbackCalls;
+        $referenceSource = 1;
+        $referenceTarget =& $referenceSource;
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "4:1:1:12:1:1"
+    );
+}
+
+#[test]
 fn inherited_asymmetric_property_visibility_is_widened_and_private_set_is_final() {
     let valid = r#"<?php
         class SetVisibilityParent { public protected(set) int $value = 1; }

@@ -1419,16 +1419,18 @@ impl Parser<'_> {
                         .get(self.cursor + 2)
                         .is_some_and(|token| token.kind == TokenKind::Lp);
                 let dynamic_property_reference = dynamic_property
-                    && (self.cursor + 4..self.tokens.len()).any(|index| {
-                        self.tokens[index].kind == TokenKind::Eq
-                            && self
-                                .tokens
-                                .get(index + 1)
-                                .is_some_and(|token| token.kind == TokenKind::Ampersand)
-                            && self.tokens.get(index - 1).is_some_and(|token| {
-                                matches!(token.kind, TokenKind::Rb | TokenKind::Rs)
-                            })
-                    });
+                    && (self.cursor + 4..self.tokens.len())
+                        .take_while(|index| self.tokens[*index].kind != TokenKind::Semi)
+                        .any(|index| {
+                            self.tokens[index].kind == TokenKind::Eq
+                                && self
+                                    .tokens
+                                    .get(index + 1)
+                                    .is_some_and(|token| token.kind == TokenKind::Ampersand)
+                                && self.tokens.get(index - 1).is_some_and(|token| {
+                                    matches!(token.kind, TokenKind::Rb | TokenKind::Rs)
+                                })
+                        });
                 if dynamic_property_reference {
                     self.expect(
                         TokenKind::ObjectArrow,

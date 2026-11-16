@@ -960,6 +960,11 @@ class MagicCoalesceVisibilityExample {
 }
 $magicCoalesce = new MagicCoalesceVisibilityExample();
 echo "magic-property-coalesce:", ($magicCoalesce->hidden ?? 'fallback'), "\n";
+class ComputedCoalesceAssignmentExample { public $value = null; }
+$computedCoalesceAssignment = new ComputedCoalesceAssignmentExample();
+$computedCoalesceName = 'value';
+$computedCoalesceAssignment->{$computedCoalesceName} ??= 5;
+echo "computed-property-coalesce-assign:", $computedCoalesceAssignment->value, "\n";
 $anonymousReflectionExample = new class {};
 echo "anonymous-reflection:", (new ReflectionClass($anonymousReflectionExample))->isAnonymous() ? 'yes' : 'no', "\n";
 

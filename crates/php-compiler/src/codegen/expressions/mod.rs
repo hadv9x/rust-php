@@ -1340,6 +1340,26 @@ impl CodeGenerator<'_> {
                 operation,
                 value,
             } => {
+                if *operation == BinaryOp::Coalesce {
+                    self.expression(receiver);
+                    self.expression(property);
+                    let present_branch = self.instructions.len();
+                    self.instructions
+                        .push(Op::CoalesceDynamicPropertyJump(0, self.current_class.clone()));
+                    self.expression(value);
+                    self.instructions.push(Op::SetDynamicProperty(
+                        self.current_class.clone(),
+                        self.current_method
+                            .as_deref()
+                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    ));
+                    let end = self.instructions.len();
+                    self.instructions[present_branch] = Op::CoalesceDynamicPropertyJump(
+                        end,
+                        self.current_class.clone(),
+                    );
+                    return;
+                }
                 let operation = match operation {
                     php_syntax::BinaryOp::Add => php_runtime::bytecode::CompoundOperation::Add,
                     php_syntax::BinaryOp::Subtract => {
