@@ -42,6 +42,7 @@ pub(crate) fn is_supported(name: &str) -> bool {
             | "pi"
             | "max"
             | "min"
+            | "clamp"
             | "base_convert"
             | "decbin"
             | "dechex"
@@ -89,6 +90,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "hypot",
         "max",
         "min",
+        "clamp",
         "base_convert",
         "decbin",
         "dechex",
@@ -146,6 +148,35 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
     }
     if function == "max" || function == "min" {
         return extremum(&function, args);
+    }
+    if function == "clamp" {
+        if args.len() != 3 {
+            return Err(format!(
+                "ArgumentCountError:clamp() expects exactly 3 arguments, {} given",
+                args.len()
+            ));
+        }
+        let value = args[0].clone();
+        let min = args[1].clone();
+        let max = args[2].clone();
+        if matches!(min.dereference(), Value::Number(number) if number.is_nan()) {
+            return Err("ValueError:clamp(): Argument #2 ($min) cannot be NAN".into());
+        }
+        if matches!(max.dereference(), Value::Number(number) if number.is_nan()) {
+            return Err("ValueError:clamp(): Argument #3 ($max) cannot be NAN".into());
+        }
+        if crate::array_builtins::regular_value_order(&min, &max)?.is_gt() {
+            return Err(
+                "ValueError:clamp(): Argument #2 ($min) must be smaller than or equal to argument #3 ($max)".into(),
+            );
+        }
+        if crate::array_builtins::regular_value_order(&value, &min)?.is_lt() {
+            return Ok(min);
+        }
+        if crate::array_builtins::regular_value_order(&value, &max)?.is_gt() {
+            return Ok(max);
+        }
+        return Ok(value);
     }
     let (min, max) = match function.as_str() {
         "abs" | "ceil" | "floor" | "sqrt" | "is_finite" | "is_infinite" | "is_nan" | "exp"

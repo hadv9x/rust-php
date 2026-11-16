@@ -271,6 +271,21 @@ fn common_math_builtins_support_named_arguments_and_function_checks() {
 }
 
 #[test]
+fn clamp_supports_php_86_named_arguments_callbacks_and_value_errors() {
+    let source = r#"<?php
+        echo clamp(value: -5, min: 0, max: 100), ':', clamp(55, 0, 100), ':', clamp(103, 0, 100), ':';
+        echo clamp('d', min: 'c', max: 'g'), ':', function_exists('clamp'), ':';
+        echo implode(',', array_map('clamp', [-2, 5, 12], [0, 0, 0], [10, 10, 10])), ':';
+        try { clamp(4, min: 8, max: 6); }
+        catch (ValueError $error) { echo get_class($error), ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "0:55:100:d:1:0,5,10:ValueError:clamp(): Argument #2 ($min) must be smaller than or equal to argument #3 ($max)"
+    );
+}
+
+#[test]
 fn common_string_escape_and_rot13_builtins_dispatch_by_name() {
     let source = r#"<?php
         echo addslashes(string: "a'b"), ':', stripslashes("a\\'b"), ':';

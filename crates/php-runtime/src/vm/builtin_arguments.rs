@@ -586,6 +586,7 @@ fn signature(name: &str) -> Option<Signature> {
         "hypot" => (&["num1", "num2"], &[], false),
         "pow" | "fpow" => (&["num", "exponent"], &[], false),
         "pi" => (&[], &[], false),
+        "clamp" => (&["value", "min", "max"], &[], false),
         "base_convert" => (&["num", "from_base", "to_base"], &[], false),
         "decbin" | "dechex" | "decoct" => (&["num"], &[], false),
         "bindec" => (&["binary_string"], &[], false),

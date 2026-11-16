@@ -83,6 +83,54 @@ fn common_math_functions_cover_integer_and_float_edges() {
 }
 
 #[test]
+fn clamp_returns_original_values_and_validates_bounds() {
+    assert!(matches!(
+        call("clamp", &[Value::Integer(-5), Value::Integer(0), Value::Integer(100)]).unwrap(),
+        Value::Integer(0)
+    ));
+    assert!(matches!(
+        call("clamp", &[Value::Integer(55), Value::Integer(0), Value::Integer(100)]).unwrap(),
+        Value::Integer(55)
+    ));
+    assert!(matches!(
+        call("clamp", &[Value::Integer(103), Value::Integer(0), Value::Integer(100)]).unwrap(),
+        Value::Integer(100)
+    ));
+    assert!(matches!(
+        call(
+            "clamp",
+            &[
+                Value::String("a".into()),
+                Value::String("c".into()),
+                Value::String("g".into())
+            ]
+        )
+        .unwrap(),
+        Value::String(value) if value == "c"
+    ));
+    assert!(matches!(
+        call("clamp", &[Value::Number(f64::NAN), Value::Integer(0), Value::Integer(1)])
+            .unwrap(),
+        Value::Number(value) if value.is_nan()
+    ));
+    assert_eq!(
+        call("clamp", &[Value::Integer(4), Value::Integer(8), Value::Integer(6)])
+            .unwrap_err(),
+        "ValueError:clamp(): Argument #2 ($min) must be smaller than or equal to argument #3 ($max)"
+    );
+    assert_eq!(
+        call("clamp", &[Value::Integer(4), Value::Number(f64::NAN), Value::Integer(6)])
+            .unwrap_err(),
+        "ValueError:clamp(): Argument #2 ($min) cannot be NAN"
+    );
+    assert_eq!(
+        call("clamp", &[Value::Integer(4), Value::Integer(1), Value::Number(f64::NAN)])
+            .unwrap_err(),
+        "ValueError:clamp(): Argument #3 ($max) cannot be NAN"
+    );
+}
+
+#[test]
 fn base_convert_handles_case_sign_and_supported_base_limits() {
     assert_eq!(
         call(

@@ -2148,7 +2148,7 @@ pub(super) fn execute_instruction(
                     | "log10" | "log1p" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
                     | "atan2" | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
                     | "deg2rad" | "rad2deg" | "hypot" | "pow" | "fpow" | "pi" | "max" | "min"
-                    | "base_convert" | "decbin" | "dechex" | "decoct" | "bindec" | "hexdec"
+                    | "clamp" | "base_convert" | "decbin" | "dechex" | "decoct" | "bindec" | "hexdec"
                     | "octdec" => {
                         stack.push(crate::math_builtins::call(fallback_name, &arguments)?);
                     }
