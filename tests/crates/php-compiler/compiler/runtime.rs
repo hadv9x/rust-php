@@ -36,6 +36,24 @@ fn phpversion_matches_php_version_and_supports_core_extension_queries() {
 }
 
 #[test]
+fn get_loaded_extensions_lists_supported_php_modules_and_supports_zend_filter() {
+    let source = r#"<?php
+        $extensions = get_loaded_extensions();
+        $mapped = array_map('get_loaded_extensions', [true, false]);
+        echo implode(',', $extensions), ':', count(get_loaded_extensions(zend_extensions: true)), ':';
+        echo extension_loaded('pdo'), ':', in_array('PDO', $extensions), ':';
+        echo count($mapped[0]), ':', count($mapped[1]), ':';
+        echo function_exists('get_loaded_extensions'), ':';
+        try { get_loaded_extensions(false, true); }
+        catch (ArgumentCountError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "Core,date,filter,hash,json,pcre,PDO,standard:0:1:1:0:8:1:ArgumentCountError"
+    );
+}
+
+#[test]
 fn getmypid_rejects_arguments() {
     let error = compile_source("<?php getmypid(1);")
         .unwrap()

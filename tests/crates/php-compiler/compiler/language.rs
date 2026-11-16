@@ -122,6 +122,29 @@ fn compile_file_resolves_magic_file_constants_in_class_defaults() {
 }
 
 #[test]
+fn compile_file_resolves_magic_directory_constants_in_return_expressions() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_magic_return_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php namespace Example; function source_directory(): string { return __DIR__; } echo source_directory();",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory.clone()).unwrap();
+    assert_eq!(output, directory.display().to_string());
+}
+
+#[test]
 fn compile_file_reflection_names_anonymous_classes_with_the_defining_path() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(

@@ -2760,6 +2760,16 @@ fn object_property_array_append_can_bind_another_property_array_element() {
 }
 
 #[test]
+fn user_stream_filter_can_extend_the_builtin_base_class() {
+    let source = r#"<?php
+        class TestUserFilter extends php_user_filter {}
+        echo class_exists('php_user_filter') ? 'base' : 'missing', "\n";
+    "#;
+    let program = compile_source(source).unwrap();
+    assert_eq!(program.execute().unwrap(), "base\n");
+}
+
+#[test]
 fn property_defaults_accept_true_and_false_literal_types() {
     let source = r#"<?php class FalseDefault { public false $disabled = false; public true $enabled = true; } echo (new FalseDefault())->disabled ? 'yes' : 'no';"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "no");

@@ -2256,6 +2256,9 @@ pub(super) fn execute_instruction(
                     "extension_loaded" => {
                         stack.push(extension_loaded_builtin(&arguments)?);
                     }
+                    "get_loaded_extensions" => {
+                        stack.push(get_loaded_extensions_builtin(&arguments)?);
+                    }
                     "phpversion" => {
                         stack.push(phpversion_builtin(&arguments)?);
                     }
@@ -2516,7 +2519,8 @@ pub(super) fn execute_instruction(
                         let key = name.trim_start_matches('\\').to_ascii_lowercase();
                         let built_in_class = matches!(
                             key.as_str(),
-                            "generator"
+                            "php_user_filter"
+                                | "generator"
                                 | "arrayobject"
                                 | "stdclass"
                                 | "sessionhandler"
@@ -13791,6 +13795,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "var_dump"
                 | "var_export"
                 | "function_exists"
+                | "get_loaded_extensions"
                 | "phpversion"
                 | "gc_collect_cycles"
                 | "php_sapi_name"
@@ -14009,10 +14014,37 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
 }
 
 fn extension_is_loaded(name: &str) -> bool {
-    matches!(
-        name,
-        "core" | "date" | "filter" | "hash" | "json" | "pcre" | "pdo" | "standard"
-    )
+    LOADED_PHP_EXTENSIONS
+        .iter()
+        .any(|extension| extension.eq_ignore_ascii_case(name))
+}
+
+const LOADED_PHP_EXTENSIONS: &[&str] = &[
+    "Core", "date", "filter", "hash", "json", "pcre", "PDO", "standard",
+];
+
+fn get_loaded_extensions_builtin(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() > 1 {
+        return Err(format!(
+            "ArgumentCountError:get_loaded_extensions() expects at most 1 argument, {} given",
+            arguments.len()
+        ));
+    }
+    if arguments.first().is_some_and(Value::truthy) {
+        return Ok(Value::Array(PhpArray::new()));
+    }
+    Ok(Value::Array(PhpArray::from_entries(
+        LOADED_PHP_EXTENSIONS
+            .iter()
+            .enumerate()
+            .map(|(index, extension)| {
+                (
+                    ArrayKey::Integer(index as i64),
+                    Value::String((*extension).into()),
+                )
+            })
+            .collect(),
+    )))
 }
 
 fn extension_loaded_builtin(arguments: &[Value]) -> Result<Value, String> {
@@ -14419,7 +14451,8 @@ pub(super) fn is_builtin_class_for_autoload(name: &str) -> bool {
     crate::exception_builtins::is_class(name)
         || matches!(
             name,
-            "generator"
+            "php_user_filter"
+                | "generator"
                 | "stdclass"
                 | "pdo"
                 | "pdostatement"
@@ -16623,6 +16656,9 @@ pub(super) fn invoke_callable(
     }
     if normalized_name == "extension_loaded" {
         return extension_loaded_builtin(&arguments);
+    }
+    if normalized_name == "get_loaded_extensions" {
+        return get_loaded_extensions_builtin(&arguments);
     }
     if normalized_name == "phpversion" {
         return phpversion_builtin(&arguments);

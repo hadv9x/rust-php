@@ -1113,6 +1113,7 @@ fn expand_statement(
             output.push(Stmt::IncludeReturn);
         }
         Stmt::Return(Some(value)) => {
+            resolve_magic_constants(value, current_file);
             *value = expand_include_expression(
                 std::mem::replace(value, Expr::Null),
                 current_file,

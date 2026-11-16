@@ -666,6 +666,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         }
     }
     let builtin_classes = [
+        ("php_user_filter", None),
         ("arrayobject", None),
         ("stdclass", None),
         ("sessionhandler", None),
@@ -943,6 +944,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
     }
     for (name, parent) in builtin_classes {
         let canonical_name = match name {
+            "php_user_filter" => "php_user_filter",
             "arrayobject" => "ArrayObject",
             "stdclass" => "stdClass",
             "sessionhandler" => "SessionHandler",
@@ -1022,7 +1024,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 is_interface: false,
                 is_trait: false,
                 unresolved_traits: Vec::new(),
-                is_abstract: name == "reflectionfunctionabstract",
+                is_abstract: matches!(name, "reflectionfunctionabstract" | "php_user_filter"),
                 is_final: false,
                 is_readonly: false,
                 is_enum: false,

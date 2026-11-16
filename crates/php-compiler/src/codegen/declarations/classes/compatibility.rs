@@ -526,7 +526,8 @@ pub(super) fn collect_class_interfaces(
             collect_class_interfaces(parent, declarations, output)?;
         } else if !matches!(
             parent_name.to_ascii_lowercase().as_str(),
-            "exception"
+            "php_user_filter"
+                | "exception"
                 | "errorexception"
                 | "error"
                 | "typeerror"
