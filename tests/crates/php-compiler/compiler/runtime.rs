@@ -520,6 +520,61 @@ fn scandir_supports_php_sort_orders_named_arguments_and_callback_dispatch() {
 }
 
 #[test]
+fn glob_matches_wildcards_braces_and_php_flags() {
+    static NEXT_GLOB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    let directory = std::env::temp_dir().join(format!(
+        "php-rust-glob-{}-{}",
+        std::process::id(),
+        NEXT_GLOB.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(directory.join("assets")).unwrap();
+    std::fs::write(directory.join("a.php"), "").unwrap();
+    std::fs::write(directory.join("b.txt"), "").unwrap();
+    std::fs::write(directory.join("z.php"), "").unwrap();
+    std::fs::write(directory.join("literal*.dat"), "").unwrap();
+    std::fs::write(directory.join(".hidden.php"), "").unwrap();
+    std::fs::write(directory.join("assets/nested.php"), "").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/etc/passwd", directory.join("leak")).unwrap();
+    let directory = directory.to_string_lossy().into_owned();
+    let source = format!(
+        r#"<?php
+            $files = glob(pattern: '{directory}/*.{{php,txt}}', flags: GLOB_BRACE);
+            $directories = glob('{directory}/*', GLOB_ONLYDIR | GLOB_MARK);
+            $literal = glob(pattern: '{directory}/missing*.php', flags: GLOB_NOCHECK);
+            $nested = glob('{directory}/a*/*.php');
+            $range = glob('{directory}/[a-z].php');
+            $nestedBraces = glob('{directory}/{{a,{{b,z}}}}.{{php,txt}}', GLOB_BRACE);
+            $escaped = glob('{directory}/literal\\*.dat');
+            $empty = glob('{directory}/missing*.php');
+            $all = glob('{directory}/*');
+            $callback = array_map('glob', ['{directory}/*.php'])[0];
+            echo count($files), ':', implode(',', array_map('basename', $files)), ':';
+            echo count($directories), ':', basename($directories[0]), ':',
+                 $literal[0] === '{directory}/missing*.php', ':';
+            echo count($nested), ':', count($range), ':', count($nestedBraces), ':';
+            echo basename($escaped[0]), ':', count($empty), ':', count($callback), ':';
+            echo array_search('leak', array_map('basename', $all)) === false, ':';
+            echo function_exists('glob'), ':', GLOB_AVAILABLE_FLAGS;
+        "#
+    );
+    let mut globals = std::collections::HashMap::new();
+    globals.insert(
+        "\0filesystem_root".into(),
+        php_runtime::Value::String(directory.clone()),
+    );
+    let result = compile_source(&source)
+        .unwrap()
+        .execute_with_globals(globals)
+        .unwrap();
+    assert_eq!(
+        result.output,
+        "3:a.php,b.txt,z.php:1:assets:1:1:2:3:literal*.dat:0:2:1:1:1367"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn scandir_failure_returns_false_and_emits_source_located_warning() {
     let source = "<?php\nerror_reporting(E_WARNING);\n$entries = scandir(directory: 'missing-scan-directory');\necho $entries === false;";
     let result = compile_source(source)

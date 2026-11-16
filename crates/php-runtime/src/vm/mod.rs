@@ -654,10 +654,14 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "PGSQL_ATTR_DISABLE_PREPARES" => return Some(Value::Integer(1000)),
         "PGSQL_STATUS_STRING" => return Some(Value::Integer(1)),
         "LOCK_NB" => return Some(Value::Integer(4)),
+        "GLOB_ERR" => return Some(Value::Integer(1)),
+        "GLOB_MARK" => return Some(Value::Integer(2)),
         "GLOB_NOSORT" => return Some(Value::Integer(4)),
+        "GLOB_NOCHECK" => return Some(Value::Integer(16)),
         "GLOB_NOESCAPE" => return Some(Value::Integer(64)),
         "GLOB_ONLYDIR" => return Some(Value::Integer(256)),
         "GLOB_BRACE" => return Some(Value::Integer(1024)),
+        "GLOB_AVAILABLE_FLAGS" => return Some(Value::Integer(1367)),
         // Stable reserved IDs for the partial tokenizer-constant surface. PHP
         // explicitly warns that parser token numbers vary across versions.
         "T_COMMENT" => return Some(Value::Integer(10000)),

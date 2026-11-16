@@ -3319,6 +3319,9 @@ pub(super) fn execute_instruction(
                     "scandir" => {
                         stack.push(scandir_builtin(&arguments, global_variables)?);
                     }
+                    "glob" => {
+                        stack.push(glob_builtin(&arguments, global_variables)?);
+                    }
                     "opendir" => stack.push(opendir_builtin(&arguments, global_variables)?),
                     "readdir" => stack.push(readdir_builtin(&arguments, global_variables)?),
                     "closedir" => stack.push(closedir_builtin(&arguments, global_variables)?),
@@ -11237,6 +11240,490 @@ fn scandir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result
     ))
 }
 
+fn glob_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
+    if arguments.is_empty() || arguments.len() > 2 {
+        return Err(format!(
+            "ArgumentCountError:glob() expects 1 or 2 arguments, {} given",
+            arguments.len()
+        ));
+    }
+    let pattern = arguments[0].show();
+    let flags = arguments.get(1).map_or(0, |value| value.number() as i64);
+    const GLOB_ERR: i64 = 1;
+    const GLOB_MARK: i64 = 2;
+    const GLOB_NOSORT: i64 = 4;
+    const GLOB_NOCHECK: i64 = 16;
+    const GLOB_NOESCAPE: i64 = 64;
+    const GLOB_ONLYDIR: i64 = 256;
+    const GLOB_BRACE: i64 = 1024;
+    let supported_flags = GLOB_ERR
+        | GLOB_MARK
+        | GLOB_NOSORT
+        | GLOB_NOCHECK
+        | GLOB_NOESCAPE
+        | GLOB_ONLYDIR
+        | GLOB_BRACE;
+    if flags & !supported_flags != 0 {
+        return Err(
+            "ValueError:glob(): Argument #2 ($flags) must only contain valid flag bits".into(),
+        );
+    }
+    let noescape = flags & GLOB_NOESCAPE != 0;
+    let patterns = if flags & GLOB_BRACE != 0 {
+        expand_glob_braces(&pattern, noescape)?
+    } else {
+        vec![pattern.clone()]
+    };
+    let mut matches = Vec::new();
+    let mut read_error = false;
+    for pattern_variant in patterns {
+        let path = std::path::Path::new(&pattern_variant);
+        let components = if let Some(root) = globals.get("\0filesystem_root") {
+            let root = std::path::PathBuf::from(root.show())
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(root.show()));
+            if path.is_absolute() {
+                let Ok(relative) = path.strip_prefix(&root) else {
+                    continue;
+                };
+                (root.clone(), root.to_string_lossy().into_owned(), relative)
+            } else {
+                let current = std::env::current_dir().unwrap_or_default();
+                (current, String::new(), path)
+            }
+        } else if path.is_absolute() {
+            (
+                std::path::PathBuf::from("/"),
+                "/".into(),
+                path.strip_prefix("/").unwrap_or(path),
+            )
+        } else {
+            (std::env::current_dir().unwrap_or_default(), String::new(), path)
+        };
+        let (base_path, prefix, relative_pattern) = components;
+        let segments: Vec<String> = relative_pattern
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+                std::path::Component::CurDir => Some(".".into()),
+                std::path::Component::ParentDir => Some("..".into()),
+                _ => None,
+            })
+            .collect();
+        if segments.is_empty() {
+            continue;
+        }
+        let Some(base_path) = filesystem_path(globals, &base_path, false) else {
+            continue;
+        };
+        if glob_walk(
+            globals,
+            &segments,
+            0,
+            base_path,
+            prefix,
+            flags,
+            noescape,
+            &mut matches,
+            &mut read_error,
+        ) {
+            break;
+        }
+    }
+    if read_error {
+        globals.report_diagnostic(crate::RuntimeDiagnostic {
+            level: crate::DiagnosticLevel::Warning,
+            message: "glob(): failed to read a directory".into(),
+            source_file: None,
+            source_line: None,
+            output_offset: globals.output_offset,
+        });
+        return Ok(Value::Bool(false));
+    }
+    if matches.is_empty() && flags & GLOB_NOCHECK != 0 {
+        matches.push(pattern);
+    }
+    if flags & GLOB_NOSORT == 0 {
+        matches.sort();
+    }
+    Ok(Value::from_array_entries(
+        matches
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| (ArrayKey::Integer(index as i64), Value::String(item)))
+            .collect(),
+    ))
+}
+
+fn glob_walk(
+    globals: &GlobalVariables,
+    segments: &[String],
+    index: usize,
+    directory: PathBuf,
+    display_prefix: String,
+    flags: i64,
+    noescape: bool,
+    matches: &mut Vec<String>,
+    read_error: &mut bool,
+) -> bool {
+    const GLOB_ERR: i64 = 1;
+    const GLOB_MARK: i64 = 2;
+    const GLOB_ONLYDIR: i64 = 256;
+    let segment = &segments[index];
+    let final_segment = index + 1 == segments.len();
+    let has_meta = glob_has_meta(segment.as_bytes(), noescape);
+    if has_meta {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => {
+                if flags & GLOB_ERR != 0 {
+                    *read_error = true;
+                    return true;
+                }
+                return false;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    if flags & GLOB_ERR != 0 {
+                        *read_error = true;
+                        return true;
+                    }
+                    continue;
+                }
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if (name.starts_with('.') && !segment.starts_with('.'))
+                || !glob_pattern_matches(segment.as_bytes(), name.as_bytes(), noescape)
+            {
+                continue;
+            }
+            let Some(safe_path) = filesystem_path(globals, &entry.path(), false) else {
+                continue;
+            };
+            let is_directory = std::fs::metadata(&safe_path)
+                .is_ok_and(|metadata| metadata.is_dir());
+            let display = glob_join(&display_prefix, &name);
+            if final_segment {
+                if flags & GLOB_ONLYDIR != 0 && !is_directory {
+                    continue;
+                }
+                matches.push(glob_mark(display, is_directory, flags & GLOB_MARK != 0));
+            } else if is_directory
+                && glob_walk(
+                    globals,
+                    segments,
+                    index + 1,
+                    safe_path,
+                    display,
+                    flags,
+                    noescape,
+                    matches,
+                    read_error,
+                )
+            {
+                return true;
+            }
+        }
+    } else {
+        let literal_segment = glob_unescape_literal(segment.as_bytes(), noescape);
+        let candidate = directory.join(&literal_segment);
+        let Some(safe_path) = filesystem_path(globals, &candidate, false) else {
+            return false;
+        };
+        let is_directory = std::fs::metadata(&safe_path)
+            .is_ok_and(|metadata| metadata.is_dir());
+        let display = if literal_segment == "." {
+            if display_prefix.is_empty() {
+                "./".into()
+            } else {
+                display_prefix
+            }
+        } else {
+            glob_join(&display_prefix, &literal_segment)
+        };
+        if final_segment {
+            if flags & GLOB_ONLYDIR != 0 && !is_directory {
+                return false;
+            }
+            matches.push(glob_mark(display, is_directory, flags & GLOB_MARK != 0));
+        } else if is_directory {
+            return glob_walk(
+                globals,
+                segments,
+                index + 1,
+                safe_path,
+                display,
+                flags,
+                noescape,
+                matches,
+                read_error,
+            );
+        }
+    }
+    false
+}
+
+fn glob_join(prefix: &str, part: &str) -> String {
+    let separator = std::path::MAIN_SEPARATOR;
+    if prefix.is_empty() {
+        part.to_string()
+    } else if prefix.ends_with('/') || prefix.ends_with('\\') {
+        format!("{prefix}{part}")
+    } else {
+        format!("{prefix}{separator}{part}")
+    }
+}
+
+fn glob_mark(path: String, is_directory: bool, mark: bool) -> String {
+    let separator = std::path::MAIN_SEPARATOR;
+    if mark
+        && is_directory
+        && !path.ends_with('/')
+        && !path.ends_with('\\')
+    {
+        format!("{path}{separator}")
+    } else {
+        path
+    }
+}
+
+fn glob_has_meta(pattern: &[u8], noescape: bool) -> bool {
+    let mut escaped = false;
+    for byte in pattern {
+        if escaped {
+            escaped = false;
+        } else if *byte == b'\\' && !noescape {
+            escaped = true;
+        } else if matches!(*byte, b'*' | b'?' | b'[') {
+            return true;
+        }
+    }
+    false
+}
+
+fn glob_unescape_literal(pattern: &[u8], noescape: bool) -> String {
+    if noescape {
+        return String::from_utf8_lossy(pattern).into_owned();
+    }
+    let mut bytes = Vec::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < pattern.len() {
+        if pattern[index] == b'\\' && index + 1 < pattern.len() {
+            index += 1;
+        }
+        bytes.push(pattern[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[derive(Clone, Debug)]
+enum GlobToken {
+    Literal(u8),
+    AnyOne,
+    AnyMany,
+    Class { negate: bool, ranges: Vec<(u8, u8)> },
+}
+
+fn glob_pattern_matches(pattern: &[u8], value: &[u8], noescape: bool) -> bool {
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < pattern.len() {
+        match pattern[index] {
+            b'*' => {
+                if !matches!(tokens.last(), Some(GlobToken::AnyMany)) {
+                    tokens.push(GlobToken::AnyMany);
+                }
+                index += 1;
+            }
+            b'?' => {
+                tokens.push(GlobToken::AnyOne);
+                index += 1;
+            }
+            b'\\' if !noescape && index + 1 < pattern.len() => {
+                tokens.push(GlobToken::Literal(pattern[index + 1]));
+                index += 2;
+            }
+            b'[' => {
+                let start = index + 1;
+                let mut end = start;
+                while end < pattern.len() && pattern[end] != b']' {
+                    end += 1;
+                }
+                if end == pattern.len() || end == start {
+                    tokens.push(GlobToken::Literal(b'['));
+                    index += 1;
+                    continue;
+                }
+                let mut cursor = start;
+                let negate = matches!(pattern.get(cursor), Some(b'!' | b'^'));
+                if negate {
+                    cursor += 1;
+                }
+                let mut ranges = Vec::new();
+                while cursor < end {
+                    let first = pattern[cursor];
+                    if cursor + 2 < end && pattern[cursor + 1] == b'-' {
+                        let last = pattern[cursor + 2];
+                        ranges.push((first.min(last), first.max(last)));
+                        cursor += 3;
+                    } else {
+                        ranges.push((first, first));
+                        cursor += 1;
+                    }
+                }
+                tokens.push(GlobToken::Class { negate, ranges });
+                index = end + 1;
+            }
+            byte => {
+                tokens.push(GlobToken::Literal(byte));
+                index += 1;
+            }
+        }
+    }
+    let mut current = vec![false; value.len() + 1];
+    current[0] = true;
+    for token in tokens {
+        let mut next = vec![false; value.len() + 1];
+        match token {
+            GlobToken::AnyMany => {
+                next[0] = current[0];
+                for offset in 1..=value.len() {
+                    next[offset] = current[offset] || next[offset - 1];
+                }
+            }
+            token => {
+                for offset in 0..value.len() {
+                    if !current[offset] {
+                        continue;
+                    }
+                    let matches = match &token {
+                        GlobToken::Literal(byte) => value[offset] == *byte,
+                        GlobToken::AnyOne => true,
+                        GlobToken::Class { negate, ranges } => {
+                            let found = ranges
+                                .iter()
+                                .any(|(start, end)| (*start..=*end).contains(&value[offset]));
+                            found != *negate
+                        }
+                        GlobToken::AnyMany => unreachable!(),
+                    };
+                    if matches {
+                        next[offset + 1] = true;
+                    }
+                }
+            }
+        }
+        current = next;
+    }
+    current[value.len()]
+}
+
+fn expand_glob_braces(pattern: &str, noescape: bool) -> Result<Vec<String>, String> {
+    expand_glob_braces_inner(pattern, noescape, 0)
+}
+
+fn expand_glob_braces_inner(
+    pattern: &str,
+    noescape: bool,
+    depth: usize,
+) -> Result<Vec<String>, String> {
+    if depth >= 64 {
+        return Err("ValueError:glob(): brace expansion nesting limit exceeded".into());
+    }
+    let bytes = pattern.as_bytes();
+    let mut open = None;
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'\\' && !noescape {
+            cursor += 2;
+        } else if bytes[cursor] == b'{' {
+            open = Some(cursor);
+            break;
+        } else {
+            cursor += 1;
+        }
+    }
+    let Some(open) = open else {
+        return Ok(vec![pattern.to_string()]);
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().enumerate().skip(open) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if *byte == b'\\' && !noescape {
+            escaped = true;
+            continue;
+        }
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return Ok(vec![pattern.to_string()]);
+    };
+    let inner = &pattern[open + 1..close];
+    let mut alternatives = Vec::new();
+    let mut start = 0;
+    let mut nested = 0usize;
+    let mut escaped = false;
+    for (index, byte) in inner.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' && !noescape {
+            escaped = true;
+            continue;
+        }
+        match byte {
+            b'{' => nested += 1,
+            b'}' => nested = nested.saturating_sub(1),
+            b',' if nested == 0 => {
+                alternatives.push(&inner[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    alternatives.push(&inner[start..]);
+    if alternatives.len() < 2 {
+        return Ok(vec![pattern.to_string()]);
+    }
+    if alternatives.len() > 4096 {
+        return Err("ValueError:glob(): too many brace alternatives".into());
+    }
+    let mut result = Vec::new();
+    for alternative in alternatives {
+        let expanded = format!(
+            "{}{}{}",
+            &pattern[..open],
+            alternative,
+            &pattern[close + 1..]
+        );
+        result.extend(expand_glob_braces_inner(&expanded, noescape, depth + 1)?);
+        if result.len() > 4096 {
+            return Err("ValueError:glob(): too many brace expansions".into());
+        }
+    }
+    Ok(result)
+}
+
 fn opendir_builtin(arguments: &[Value], globals: &mut GlobalVariables) -> Result<Value, String> {
     if arguments.is_empty() {
         return Err("ArgumentCountError:opendir() expects at least 1 argument, 0 given".into());
@@ -13368,6 +13855,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "stat"
                 | "lstat"
                 | "scandir"
+                | "glob"
                 | "opendir"
                 | "readdir"
                 | "closedir"
@@ -16175,6 +16663,9 @@ pub(super) fn invoke_callable(
     }
     if normalized_name == "scandir" {
         return scandir_builtin(&arguments, global_variables);
+    }
+    if normalized_name == "glob" {
+        return glob_builtin(&arguments, global_variables);
     }
     if normalized_name == "opendir" {
         return opendir_builtin(&arguments, global_variables);

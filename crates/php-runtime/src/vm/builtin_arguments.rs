@@ -693,6 +693,7 @@ fn signature(name: &str) -> Option<Signature> {
             &[(1, Num(0.0)), (2, N)],
             false,
         ),
+        "glob" => (&["pattern", "flags"], &[(1, Num(0.0))], false),
         "opendir" => (&["directory", "context"], &[(1, N)], false),
         "readdir" | "closedir" | "rewinddir" => (&["dir_handle"], &[], false),
         "file_put_contents" => (
@@ -1439,6 +1440,7 @@ mod tests {
             "getcwd",
             "get_include_path",
             "getdate",
+            "glob",
             "getopt",
             "getenv",
             "gettimeofday",
