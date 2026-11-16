@@ -1212,6 +1212,26 @@ fn mt_srand_reproduces_php_sequence_and_rand_shares_state() {
 }
 
 #[test]
+fn getopt_parses_short_long_repeated_and_optional_options_with_rest_index() {
+    let source = r#"<?php
+        $argv = ['tool.php', '-a', '-b', 'value', '-fextra', '--color=red', '--quiet', '--tag=x', '--tag=y', 'input.php', '--ignored'];
+        $rest = -1;
+        $options = getopt('ab:f::', ['color:', 'quiet', 'tag:'], $rest);
+        echo ($options['a'] === false), ':', $options['b'], ':', $options['f'], ':';
+        echo $options['color'], ':', ($options['quiet'] === false), ':', count($options['tag']), ':', $options['tag'][1], ':', $rest, ':';
+        echo function_exists('getopt'), ':';
+        $argv = ['tool.php', '--verbose', '--color', 'blue', '--', 'tail', '--ignored'];
+        $rest = 0;
+        $options = getopt(short_options: '', long_options: ['verbose', 'color:'], rest_index: $rest);
+        echo ($options['verbose'] === false), ':', $options['color'], ':', $rest, "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:value:extra:red:1:2:y:9:1:1:blue:5\n"
+    );
+}
+
+#[test]
 fn integer_and_float_literals_keep_distinct_runtime_types_through_arithmetic() {
     let source = r#"<?php
         $integer = 1;

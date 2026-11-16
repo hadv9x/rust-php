@@ -1824,6 +1824,12 @@ pub(super) fn execute_instruction(
                             .iter()
                             .flatten()
                             .any(|name| name.eq_ignore_ascii_case("percent")));
+                let getopt_rest_index_provided = fallback_name.eq_ignore_ascii_case("getopt")
+                    && (arguments.len() >= 3
+                        || argument_names
+                            .iter()
+                            .flatten()
+                            .any(|name| name.eq_ignore_ascii_case("rest_index")));
                 if fallback_name.eq_ignore_ascii_case("strtok")
                     && arguments.len() == 1
                     && !argument_names.iter().any(Option::is_some)
@@ -1876,6 +1882,75 @@ pub(super) fn execute_instruction(
                         )?;
                     }
                     stack.push(matches);
+                    return Ok(true);
+                }
+                if fallback_name.eq_ignore_ascii_case("getopt") {
+                    if arguments.is_empty() {
+                        return Err(
+                            "ArgumentCountError:getopt() expects at least 1 argument, 0 given"
+                                .into(),
+                        );
+                    }
+                    coerce_stringable_builtin_args(
+                        "getopt",
+                        &mut arguments,
+                        &[0],
+                        functions,
+                        classes,
+                        static_properties,
+                        global_variables,
+                        output,
+                        steps,
+                    )?;
+                    let Some(Value::Array(argv)) =
+                        global_variables.get("argv").map(Value::dereference)
+                    else {
+                        stack.push(Value::Bool(false));
+                        return Ok(true);
+                    };
+                    let short_options = arguments[0].show();
+                    let long_options = match arguments.get(1).map(Value::dereference) {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(Value::Array(options)) => options
+                            .entries
+                            .iter()
+                            .map(|(_, option)| match option.dereference() {
+                                Value::String(option) => Ok(option),
+                                value => Err(format!(
+                                    "TypeError:getopt(): Argument #2 ($long_options) must contain only strings, {} given",
+                                    value.type_name()
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        Some(value) => {
+                            return Err(format!(
+                                "TypeError:getopt(): Argument #2 ($long_options) must be of type array, {} given",
+                                value.type_name()
+                            ));
+                        }
+                    };
+                    let argv_values = argv
+                        .entries
+                        .iter()
+                        .skip(1)
+                        .map(|(_, value)| value.dereference().show())
+                        .collect::<Vec<_>>();
+                    let (options, rest_index) =
+                        parse_cli_options(&short_options, &long_options, &argv_values);
+                    if getopt_rest_index_provided {
+                        let target = by_reference.get(2).and_then(Option::as_ref).ok_or(
+                            "TypeError:getopt(): Argument #3 ($rest_index) cannot be passed by reference",
+                        )?;
+                        write_reference_argument(
+                            target,
+                            Value::Integer(rest_index),
+                            variables,
+                            bindings,
+                            global_variables,
+                            global_scope,
+                        )?;
+                    }
+                    stack.push(Value::from_array_entries(options));
                     return Ok(true);
                 }
                 if csv_escape_omitted {
@@ -13236,6 +13311,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "function_exists"
                 | "gc_collect_cycles"
                 | "php_sapi_name"
+                | "getopt"
                 | "getmypid"
                 | "error_reporting"
                 | "ini_get"
@@ -15070,6 +15146,153 @@ fn invoke_array_callback(
         ),
         _ => Err("Value is not callable".into()),
     }
+}
+
+#[derive(Clone, Copy)]
+enum GetoptValueMode {
+    None,
+    Required,
+    Optional,
+}
+
+fn parse_cli_options(
+    short_options: &str,
+    long_options: &[String],
+    arguments: &[String],
+) -> (Vec<(ArrayKey, Value)>, i64) {
+    let mut short_modes = HashMap::new();
+    let short_bytes = short_options.as_bytes();
+    let mut cursor = 0;
+    while cursor < short_bytes.len() {
+        let option = short_bytes[cursor] as char;
+        cursor += 1;
+        if option == ':' {
+            continue;
+        }
+        let mode = if short_bytes.get(cursor) == Some(&b':') {
+            cursor += 1;
+            if short_bytes.get(cursor) == Some(&b':') {
+                cursor += 1;
+                GetoptValueMode::Optional
+            } else {
+                GetoptValueMode::Required
+            }
+        } else {
+            GetoptValueMode::None
+        };
+        short_modes.insert(option, mode);
+    }
+
+    let mut long_modes = HashMap::new();
+    for option in long_options {
+        let (name, mode) = if let Some(name) = option.strip_suffix("::") {
+            (name, GetoptValueMode::Optional)
+        } else if let Some(name) = option.strip_suffix(':') {
+            (name, GetoptValueMode::Required)
+        } else {
+            (option.as_str(), GetoptValueMode::None)
+        };
+        long_modes.insert(name.to_string(), mode);
+    }
+
+    fn append(options: &mut Vec<(ArrayKey, Value)>, name: String, value: Value) {
+        let key = ArrayKey::String(name);
+        if let Some((_, current)) = options.iter_mut().find(|(candidate, _)| *candidate == key) {
+            let replacement = match current.dereference() {
+                Value::Array(mut array) => {
+                    array
+                        .entries
+                        .push((ArrayKey::Integer(array.entries.len() as i64), value));
+                    Value::Array(array)
+                }
+                previous => Value::from_array_entries(vec![
+                    (ArrayKey::Integer(0), previous),
+                    (ArrayKey::Integer(1), value),
+                ]),
+            };
+            *current = replacement;
+        } else {
+            options.push((key, value));
+        }
+    }
+
+    let mut parsed = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        if argument == "--" {
+            index += 1;
+            break;
+        }
+        if !argument.starts_with('-') || argument == "-" {
+            break;
+        }
+        if let Some(long) = argument.strip_prefix("--") {
+            let (name, inline_value) = long
+                .split_once('=')
+                .map_or((long, None), |(name, value)| (name, Some(value)));
+            if let Some(mode) = long_modes.get(name).copied() {
+                let value = match mode {
+                    GetoptValueMode::None => Some(Value::Bool(false)),
+                    GetoptValueMode::Optional => Some(
+                        inline_value
+                            .map(|value| Value::String(value.to_string()))
+                            .unwrap_or(Value::Bool(false)),
+                    ),
+                    GetoptValueMode::Required => inline_value
+                        .map(|value| Value::String(value.to_string()))
+                        .or_else(|| {
+                            index += 1;
+                            arguments.get(index).cloned().map(Value::String)
+                        })
+                        .or(Some(Value::Bool(false))),
+                };
+                if let Some(value) = value {
+                    append(&mut parsed, name.to_string(), value);
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        let short_group = &argument[1..];
+        let mut offset = 0;
+        while offset < short_group.len() {
+            let option = short_group.as_bytes()[offset] as char;
+            offset += 1;
+            let Some(mode) = short_modes.get(&option).copied() else {
+                continue;
+            };
+            let value = match mode {
+                GetoptValueMode::None => Some(Value::Bool(false)),
+                GetoptValueMode::Optional if offset < short_group.len() => {
+                    Some(Value::String(short_group[offset..].to_string()))
+                }
+                GetoptValueMode::Optional => Some(Value::Bool(false)),
+                GetoptValueMode::Required if offset < short_group.len() => {
+                    Some(Value::String(short_group[offset..].to_string()))
+                }
+                GetoptValueMode::Required => {
+                    index += 1;
+                    Some(
+                        arguments
+                            .get(index)
+                            .cloned()
+                            .map(Value::String)
+                            .unwrap_or(Value::Bool(false)),
+                    )
+                }
+            };
+            if let Some(value) = value {
+                append(&mut parsed, option.to_string(), value);
+            }
+            if !matches!(mode, GetoptValueMode::None) {
+                break;
+            }
+        }
+        index += 1;
+    }
+    (parsed, index.min(arguments.len()) as i64 + 1)
 }
 
 fn strtok_with_state(

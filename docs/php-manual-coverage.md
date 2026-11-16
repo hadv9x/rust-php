@@ -75,7 +75,7 @@ Even where an extension family exists (JSON, PDO, database drivers, sessions), i
 | Affecting PHP behaviour / runtime configuration | Selected `.ini` settings only; no full PHP configuration or error-reporting surface |
 | Audio, image processing, GUI | Absent |
 | Authentication, mail, search-engine integrations | Absent |
-| CLI | Project CLI and `$argc`/`$argv` exist; `getmypid()` reports the current process ID. PHP's full CLI option, stream and process contracts are absent |
+| CLI | Project CLI and `$argc`/`$argv` exist; `getmypid()` reports the current process ID; `getopt()` parses common short/long options and reports `rest_index`. PHP's full CLI option, stream and process contracts are absent |
 | Compression/archive | Absent |
 | Cryptography | Absent |
 | Database | PDO-like layer and PostgreSQL/MySQL/ODBC/MongoDB drivers exist; API and backend parity remains partial |
@@ -108,7 +108,7 @@ The manual also documents installation/configuration, php.ini directives, FPM, r
 | Remote files / wrappers | `php://input` has a narrow implementation; PHP's `file://`, `http(s)://`, `data://`, `php://filter`, compression, FTP and user-defined wrappers are absent. |
 | Connection handling | HTTP keep-alive and response serialization exist at server level; PHP connection state APIs and SAPI lifecycle behaviors are absent. |
 | Persistent DB connections | The configured shared pool is the current model; PHP PDO persistence attributes and per-process/request lifecycle are not equivalent to all PHP drivers. |
-| CLI | Script path, arguments and exit codes work for the project CLI; PHP's full CLI option set, interactive mode, stdin wrapper and PHP binary invocation contract are absent. |
+| CLI | Script path, arguments and exit codes work for the project CLI; `getopt()` supports short/long flags and values, repeated options, and `rest_index`. The full CLI option set, interactive mode, stdin wrapper and PHP binary invocation contract are absent. |
 | Garbage collection / DTrace | PHP cycle collection APIs, GC controls and DTrace probes are absent. |
 | Appendices / introspection lists | No parity audit exists for PHP's reserved-word list, parser tokens, resource types, filter list, socket transports, function aliases, type-comparison tables or full php.ini directive appendix. |
 
