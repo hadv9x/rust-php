@@ -72,7 +72,7 @@ Even where an extension family exists (JSON, PDO, database drivers, sessions), i
 
 | Official manual category | Project status |
 | --- | --- |
-| Affecting PHP behaviour / runtime configuration | Selected `.ini` settings only; no full PHP configuration or error-reporting surface |
+| Affecting PHP behaviour / runtime configuration | Selected `.ini` settings and `phpversion()` for the runtime plus supported bundled extensions; no full PHP configuration or error-reporting surface |
 | Audio, image processing, GUI | Absent |
 | Authentication, mail, search-engine integrations | Absent |
 | CLI | Project CLI and `$argc`/`$argv` exist; `getmypid()` reports the current process ID; `getopt()` parses common short/long options and reports `rest_index`. PHP's full CLI option, stream and process contracts are absent |

@@ -2726,6 +2726,40 @@ fn object_property_nested_array_append_can_bind_a_reference() {
 }
 
 #[test]
+fn object_property_array_append_can_bind_a_variable_reference() {
+    let source = r#"<?php
+        class VariableAppendReferenceHost {
+            public array $items = [];
+            public function add(): string {
+                $value = 'before';
+                $this->items[] =& $value;
+                $value = 'after';
+                return $this->items[0];
+            }
+        }
+        echo (new VariableAppendReferenceHost())->add(), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "after\n");
+}
+
+#[test]
+fn object_property_array_append_can_bind_another_property_array_element() {
+    let source = r#"<?php
+        class PropertyArrayAppendReferenceHost {
+            public array $children = ['child'];
+            public array $directories = [];
+            public function add(): string {
+                $this->directories[] =& $this->children[0];
+                $this->children[0] = 'updated';
+                return $this->directories[0];
+            }
+        }
+        echo (new PropertyArrayAppendReferenceHost())->add(), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "updated\n");
+}
+
+#[test]
 fn property_defaults_accept_true_and_false_literal_types() {
     let source = r#"<?php class FalseDefault { public false $disabled = false; public true $enabled = true; } echo (new FalseDefault())->disabled ? 'yes' : 'no';"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "no");

@@ -2254,15 +2254,10 @@ pub(super) fn execute_instruction(
                         stack.push(Value::Bool(runtime_function_exists(&name, functions)));
                     }
                     "extension_loaded" => {
-                        let name = arguments
-                            .first()
-                            .ok_or("extension_loaded() expects exactly 1 argument")?
-                            .show()
-                            .to_ascii_lowercase();
-                        stack.push(Value::Bool(matches!(
-                            name.as_str(),
-                            "core" | "date" | "filter" | "hash" | "json" | "pcre" | "standard"
-                        )));
+                        stack.push(extension_loaded_builtin(&arguments)?);
+                    }
+                    "phpversion" => {
+                        stack.push(phpversion_builtin(&arguments)?);
                     }
                     "spl_autoload_register" => {
                         let callback = arguments
@@ -13796,6 +13791,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "var_dump"
                 | "var_export"
                 | "function_exists"
+                | "phpversion"
                 | "gc_collect_cycles"
                 | "php_sapi_name"
                 | "getopt"
@@ -14010,6 +14006,47 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "is_numeric"
         )
         || super::builtin_arguments::is_vm_function(&name)
+}
+
+fn extension_is_loaded(name: &str) -> bool {
+    matches!(
+        name,
+        "core" | "date" | "filter" | "hash" | "json" | "pcre" | "pdo" | "standard"
+    )
+}
+
+fn extension_loaded_builtin(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() != 1 {
+        return Err(format!(
+            "ArgumentCountError:extension_loaded() expects exactly 1 argument, {} given",
+            arguments.len()
+        ));
+    }
+    Ok(Value::Bool(extension_is_loaded(
+        &arguments[0].show().to_ascii_lowercase(),
+    )))
+}
+
+fn phpversion_builtin(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() > 1 {
+        return Err(format!(
+            "ArgumentCountError:phpversion() expects at most 1 argument, {} given",
+            arguments.len()
+        ));
+    }
+    let extension = arguments
+        .first()
+        .filter(|value| !matches!(value.dereference(), Value::Null));
+    let version = match extension {
+        None => Some(super::PHP_RUNTIME_VERSION),
+        Some(extension) if extension_is_loaded(&extension.show().to_ascii_lowercase()) => {
+            Some(super::PHP_RUNTIME_VERSION)
+        }
+        Some(_) => None,
+    };
+    Ok(version.map_or(Value::Bool(false), |version| {
+        Value::String(version.into())
+    }))
 }
 
 fn parse_ini_integer_prefix(value: &str) -> Option<i64> {
@@ -16583,6 +16620,12 @@ pub(super) fn invoke_callable(
             steps,
         )?;
         return Ok(result);
+    }
+    if normalized_name == "extension_loaded" {
+        return extension_loaded_builtin(&arguments);
+    }
+    if normalized_name == "phpversion" {
+        return phpversion_builtin(&arguments);
     }
     if normalized_name == "md5_file" {
         return md5_file_builtin(&arguments, global_variables);

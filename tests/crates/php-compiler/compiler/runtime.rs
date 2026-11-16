@@ -17,6 +17,25 @@ fn getmypid_returns_the_current_process_id_and_is_discoverable() {
 }
 
 #[test]
+fn phpversion_matches_php_version_and_supports_core_extension_queries() {
+    let source = r#"<?php
+        $versions = array_map('phpversion', [null, 'Core', 'json', 'not-an-extension']);
+        echo phpversion(), ':', PHP_VERSION, ':', phpversion(extension: 'core'), ':';
+        echo phpversion('missing-extension') === false, ':';
+        echo extension_loaded('PDO'), ':', phpversion('PDO'), ':';
+        echo $versions[0], ':', $versions[1], ':', $versions[2], ':';
+        echo $versions[3] === false, ':';
+        echo function_exists('phpversion'), ':';
+        try { phpversion('core', 'extra'); }
+        catch (ArgumentCountError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "8.4.0:8.4.0:8.4.0:1:1:8.4.0:8.4.0:8.4.0:8.4.0:1:1:ArgumentCountError"
+    );
+}
+
+#[test]
 fn getmypid_rejects_arguments() {
     let error = compile_source("<?php getmypid(1);")
         .unwrap()

@@ -471,25 +471,45 @@ impl CodeGenerator<'_> {
                 source,
             } => {
                 self.expression(receiver);
-                if let Expr::Property(source_receiver, source_property) = source {
-                    self.expression(source_receiver);
-                    self.instructions.push(Op::LoadPropertyReference(
-                        source_property.clone(),
-                        self.current_class.clone(),
-                    ));
-                    self.instructions.push(Op::BindPropertyAppendReference(
-                        property.clone(),
-                        self.current_class.clone(),
-                        self.current_method
-                            .as_deref()
-                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
-                    ));
+                if let Some((source_receiver, source_property, keys)) =
+                    property_reference_path(source)
+                {
+                    self.expression(&source_receiver);
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    if keys.is_empty() {
+                        self.instructions.push(Op::LoadPropertyReference(
+                            source_property,
+                            self.current_class.clone(),
+                        ));
+                    } else {
+                        self.instructions.push(Op::LoadPropertyArrayReference(
+                            source_property,
+                            keys.len(),
+                            self.current_class.clone(),
+                        ));
+                    }
+                } else if let Some((source_variable, keys)) = reference_path(source) {
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    self.instructions
+                        .push(Op::LoadReference(source_variable, keys.len()));
                 } else {
                     self.errors.push(
                         "Property array append reference requires a reference-returning property"
                             .into(),
                     );
+                    return;
                 }
+                self.instructions.push(Op::BindPropertyAppendReference(
+                    property.clone(),
+                    self.current_class.clone(),
+                    self.current_method
+                        .as_deref()
+                        .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                ));
             }
             Stmt::PropertyArrayReferenceAssign {
                 receiver,

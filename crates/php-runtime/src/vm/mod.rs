@@ -120,6 +120,7 @@ impl Drop for ExecutionLimitGuard {
 
 /// Static property storage shared by function calls during one program execution.
 pub(super) type StaticProperties = HashMap<(String, String), Value>;
+pub(super) const PHP_RUNTIME_VERSION: &str = "8.4.0";
 #[derive(Clone, Debug)]
 pub(super) enum VariableBinding {
     Global(String),
@@ -441,7 +442,7 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
     }
     match name {
         "PHP_VERSION_ID" => return Some(Value::Integer(80400)),
-        "PHP_VERSION" => return Some(Value::String("8.4.0".into())),
+        "PHP_VERSION" => return Some(Value::String(PHP_RUNTIME_VERSION.into())),
         "PHP_SAPI" => return Some(Value::String("cli".into())),
         "DIRECTORY_SEPARATOR" => {
             return Some(Value::String(std::path::MAIN_SEPARATOR.to_string()))
