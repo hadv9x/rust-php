@@ -33,6 +33,8 @@ pub(super) struct CodeGenerator<'a> {
     pub(super) variable_types: HashMap<String, String>,
     /// Whether a return expression must preserve an l-value reference cell.
     pub(super) returns_by_reference: bool,
+    /// Declared return type for compile-time return-only checks.
+    pub(super) return_type: Option<String>,
     /// Active loop/switch patch lists used to resolve nested break and continue levels.
     pub(super) control_stack: Vec<ControlContext>,
     /// Label destinations local to this compiled program, function, method, or closure.
@@ -126,6 +128,7 @@ pub(super) fn compile(program: &Program) -> Result<BytecodeProgram, String> {
         known_callables: HashMap::new(),
         variable_types: HashMap::new(),
         returns_by_reference: false,
+        return_type: None,
         control_stack: Vec::new(),
         labels: HashMap::new(),
         pending_gotos: Vec::new(),

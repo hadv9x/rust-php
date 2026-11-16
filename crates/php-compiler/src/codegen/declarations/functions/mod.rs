@@ -37,6 +37,7 @@ pub(super) fn compile(
                 &function.parameter_types,
             ),
             returns_by_reference: function.returns_by_reference,
+            return_type: function.return_type.clone(),
             control_stack: Vec::new(),
             labels: HashMap::new(),
             pending_gotos: Vec::new(),

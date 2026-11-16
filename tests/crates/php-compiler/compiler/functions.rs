@@ -1,6 +1,38 @@
 use php_compiler::compile_source;
 
 #[test]
+fn never_return_types_reject_return_statements_even_when_unreachable() {
+    for source in [
+        "<?php function stop(): never { return; }",
+        "<?php function stop(): never { if (false) { return 1; } throw new Exception(); }",
+        "<?php $stop = function (): never { return null; };",
+        "<?php class Stop { public function now(): never { return; } }",
+    ] {
+        let error = match compile_source(source) {
+            Err(error) => error,
+            Ok(_) => panic!("never-returning function accepted a return statement"),
+        };
+        assert!(error.contains("never-returning function must not return"), "{error}");
+    }
+}
+
+#[test]
+fn never_return_type_throws_type_error_on_implicit_fallthrough() {
+    let source = r#"<?php
+        function noExit(): never { echo 'body'; }
+        try { noExit(); } catch (TypeError $error) {
+            echo ':', get_class($error), ':', $error->getMessage();
+        }
+        function throws(): never { throw new RuntimeException('stop'); }
+        try { throws(); } catch (RuntimeException $error) { echo ':', $error->getMessage(); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "body:TypeError:noExit(): never-returning function must not implicitly return:stop"
+    );
+}
+
+#[test]
 fn unpack_expands_positional_named_and_reference_arguments() {
     let source = r#"<?php
         function collect($first, ...$rest) { echo $first, ':', $rest['label'], ':', $rest[0], "\n"; }

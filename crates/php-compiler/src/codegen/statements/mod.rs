@@ -1149,6 +1149,14 @@ impl CodeGenerator<'_> {
                 ));
             }
             Stmt::Return(value) => {
+                if self
+                    .return_type
+                    .as_deref()
+                    .is_some_and(|return_type| return_type.eq_ignore_ascii_case("never"))
+                {
+                    self.errors
+                        .push("CompileError:never-returning function must not return".into());
+                }
                 if let Some(value) = value {
                     if self.returns_by_reference {
                         if let Some((variable, keys)) = reference_path(value) {

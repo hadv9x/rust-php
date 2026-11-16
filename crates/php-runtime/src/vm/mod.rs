@@ -2086,6 +2086,21 @@ pub(super) fn validate_return_type_in_scope(
     let Some(type_name) = function.return_type.as_deref() else {
         return Ok(value);
     };
+    if type_name.trim().eq_ignore_ascii_case("never") {
+        let function_name = if function.display_name.is_empty() {
+            &function.name
+        } else {
+            &function.display_name
+        };
+        let qualified_name = function
+            .declaring_class
+            .as_deref()
+            .map(|class| format!("{class}::{function_name}"))
+            .unwrap_or_else(|| function_name.to_string());
+        return Err(format!(
+            "TypeError:{qualified_name}(): never-returning function must not implicitly return"
+        ));
+    }
     let value = if function.returns_by_reference {
         value
     } else if function.strict_types {

@@ -748,6 +748,7 @@ impl CodeGenerator<'_> {
                         &declaration.parameter_types,
                     ),
                     returns_by_reference: declaration.returns_by_reference,
+                    return_type: declaration.return_type.clone(),
                     control_stack: Vec::new(),
                     labels: std::collections::HashMap::new(),
                     pending_gotos: Vec::new(),
