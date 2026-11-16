@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn mt19937_matches_reference_seed_vector() {
+    let mut generator = Mt19937::seeded(5489, false);
+    assert_eq!(generator.next_u32(), 3_499_211_612);
+    assert_eq!(generator.next_u32(), 581_869_302);
+    assert_eq!(generator.next_u32(), 3_890_346_734);
+}
+
+#[test]
 fn common_math_functions_cover_integer_and_float_edges() {
     assert!(matches!(
         call("abs", &[Value::Integer(-7)]).unwrap(),

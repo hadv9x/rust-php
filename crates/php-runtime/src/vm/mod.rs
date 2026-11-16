@@ -159,6 +159,8 @@ pub(super) struct GlobalVariables {
     environment: HashMap<String, Option<String>>,
     /// Request-local PHP include_path override; None selects the platform default.
     include_path: Option<String>,
+    /// Explicitly seeded, request-local PHP Mersenne Twister state.
+    pub(super) mt19937: Option<crate::math_builtins::Mt19937>,
     diagnostics: Vec<crate::RuntimeDiagnostic>,
     output_offset: usize,
     last_error: Option<crate::RuntimeDiagnostic>,
@@ -449,6 +451,8 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "PHP_INT_MAX" => return Some(Value::Integer(i64::MAX)),
         "PHP_INT_MIN" => return Some(Value::Integer(i64::MIN)),
         "PHP_INT_SIZE" => return Some(Value::Integer(std::mem::size_of::<i64>() as i64)),
+        "MT_RAND_MT19937" => return Some(Value::Integer(0)),
+        "MT_RAND_PHP" => return Some(Value::Integer(1)),
         "PHP_QUERY_RFC1738" => return Some(Value::Integer(1)),
         "PHP_QUERY_RFC3986" => return Some(Value::Integer(2)),
         "PHP_OUTPUT_HANDLER_START" => return Some(Value::Integer(1)),

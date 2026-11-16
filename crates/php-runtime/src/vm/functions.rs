@@ -3430,6 +3430,44 @@ pub(super) fn execute_instruction(
                         }
                         stack.push(Value::Integer(secure_random_integer(min, max)?));
                     }
+                    "mt_srand" | "srand" => {
+                        if arguments.len() > 2 {
+                            return Err(format!(
+                                "{fallback_name}() expects at most 2 arguments, {} given",
+                                arguments.len()
+                            ));
+                        }
+                        let seed = match arguments.first() {
+                            None | Some(Value::Null) => {
+                                secure_random_integer(0, u32::MAX as i64)? as u32
+                            }
+                            Some(value) => random_int_bound(&fallback_name, value, 1)? as u32,
+                        };
+                        let mode = arguments
+                            .get(1)
+                            .map(|value| random_int_bound(&fallback_name, value, 2))
+                            .transpose()?
+                            .unwrap_or(0);
+                        if !matches!(mode, 0 | 1) {
+                            return Err(format!(
+                                "ValueError:{fallback_name}(): Argument #2 ($mode) must be either MT_RAND_MT19937 or MT_RAND_PHP"
+                            ));
+                        }
+                        if mode == 1 {
+                            global_variables.report_diagnostic(crate::RuntimeDiagnostic {
+                                level: crate::DiagnosticLevel::Deprecated,
+                                message: "The MT_RAND_PHP variant of Mt19937 is deprecated".into(),
+                                source_file: None,
+                                source_line: None,
+                                output_offset: output.len(),
+                            });
+                        }
+                        global_variables.mt19937 = Some(crate::math_builtins::Mt19937::seeded(
+                            seed,
+                            mode == 1,
+                        ));
+                        stack.push(Value::Null);
+                    }
                     "rand" | "mt_rand" => {
                         if arguments.len() > 2 {
                             return Err(format!(
@@ -3447,10 +3485,29 @@ pub(super) fn execute_instruction(
                             .map(|value| random_int_bound(&fallback_name, value, 2))
                             .transpose()?
                             .unwrap_or(2_147_483_647);
-                        if min > max {
-                            return Err(format!("ValueError:{fallback_name}(): Argument #2 ($max) must be greater than or equal to Argument #1 ($min)"));
+                        let seeded_value = if let Some(generator) = global_variables.mt19937.as_mut() {
+                            if arguments.is_empty() {
+                                Some((generator.next_u32() >> 1) as i64)
+                            } else if min > max {
+                                if fallback_name.eq_ignore_ascii_case("rand") {
+                                    Some(generator.range(max, min))
+                                } else {
+                                    return Err(format!("ValueError:{fallback_name}(): Argument #2 ($max) must be greater than or equal to argument #1 ($min)"));
+                                }
+                            } else {
+                                Some(generator.range(min, max))
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some(value) = seeded_value {
+                            stack.push(Value::Integer(value));
+                        } else {
+                            if min > max {
+                                return Err(format!("ValueError:{fallback_name}(): Argument #2 ($max) must be greater than or equal to Argument #1 ($min)"));
+                            }
+                            stack.push(Value::Integer(secure_random_integer(min, max)?));
                         }
-                        stack.push(Value::Integer(secure_random_integer(min, max)?));
                     }
                     "getrandmax" | "mt_getrandmax" => {
                         if !arguments.is_empty() {
@@ -13272,6 +13329,8 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "microtime"
                 | "hrtime"
                 | "random_int"
+                | "mt_srand"
+                | "srand"
                 | "rand"
                 | "mt_rand"
                 | "getrandmax"

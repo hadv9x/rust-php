@@ -412,6 +412,11 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionattribute::isrepeated"
         | "reflectionattribute::newinstance" => (&[], &[], false),
         "random_int" => (&["min", "max"], &[], false),
+        "mt_srand" | "srand" => (
+            &["seed", "mode"],
+            &[(0, N), (1, Num(0.0))],
+            false,
+        ),
         "rand" | "mt_rand" => (
             &["min", "max"],
             &[(0, Num(0.0)), (1, Num(2_147_483_647.0))],
@@ -1501,6 +1506,7 @@ mod tests {
             "mongo_update_many",
             "mongo_update_one",
             "move_uploaded_file",
+            "mt_srand",
             "mt_getrandmax",
             "mt_rand",
             "nl2br",
@@ -1512,6 +1518,7 @@ mod tests {
             "property_exists",
             "rand",
             "random_int",
+            "srand",
             "realpath",
             "rewind",
             "rtrim",

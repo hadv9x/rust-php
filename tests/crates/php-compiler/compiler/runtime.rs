@@ -1193,6 +1193,25 @@ fn mt_rand_and_rand_support_defaults_named_bounds_and_getrandmax() {
 }
 
 #[test]
+fn mt_srand_reproduces_php_sequence_and_rand_shares_state() {
+    let source = r#"<?php
+        mt_srand(5489);
+        $first = mt_rand();
+        $second = rand();
+        mt_srand(seed: 5489);
+        echo $first, ':', $second, ':';
+        mt_srand(5489);
+        echo $first === mt_rand(), ':', $second === rand(), ':';
+        echo function_exists('mt_srand'), ':', function_exists('srand'), ':';
+        echo MT_RAND_MT19937, ':', MT_RAND_PHP, "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1749605806:290934651:1:1:1:1:0:1\n"
+    );
+}
+
+#[test]
 fn integer_and_float_literals_keep_distinct_runtime_types_through_arithmetic() {
     let source = r#"<?php
         $integer = 1;

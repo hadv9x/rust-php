@@ -2,6 +2,115 @@
 
 use crate::Value;
 
+/// Request-local PHP-compatible MT19937 state used after `mt_srand()`/`srand()`.
+#[derive(Clone)]
+pub(crate) struct Mt19937 {
+    state: [u32; 624],
+    index: usize,
+    legacy_mode: bool,
+}
+
+impl Mt19937 {
+    pub(crate) fn seeded(seed: u32, legacy_mode: bool) -> Self {
+        let mut state = [0; 624];
+        state[0] = seed;
+        for index in 1..state.len() {
+            let previous = state[index - 1];
+            state[index] = 1_812_433_253_u32
+                .wrapping_mul(previous ^ (previous >> 30))
+                .wrapping_add(index as u32);
+        }
+        let mut generator = Self {
+            state,
+            index: 624,
+            legacy_mode,
+        };
+        generator.reload();
+        generator
+    }
+
+    pub(crate) fn next_u32(&mut self) -> u32 {
+        if self.index >= 624 {
+            self.reload();
+        }
+        let mut value = self.state[self.index];
+        self.index += 1;
+        value ^= value >> 11;
+        value ^= (value << 7) & 0x9d2c_5680;
+        value ^= (value << 15) & 0xefc6_0000;
+        value ^ (value >> 18)
+    }
+
+    pub(crate) fn range(&mut self, min: i64, max: i64) -> i64 {
+        if self.legacy_mode {
+            let random = (self.next_u32() >> 1) as f64;
+            let width = max as f64 - min as f64 + 1.0;
+            let offset = (width * (random / 2_147_483_648.0)) as i64;
+            return min.wrapping_add(offset);
+        }
+        let span_minus_one = (max as u64).wrapping_sub(min as u64);
+        let offset = if span_minus_one <= u32::MAX as u64 {
+            let mut mask = span_minus_one as u32;
+            mask |= mask >> 1;
+            mask |= mask >> 2;
+            mask |= mask >> 4;
+            mask |= mask >> 8;
+            mask |= mask >> 16;
+            let mut value = self.next_u32() & mask;
+            while value > span_minus_one as u32 {
+                value = self.next_u32() & mask;
+            }
+            value as u64
+        } else if span_minus_one == u64::MAX {
+            u64::from(self.next_u32()) | (u64::from(self.next_u32()) << 32)
+        } else {
+            let mut mask = span_minus_one;
+            mask |= mask >> 1;
+            mask |= mask >> 2;
+            mask |= mask >> 4;
+            mask |= mask >> 8;
+            mask |= mask >> 16;
+            mask |= mask >> 32;
+            let mut value =
+                (u64::from(self.next_u32()) | (u64::from(self.next_u32()) << 32)) & mask;
+            while value > span_minus_one {
+                value =
+                    (u64::from(self.next_u32()) | (u64::from(self.next_u32()) << 32)) & mask;
+            }
+            value
+        };
+        min.wrapping_add(offset as i64)
+    }
+
+    fn reload(&mut self) {
+        let legacy_mode = self.legacy_mode;
+        for index in 0..(624 - 397) {
+            self.state[index] = Self::twist(
+                self.state[index + 397],
+                self.state[index],
+                self.state[index + 1],
+                legacy_mode,
+            );
+        }
+        for index in (624 - 397)..623 {
+            self.state[index] = Self::twist(
+                self.state[index + 397 - 624],
+                self.state[index],
+                self.state[index + 1],
+                legacy_mode,
+            );
+        }
+        self.state[623] = Self::twist(self.state[396], self.state[623], self.state[0], legacy_mode);
+        self.index = 0;
+    }
+
+    fn twist(middle: u32, current: u32, next: u32, legacy_mode: bool) -> u32 {
+        let joined = (current & 0x8000_0000) | (next & 0x7fff_ffff);
+        let low_bit = if legacy_mode { current & 1 } else { next & 1 };
+        middle ^ (joined >> 1) ^ (0u32.wrapping_sub(low_bit) & 0x9908_b0df)
+    }
+}
+
 pub(crate) fn is_supported(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),

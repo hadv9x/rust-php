@@ -5,4 +5,6 @@ $legacy = mt_rand(max: 3);
 $alias = rand(8, 10);
 echo ($legacy >= 0 && $legacy <= 3), ':', ($alias >= 8 && $alias <= 10), ':', getrandmax() === mt_getrandmax(), "\n";
 echo strlen(str_shuffle(string: 'php-runtime')), "\n";
+mt_srand(5489);
+echo mt_rand(), ':', rand(), "\n";
 ?>
