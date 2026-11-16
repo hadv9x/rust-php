@@ -3772,6 +3772,12 @@ pub(super) fn execute_instruction(
                 stack.push(Value::Integer(value));
                 return Ok(true);
             }
+            if class_name.eq_ignore_ascii_case("ReflectionAttribute")
+                && constant.eq_ignore_ascii_case("IS_INSTANCEOF")
+            {
+                stack.push(Value::Integer(2));
+                return Ok(true);
+            }
             let (_, metadata) = find_class_constant(class_name, constant, classes)
                 .ok_or_else(|| format!("Undefined class constant {class_name}::{constant}"))?;
             ensure_access(

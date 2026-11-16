@@ -162,7 +162,6 @@ pub(crate) fn is_supported(name: &str) -> bool {
     )
 }
 
-#[cfg(test)]
 pub(crate) const fn supported_names() -> &'static [&'static str] {
     &[
         "abs",

@@ -2789,6 +2789,12 @@ fn property_defaults_accept_true_and_false_literal_types() {
 }
 
 #[test]
+fn class_constant_expressions_support_relational_operators() {
+    let source = r#"<?php class RelationalConstant { public const IS_64_BIT = PHP_INT_SIZE >= 8; public const LESS = 3 < 4; public const GREATER = 5 > 4; } echo RelationalConstant::IS_64_BIT, RelationalConstant::LESS, RelationalConstant::GREATER;"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "111");
+}
+
+#[test]
 fn class_property_defaults_evaluate_constant_ternaries() {
     let source = r#"<?php class VersionedPattern { public string $pattern = PCRE_VERSION_MAJOR < 10 || (PCRE_VERSION_MAJOR === 10 && PCRE_VERSION_MINOR < 40) ? '/legacy/u' : '/modern/u'; } echo (new VersionedPattern())->pattern, "\n";"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "/modern/u\n");

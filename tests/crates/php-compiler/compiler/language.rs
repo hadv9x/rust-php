@@ -225,6 +225,30 @@ fn compile_file_registers_static_methods_from_runtime_guarded_classes() {
 }
 
 #[test]
+fn compile_file_skips_php84_polyfill_pdo_driver_stub_classes() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_pdo_polyfill_stub_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let stubs = directory.join("polyfill-php84/Resources/stubs/Pdo");
+    std::fs::create_dir_all(&stubs).unwrap();
+    let entry = stubs.join("Mysql.php");
+    std::fs::write(
+        &entry,
+        "<?php namespace Pdo; class MysqlDriverStub {} echo class_exists('Pdo\\\\MysqlDriverStub') ? 'visible' : 'skipped';",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "skipped");
+}
+
+#[test]
 fn compile_file_reflection_names_anonymous_classes_with_the_defining_path() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(

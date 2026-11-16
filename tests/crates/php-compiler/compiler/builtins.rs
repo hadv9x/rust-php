@@ -145,6 +145,22 @@ fn self_class_constant_returns_the_declaring_class_name() {
 }
 
 #[test]
+fn spl_object_id_returns_a_stable_integer_for_an_object() {
+    let source = r#"<?php
+        $object = new stdClass();
+        $first = spl_object_id($object);
+        $closure = function () {};
+        echo is_int($first), ':', $first === spl_object_id($object), ':', is_int(spl_object_id($closure)), ':', function_exists('spl_object_id'), ':';
+        try { spl_object_id(); } catch (ArgumentCountError $error) { echo get_class($error), ':'; }
+        try { spl_object_id(null); } catch (TypeError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1:1:1:1:ArgumentCountError:TypeError"
+    );
+}
+
+#[test]
 fn php_sapi_constant_matches_cli_default() {
     assert_eq!(
         compile_source("<?php echo PHP_SAPI, ':', defined('PHP_SAPI');")

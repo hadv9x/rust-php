@@ -634,6 +634,7 @@ fn signature(name: &str) -> Option<Signature> {
         "spl_autoload_unregister" => (&["autoload_function"], &[], false),
         "spl_autoload_functions" => (&[], &[], false),
         "spl_autoload_call" => (&["class"], &[], false),
+        "spl_object_id" => (&["object"], &[], false),
         "method_exists" => (&["object_or_class", "method"], &[], false),
         "property_exists" => (&["object_or_class", "property"], &[], false),
         "get_class" => (&["object"], &[(0, N)], false),

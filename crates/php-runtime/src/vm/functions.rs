@@ -2514,6 +2514,32 @@ pub(super) fn execute_instruction(
                             )?);
                         }
                     }
+                    "spl_object_id" => {
+                        if arguments.len() != 1 {
+                            return Err(format!(
+                                "ArgumentCountError:spl_object_id() expects exactly 1 argument, {} given",
+                                arguments.len()
+                            ));
+                        }
+                        let value = arguments
+                            .first()
+                            .ok_or("spl_object_id() expects exactly 1 argument")?
+                            .dereference();
+                        let object_id = match value {
+                            Value::Object(object) => std::rc::Rc::as_ptr(&object) as usize,
+                            Value::Closure(closure) => std::rc::Rc::as_ptr(&closure) as usize,
+                            Value::Generator(generator) => {
+                                std::rc::Rc::as_ptr(&generator) as usize
+                            }
+                            other => {
+                                return Err(format!(
+                                    "TypeError:spl_object_id(): Argument #1 ($object) must be of type object, {} given",
+                                    other.type_name()
+                                ));
+                            }
+                        };
+                        stack.push(Value::Integer(object_id as i64));
+                    }
                     "class_exists" | "interface_exists" | "trait_exists" => {
                         let name = arguments
                             .first()
@@ -13816,6 +13842,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "method_exists"
                 | "property_exists"
                 | "get_class"
+                | "spl_object_id"
                 | "get_parent_class"
                 | "get_called_class"
                 | "is_a"
@@ -14059,15 +14086,15 @@ fn get_extension_funcs_builtin(arguments: &[Value]) -> Result<Value, String> {
         ));
     }
     let extension = arguments[0].show();
-    let functions: &[&str] = match extension.as_str() {
-        "json" => &[
+    let functions: Vec<&str> = match extension.as_str() {
+        "json" => vec![
             "json_decode",
             "json_encode",
             "json_last_error",
             "json_last_error_msg",
             "json_validate",
         ],
-        "date" => &[
+        "date" => vec![
             "checkdate",
             "date",
             "gmdate",
@@ -14085,7 +14112,7 @@ fn get_extension_funcs_builtin(arguments: &[Value]) -> Result<Value, String> {
             "strptime",
             "time",
         ],
-        "hash" => &[
+        "hash" => vec![
             "hash",
             "hash_file",
             "hash_hmac",
@@ -14099,6 +14126,12 @@ fn get_extension_funcs_builtin(arguments: &[Value]) -> Result<Value, String> {
             "sha1",
             "sha1_file",
         ],
+        "standard" => crate::array_builtins::supported_names()
+            .iter()
+            .chain(crate::math_builtins::supported_names().iter())
+            .chain(crate::string_builtins::supported_names().iter())
+            .copied()
+            .collect(),
         _ => return Ok(Value::Bool(false)),
     };
     Ok(Value::Array(PhpArray::from_entries(

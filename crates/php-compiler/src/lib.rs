@@ -1914,6 +1914,13 @@ fn append_composer_declarations(
 
 fn skip_polyfill_builtin_class(path: &Path, name: &str) -> bool {
     let path = path.to_string_lossy().replace('\\', "/");
+    let unavailable_pdo_driver_stub = name
+        .to_ascii_lowercase()
+        .starts_with("pdo\\")
+        && path.contains("/polyfill-php84/Resources/stubs/Pdo/");
+    if unavailable_pdo_driver_stub {
+        return true;
+    }
     let native_builtin = matches!(
         name.to_ascii_lowercase().as_str(),
         "error"

@@ -215,19 +215,50 @@ pub(super) fn constant_value_in_class(
                 constant_truthy(&left) || constant_truthy(&right)
             }))
         }
-        Expr::Binary(BinaryOp::Less, left, right) => {
+        Expr::Binary(
+            operation @ (BinaryOp::Less
+            | BinaryOp::LessEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterEqual),
+            left,
+            right,
+        ) => {
             let left = constant_value_in_class(left, class, program)?;
             let right = constant_value_in_class(right, class, program)?;
             match (left, right) {
-                (Value::Integer(left), Value::Integer(right)) => Ok(Value::Bool(left < right)),
-                (Value::Number(left), Value::Number(right)) => Ok(Value::Bool(left < right)),
+                (Value::Integer(left), Value::Integer(right)) => Ok(Value::Bool(match operation {
+                    BinaryOp::Less => left < right,
+                    BinaryOp::LessEqual => left <= right,
+                    BinaryOp::Greater => left > right,
+                    BinaryOp::GreaterEqual => left >= right,
+                    _ => unreachable!(),
+                })),
+                (Value::Number(left), Value::Number(right)) => Ok(Value::Bool(match operation {
+                    BinaryOp::Less => left < right,
+                    BinaryOp::LessEqual => left <= right,
+                    BinaryOp::Greater => left > right,
+                    BinaryOp::GreaterEqual => left >= right,
+                    _ => unreachable!(),
+                })),
                 (Value::Integer(left), Value::Number(right)) => {
-                    Ok(Value::Bool((left as f64) < right))
+                    Ok(Value::Bool(match operation {
+                        BinaryOp::Less => (left as f64) < right,
+                        BinaryOp::LessEqual => (left as f64) <= right,
+                        BinaryOp::Greater => (left as f64) > right,
+                        BinaryOp::GreaterEqual => (left as f64) >= right,
+                        _ => unreachable!(),
+                    }))
                 }
                 (Value::Number(left), Value::Integer(right)) => {
-                    Ok(Value::Bool(left < (right as f64)))
+                    Ok(Value::Bool(match operation {
+                        BinaryOp::Less => left < (right as f64),
+                        BinaryOp::LessEqual => left <= (right as f64),
+                        BinaryOp::Greater => left > (right as f64),
+                        BinaryOp::GreaterEqual => left >= (right as f64),
+                        _ => unreachable!(),
+                    }))
                 }
-                _ => Err("less-than in a class constant requires numeric constants".into()),
+                _ => Err("comparison in a class constant requires numeric constants".into()),
             }
         }
         Expr::Ternary { condition, then_value, else_value } => {

@@ -710,6 +710,7 @@ fn builtin_class_constant(class_name: &str, constant_name: &str) -> Option<i64> 
     let class = class_name.rsplit('\\').next()?.to_ascii_lowercase();
     let constant = constant_name.to_ascii_uppercase();
     let value = match (class.as_str(), constant.as_str()) {
+        ("reflectionattribute", "IS_INSTANCEOF") => 2,
         ("cachingiterator", "CALL_TOSTRING") => 1,
         ("cachingiterator", "TOSTRING_USE_CURRENT") => 2,
         ("cachingiterator", "TOSTRING_USE_KEY") => 4,
