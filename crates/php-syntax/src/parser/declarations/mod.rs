@@ -210,10 +210,10 @@ impl Parser<'_> {
                         return Err(self.error(&format!("Expected imported name, got {token:?}")))
                     }
                 };
-                let target = if is_constant_import {
-                    target_source.clone()
-                } else {
+                let target = if is_function_import {
                     target_source.to_ascii_lowercase()
+                } else {
+                    target_source.clone()
                 };
                 if self.eat(&TokenKind::Lb) {
                     let prefix = target_source.trim_end_matches('\\').to_string();
@@ -249,10 +249,10 @@ impl Parser<'_> {
                         } else {
                             format!("{prefix}\\{name}")
                         };
-                        let full_name = if item_is_constant {
-                            full_name
-                        } else {
+                        let full_name = if item_is_function {
                             full_name.to_ascii_lowercase()
+                        } else {
+                            full_name
                         };
                         let alias = if matches!(self.peek(), TokenKind::Word(word) if word == "as")
                         {

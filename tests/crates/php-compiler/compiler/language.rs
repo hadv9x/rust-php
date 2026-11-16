@@ -100,6 +100,17 @@ fn named_class_name_constant_resolves_to_the_qualified_name() {
 }
 
 #[test]
+fn imported_class_name_constant_preserves_target_spelling() {
+    assert_eq!(
+        compile_source(r"<?php namespace Example; use DateTime as Clock; echo Clock::class;")
+            .unwrap()
+            .execute()
+            .unwrap(),
+        "DateTime"
+    );
+}
+
+#[test]
 fn compile_file_resolves_magic_file_constants_in_class_defaults() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(
