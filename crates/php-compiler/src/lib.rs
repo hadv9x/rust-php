@@ -112,6 +112,7 @@ fn source_signature(path: &Path) -> Result<SourceSignature, String> {
 pub fn compile_source(source: &str) -> Result<BytecodeProgram, String> {
     let mut syntax_tree = php_syntax::parse(source)?;
     hoist_conditional_trait_declarations(&syntax_tree.statements, &mut syntax_tree.traits);
+    hoist_conditional_class_declarations(&syntax_tree.statements, &mut syntax_tree.classes);
     codegen::compile(&syntax_tree)
 }
 
@@ -139,6 +140,36 @@ fn hoist_conditional_trait_declarations(statements: &[Stmt], traits: &mut Vec<ph
         visit(statement, false, &mut found);
     }
     traits.extend(found.into_iter().skip(traits.len()));
+}
+
+fn hoist_conditional_class_declarations(
+    statements: &[Stmt],
+    classes: &mut Vec<php_syntax::ClassDecl>,
+) {
+    fn visit(statement: &Stmt, conditional: bool, found: &mut Vec<php_syntax::ClassDecl>) {
+        match statement {
+            Stmt::SourceLine(_, inner) => visit(inner, conditional, found),
+            Stmt::ClassDeclaration(declaration) if conditional => {
+                if !found
+                    .iter()
+                    .any(|class| class.name.eq_ignore_ascii_case(&declaration.name))
+                {
+                    found.push(declaration.clone());
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                for item in then_body.iter().chain(else_body) {
+                    visit(item, true, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = classes.clone();
+    for statement in statements {
+        visit(statement, false, &mut found);
+    }
+    classes.extend(found.into_iter().skip(classes.len()));
 }
 
 /// Compile a PHP file and inline literal or `__DIR__`-relative include/require statements.
@@ -554,6 +585,7 @@ fn append_file(
         php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id)
             .map_err(|error| format!("{}: {error}", path.display()))?;
     hoist_conditional_trait_declarations(&program.statements, &mut program.traits);
+    hoist_conditional_class_declarations(&program.statements, &mut program.classes);
     state.next_anonymous_class_id += program
         .classes
         .iter()
@@ -1113,6 +1145,16 @@ fn expand_statement(
             output.push(Stmt::IncludeReturn);
         }
         Stmt::Return(Some(value)) => {
+            resolve_magic_constants(value, current_file);
+            *value = expand_include_expression(
+                std::mem::replace(value, Expr::Null),
+                current_file,
+                combined,
+                state,
+            )?;
+            output.push(statement.clone());
+        }
+        Stmt::Assign { value, .. } => {
             resolve_magic_constants(value, current_file);
             *value = expand_include_expression(
                 std::mem::replace(value, Expr::Null),
@@ -1786,6 +1828,7 @@ fn append_composer_declarations(
         php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id)
             .map_err(|error| format!("{}: {error}", path.display()))?;
     hoist_conditional_trait_declarations(&program.statements, &mut program.traits);
+    hoist_conditional_class_declarations(&program.statements, &mut program.classes);
     state.next_anonymous_class_id += program
         .classes
         .iter()

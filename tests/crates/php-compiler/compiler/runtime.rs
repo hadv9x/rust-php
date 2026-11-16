@@ -54,6 +54,23 @@ fn get_loaded_extensions_lists_supported_php_modules_and_supports_zend_filter() 
 }
 
 #[test]
+fn get_extension_funcs_lists_supported_json_and_hash_functions() {
+    let source = r#"<?php
+        $extensions = array_map('get_extension_funcs', ['json', 'hash', 'unknown']);
+        echo implode(',', get_extension_funcs(extension: 'json')), ':';
+        echo in_array('hash_equals', $extensions[1]), ':', $extensions[2] === false, ':';
+        echo get_extension_funcs('JSON') === false, ':';
+        echo function_exists('get_extension_funcs'), ':';
+        try { get_extension_funcs(); }
+        catch (ArgumentCountError $error) { echo get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "json_decode,json_encode,json_last_error,json_last_error_msg,json_validate:1:1:1:1:ArgumentCountError"
+    );
+}
+
+#[test]
 fn getmypid_rejects_arguments() {
     let error = compile_source("<?php getmypid(1);")
         .unwrap()

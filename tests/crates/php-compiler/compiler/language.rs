@@ -145,6 +145,75 @@ fn compile_file_resolves_magic_directory_constants_in_return_expressions() {
 }
 
 #[test]
+fn compile_file_resolves_magic_directory_constants_in_static_assignments() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_magic_static_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php namespace PHPUnit\\Runner; class VersionId { public function __construct($version, $path) {} public function asString(): string { return 'ok'; } } class Version { private static string $version = ''; public static function id(): string { if (self::$version === '') { self::$version = (new VersionId('12.5', dirname(__DIR__, 2)))->asString(); } return self::$version; } } echo Version::id();",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "ok");
+}
+
+#[test]
+fn compile_file_registers_static_methods_from_conditional_classes() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_conditional_class_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php if (true) { class ConditionalStaticMethod { public static function register(): string { return 'registered'; } } } echo ConditionalStaticMethod::register();",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "registered");
+}
+
+#[test]
+fn compile_file_registers_static_methods_from_runtime_guarded_classes() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_runtime_guarded_class_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php class Version { public static function series(): string { return '12.5'; } } if (class_exists(Version::class) && (int) Version::series() >= 10) { class ConditionalStaticMethod { public static function register(): string { return 'registered'; } } } echo ConditionalStaticMethod::register();",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "registered");
+}
+
+#[test]
 fn compile_file_reflection_names_anonymous_classes_with_the_defining_path() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(

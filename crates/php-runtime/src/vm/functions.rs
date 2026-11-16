@@ -2259,6 +2259,9 @@ pub(super) fn execute_instruction(
                     "get_loaded_extensions" => {
                         stack.push(get_loaded_extensions_builtin(&arguments)?);
                     }
+                    "get_extension_funcs" => {
+                        stack.push(get_extension_funcs_builtin(&arguments)?);
+                    }
                     "phpversion" => {
                         stack.push(phpversion_builtin(&arguments)?);
                     }
@@ -13795,6 +13798,7 @@ fn runtime_function_exists(name: &str, functions: &HashMap<String, BytecodeFunct
                 | "var_dump"
                 | "var_export"
                 | "function_exists"
+                | "get_extension_funcs"
                 | "get_loaded_extensions"
                 | "phpversion"
                 | "gc_collect_cycles"
@@ -14041,6 +14045,52 @@ fn get_loaded_extensions_builtin(arguments: &[Value]) -> Result<Value, String> {
                 (
                     ArrayKey::Integer(index as i64),
                     Value::String((*extension).into()),
+                )
+            })
+            .collect(),
+    )))
+}
+
+fn get_extension_funcs_builtin(arguments: &[Value]) -> Result<Value, String> {
+    if arguments.len() != 1 {
+        return Err(format!(
+            "ArgumentCountError:get_extension_funcs() expects exactly 1 argument, {} given",
+            arguments.len()
+        ));
+    }
+    let extension = arguments[0].show();
+    let functions: &[&str] = match extension.as_str() {
+        "json" => &[
+            "json_decode",
+            "json_encode",
+            "json_last_error",
+            "json_last_error_msg",
+            "json_validate",
+        ],
+        "hash" => &[
+            "hash",
+            "hash_file",
+            "hash_hmac",
+            "hash_hmac_file",
+            "hash_pbkdf2",
+            "hash_hkdf",
+            "hash_algos",
+            "hash_equals",
+            "md5",
+            "md5_file",
+            "sha1",
+            "sha1_file",
+        ],
+        _ => return Ok(Value::Bool(false)),
+    };
+    Ok(Value::Array(PhpArray::from_entries(
+        functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                (
+                    ArrayKey::Integer(index as i64),
+                    Value::String((*function).into()),
                 )
             })
             .collect(),
@@ -16659,6 +16709,9 @@ pub(super) fn invoke_callable(
     }
     if normalized_name == "get_loaded_extensions" {
         return get_loaded_extensions_builtin(&arguments);
+    }
+    if normalized_name == "get_extension_funcs" {
+        return get_extension_funcs_builtin(&arguments);
     }
     if normalized_name == "phpversion" {
         return phpversion_builtin(&arguments);

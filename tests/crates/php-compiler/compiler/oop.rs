@@ -2770,6 +2770,19 @@ fn user_stream_filter_can_extend_the_builtin_base_class() {
 }
 
 #[test]
+fn conditional_class_declaration_retains_static_methods() {
+    let source = r#"<?php
+        if (true) {
+            class ConditionalStaticMethod {
+                public static function register(): void { echo 'registered'; }
+            }
+        }
+        ConditionalStaticMethod::register();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "registered");
+}
+
+#[test]
 fn property_defaults_accept_true_and_false_literal_types() {
     let source = r#"<?php class FalseDefault { public false $disabled = false; public true $enabled = true; } echo (new FalseDefault())->disabled ? 'yes' : 'no';"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "no");
