@@ -56,9 +56,10 @@ fn get_loaded_extensions_lists_supported_php_modules_and_supports_zend_filter() 
 #[test]
 fn get_extension_funcs_lists_supported_json_and_hash_functions() {
     let source = r#"<?php
-        $extensions = array_map('get_extension_funcs', ['json', 'hash', 'unknown']);
+        $extensions = array_map('get_extension_funcs', ['json', 'hash', 'date', 'unknown']);
         echo implode(',', get_extension_funcs(extension: 'json')), ':';
-        echo in_array('hash_equals', $extensions[1]), ':', $extensions[2] === false, ':';
+        echo in_array('hash_equals', $extensions[1]), ':', in_array('strtotime', $extensions[2]), ':';
+        echo $extensions[3] === false, ':';
         echo get_extension_funcs('JSON') === false, ':';
         echo function_exists('get_extension_funcs'), ':';
         try { get_extension_funcs(); }
@@ -66,7 +67,7 @@ fn get_extension_funcs_lists_supported_json_and_hash_functions() {
     "#;
     assert_eq!(
         compile_source(source).unwrap().execute().unwrap(),
-        "json_decode,json_encode,json_last_error,json_last_error_msg,json_validate:1:1:1:1:ArgumentCountError"
+        "json_decode,json_encode,json_last_error,json_last_error_msg,json_validate:1:1:1:1:1:ArgumentCountError"
     );
 }
 
