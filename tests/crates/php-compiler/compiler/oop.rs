@@ -521,6 +521,15 @@ fn reflection_class_get_constructor_returns_inherited_constructor_or_null() {
 }
 
 #[test]
+fn reflectionproperty_constructor_reads_declared_properties() {
+    let source = "<?php class ReflectedCtorProperty { public $value = 1; } $object = new ReflectedCtorProperty(); $property = new ReflectionProperty($object, 'value'); $property->setRawValue($object, 7); echo $property->getRawValue($object), ':', $property->getName(), ':', $property->getDeclaringClass()->getName();";
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "7:value:ReflectedCtorProperty"
+    );
+}
+
+#[test]
 fn reflection_property_reports_the_declaring_class_for_inherited_properties() {
     let source = r#"<?php
         class ReflectedPropertyParent { protected string $token = 'parent'; public static int $count = 2; }
@@ -1481,12 +1490,21 @@ fn property_and_call_magic_methods_validate_declared_types() {
         }
     "#).expect("PHP-compatible declared magic method types should compile");
 
+    compile_source(r#"<?php
+        class VoidPropertyGetter {
+            public function __get(string $name): void {}
+        }
+        class BroadStaticCallMagic {
+            public static function __callStatic(string $name, mixed $arguments): object { return new stdClass(); }
+        }
+    "#).expect("PHP permits __get() to declare a void return type");
+
     for invalid in [
         "<?php class WrongGetParameter { public function __get(int $name) {} }",
         "<?php class WrongSetValue { public function __set(string $name, string $value) {} }",
         "<?php class WrongIssetReturn { public function __isset(string $name): int { return 1; } }",
         "<?php class WrongUnsetReturn { public function __unset(string $name): bool {} }",
-        "<?php class WrongCallArguments { public function __call(string $name, mixed $arguments) {} }",
+        "<?php class WrongCallArguments { public function __call(string $name, int $arguments) {} }",
         "<?php class WrongToStringReturn { public function __toString(): int { return 1; } }",
         "<?php class WrongCloneReturn { public function __clone(): int {} }",
     ] {
@@ -1560,6 +1578,69 @@ fn interface_variance_follows_builtin_throwable_stringable_inheritance() {
         Ok(_) => panic!("narrowing Stringable to Exception must be rejected"),
     };
     assert!(error.contains("does not match interface stringinputcontract signature"), "{error}");
+}
+
+#[test]
+fn interface_self_return_allows_the_interface_name_in_an_implementation() {
+    let source = r#"<?php
+        namespace Example;
+        interface FactoryContract { public function copy(): self; }
+        class FactoryImplementation implements FactoryContract {
+            public function copy(): FactoryContract { return $this; }
+        }
+    "#;
+    compile_source(source).expect("interface self return resolves to the declaring interface");
+}
+
+#[test]
+fn implementation_self_return_is_covariant_with_interface_self() {
+    let source = r#"<?php
+        namespace Example;
+        interface AttributesContract { public static function fromArray(array $data): self; }
+        class DirectoryAttributes implements AttributesContract {
+            public static function fromArray(array $data): static { return new self(); }
+        }
+    "#;
+    compile_source(source).expect("implementation self resolves to the concrete class");
+}
+
+#[test]
+fn abstract_class_may_defer_interface_methods_to_a_concrete_subclass() {
+    let source = r#"<?php
+        interface DeferredContract { public function run(): void; }
+        abstract class DeferredBase implements DeferredContract {}
+        class DeferredImplementation extends DeferredBase {
+            public function run(): void {}
+        }
+    "#;
+    compile_source(source).expect("abstract classes can defer interface methods");
+}
+
+#[test]
+fn abstract_trait_requirement_can_use_a_concrete_parent_method() {
+    let source = r#"<?php
+        interface ParentMethodContract { public function value(): string; }
+        class ParentMethodBase { public function value(): string { return 'parent'; } }
+        trait ParentMethodRequirement { abstract public function value(): string; }
+        class ParentMethodChild extends ParentMethodBase implements ParentMethodContract {
+            use ParentMethodRequirement;
+        }
+        echo (new ParentMethodChild())->value();
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "parent");
+}
+
+#[test]
+fn namespace_does_not_qualify_builtin_callable_types() {
+    let source = r#"<?php
+        namespace Example;
+        interface CallbackContract { public function before(callable $callback); }
+        class CallbackImplementation implements CallbackContract {
+            public function before(callable $callback) {}
+        }
+    "#;
+    compile_source(source).expect("callable stays a builtin type in namespaces");
 }
 
 #[test]
@@ -2595,6 +2676,68 @@ fn instantiated_anonymous_class_reports_missing_trait() {
 }
 
 #[test]
+fn missing_trait_in_unused_named_class_is_deferred_until_instantiation() {
+    let source = r#"<?php class OptionalDependencyClass { use MissingOptionalTrait; } echo "loaded\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "loaded\n");
+
+    let source = r#"<?php class OptionalDependencyClass { use MissingOptionalTrait; } new OptionalDependencyClass();"#;
+    let error = compile_source(source).unwrap().execute().unwrap_err();
+    assert!(error.contains("Trait 'MissingOptionalTrait' not found"), "{error}");
+}
+
+#[test]
+fn object_property_nested_array_append_can_bind_a_reference() {
+    let source = r#"<?php
+        class AppendReferenceHost {
+            public array $items = ['event' => []];
+            public function add(string $name): string {
+                $callback =& $this->items[$name][];
+                $callback = 'stored';
+                return $this->items[$name][0];
+            }
+        }
+        echo (new AppendReferenceHost())->add('event'), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "stored\n");
+}
+
+#[test]
+fn property_defaults_accept_true_and_false_literal_types() {
+    let source = r#"<?php class FalseDefault { public false $disabled = false; public true $enabled = true; } echo (new FalseDefault())->disabled ? 'yes' : 'no';"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "no");
+}
+
+#[test]
+fn class_property_defaults_evaluate_constant_ternaries() {
+    let source = r#"<?php class VersionedPattern { public string $pattern = PCRE_VERSION_MAJOR < 10 || (PCRE_VERSION_MAJOR === 10 && PCRE_VERSION_MINOR < 40) ? '/legacy/u' : '/modern/u'; } echo (new VersionedPattern())->pattern, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "/modern/u\n");
+}
+
+#[test]
+fn class_property_defaults_resolve_class_magic_constant() {
+    let source = r#"<?php namespace Example; class ClassNameDefault { public string $className = __CLASS__; } echo (new ClassNameDefault())->className, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "Example\\ClassNameDefault\n");
+}
+
+#[test]
+fn interface_parameter_defaults_resolve_self_constants() {
+    let source = r#"<?php interface WithDefault { public const VALUE = 'ok'; public function run($value = self::VALUE); } class UsesDefault implements WithDefault { public function run($value = self::VALUE) { return $value; } } echo (new UsesDefault())->run(), "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "ok\n");
+}
+
+#[test]
+fn arrayaccess_is_available_as_a_builtin_interface() {
+    let source = r#"<?php class ArrayLike implements ArrayAccess { public function offsetExists($offset) {} public function offsetGet($offset) {} public function offsetSet($offset, $value) {} public function offsetUnset($offset) {} } echo is_subclass_of(ArrayLike::class, ArrayAccess::class) ? 'yes' : 'no';"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "yes");
+}
+
+#[test]
+fn stringable_accepts_legacy_untyped_tostring_method() {
+    let source = r#"<?php class LegacyStringValue implements Stringable { public function __toString() { return 'value'; } } echo (string) new LegacyStringValue();"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value");
+}
+
+#[test]
 fn concrete_trait_method_satisfies_abstract_trait_method() {
     let source = r#"<?php
         trait RequiresHook { abstract protected function hook(string $value): void; }
@@ -3334,6 +3477,121 @@ fn standard_exception_families_have_php_parent_classes_and_catch_behavior() {
         output,
         "BadFunctionCallException:BadFunctionCallException:1:1\nRuntimeException:1:1\nBadFunctionCallException:LogicException:1:1\nThrowable,Stringable:Throwable,Stringable\nStringable\nThrowable,Stringable\nmissing\n"
     );
+}
+
+#[test]
+fn pdo_exception_has_the_runtime_exception_parent() {
+    let output = compile_source("<?php $error = new PDOException('database unavailable'); echo get_class($error), ':', get_parent_class($error), ':', ($error instanceof RuntimeException) ? 1 : 0, ':', class_exists('PDOException') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "PDOException:RuntimeException:1:1");
+}
+
+#[test]
+fn arrayobject_constructs_with_array_properties_for_framework_serialization() {
+    let source = r#"<?php
+        $value = new ArrayObject(['ready' => true]);
+        echo class_exists('ArrayObject') ? 1 : 0, ':', $value->ready ? 1 : 0;
+    "#;
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "1:1");
+}
+
+#[test]
+fn arrayiterator_accepts_array_input() {
+    let output = compile_source("<?php $sum = 0; foreach (new ArrayIterator([2, 3]) as $value) { $sum += $value; } echo get_class(new ArrayIterator(['ready' => true])), ':', $sum;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "ArrayIterator:5");
+}
+
+#[test]
+fn datetime_native_objects_format_unix_timestamps() {
+    let source = "<?php $date = new DateTime('@0'); echo $date->format('Y-m-d H:i:s'), ':', $date->getTimestamp(), ':', ($date instanceof DateTimeInterface) ? 1 : 0;";
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "1970-01-01 00:00:00:0:1");
+}
+
+#[test]
+fn dateinterval_native_objects_keep_the_duration_expression() {
+    let source = "<?php $interval = new DateInterval('PT1S'); echo get_class($interval), ':', class_exists('DateInterval') ? 1 : 0;";
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "DateInterval:1");
+}
+
+#[test]
+fn datetimezone_native_objects_are_constructible() {
+    let source = "<?php $zone = new DateTimeZone('UTC'); echo get_class($zone), ':', class_exists('DateTimeZone') ? 1 : 0;";
+    let output = compile_source(source).unwrap().execute().unwrap();
+    assert_eq!(output, "DateTimeZone:1");
+}
+
+#[test]
+fn cachingiterator_is_registered_as_an_spl_builtin() {
+    let output = compile_source("<?php echo class_exists('CachingIterator') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "1");
+}
+
+#[test]
+fn iteratoriterator_is_registered_as_an_spl_builtin() {
+    let output = compile_source("<?php echo class_exists('IteratorIterator') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "1");
+}
+
+#[test]
+fn filesystem_iterator_family_is_registered_as_spl_builtins() {
+    let output = compile_source("<?php echo class_exists('DirectoryIterator') ? 1 : 0, class_exists('FilesystemIterator') ? 1 : 0, class_exists('RecursiveDirectoryIterator') ? 1 : 0, class_exists('GlobIterator') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "1111");
+}
+
+#[test]
+fn reflector_is_registered_as_a_builtin_interface() {
+    let output = compile_source("<?php echo interface_exists('Reflector') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "1");
+}
+
+#[test]
+fn standard_iterator_wrappers_are_registered_as_spl_builtins() {
+    let output = compile_source("<?php echo class_exists('FilterIterator') ? 1 : 0, class_exists('LimitIterator') ? 1 : 0, class_exists('ArrayIterator') ? 1 : 0, class_exists('AppendIterator') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "1111");
+}
+
+#[test]
+fn session_handler_interfaces_are_registered_as_builtins() {
+    let output = compile_source("<?php echo interface_exists('SessionHandlerInterface') ? 1 : 0, interface_exists('SessionUpdateTimestampHandlerInterface') ? 1 : 0, class_exists('SessionHandler') ? 1 : 0;")
+        .unwrap()
+        .execute()
+        .unwrap();
+    assert_eq!(output, "111");
+}
+
+#[test]
+fn reflectionfunctionabstract_is_available_as_a_builtin_parent() {
+    compile_source("<?php class LanguageConstructReflection extends ReflectionFunctionAbstract {}")
+        .expect("vendor reflection adapters can extend the native abstract base");
+}
+
+#[test]
+fn reflectionmethod_is_available_as_a_builtin_parent() {
+    compile_source("<?php class ExtendedReflectionMethod extends ReflectionMethod {}")
+        .expect("vendor reflection adapters can extend the native method reflector");
 }
 
 #[test]

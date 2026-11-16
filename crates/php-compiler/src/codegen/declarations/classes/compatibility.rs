@@ -81,6 +81,8 @@ pub(super) fn signature_compatible(
     contract_return: Option<&str>,
     classes: &HashMap<String, &php_syntax::ClassDecl>,
     interfaces: &HashMap<String, &php_syntax::InterfaceDecl>,
+    implementation_context: &str,
+    contract_context: &str,
 ) -> bool {
     if parameter_map.len() != contract_parameters.len()
         || parameter_map
@@ -95,20 +97,59 @@ pub(super) fn signature_compatible(
         .all(|(index, contract)| {
             let implementation = &implementation_parameters[parameter_map[index]];
             // The implementation may accept a broader set of values than the contract requires.
-            is_subtype(
-                contract.as_deref().unwrap_or("mixed"),
+            let implementation_type = resolve_self_type(
                 implementation.as_deref().unwrap_or("mixed"),
+                implementation_context,
+            );
+            let contract_type = resolve_self_type(
+                contract.as_deref().unwrap_or("mixed"),
+                contract_context,
+            );
+            is_subtype(
+                &contract_type,
+                &implementation_type,
                 classes,
                 interfaces,
             )
         });
-    let return_compatible = is_subtype(
+    let implementation_return = resolve_self_type(
         implementation_return.unwrap_or("mixed"),
+        implementation_context,
+    );
+    let contract_return = resolve_self_type(
         contract_return.unwrap_or("mixed"),
+        contract_context,
+    );
+    let return_compatible = is_subtype(
+        &implementation_return,
+        &contract_return,
         classes,
         interfaces,
     );
     parameters_compatible && return_compatible
+}
+
+fn resolve_self_type(type_name: &str, context: &str) -> String {
+    let mut resolved = String::with_capacity(type_name.len() + context.len());
+    let mut token = String::new();
+    let flush_token = |token: &mut String, resolved: &mut String| {
+        if token.eq_ignore_ascii_case("self") || token.eq_ignore_ascii_case("static") {
+            resolved.push_str(context);
+        } else {
+            resolved.push_str(token);
+        }
+        token.clear();
+    };
+    for character in type_name.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' || character == '\\' {
+            token.push(character);
+        } else {
+            flush_token(&mut token, &mut resolved);
+            resolved.push(character);
+        }
+    }
+    flush_token(&mut token, &mut resolved);
+    resolved
 }
 
 /// Determine whether every value of `actual` can be used where `expected` is required.
@@ -262,6 +303,11 @@ fn is_traversable_type(
                 | "recursivearrayiterator"
                 | "recursiveiteratoriterator"
                 | "splfileobject"
+                | "splobjectstorage"
+                | "recursivedirectoryiterator"
+                | "globiterator"
+                | "datetime"
+                | "datetimeimmutable"
         ) {
             return true;
         }
@@ -416,6 +462,7 @@ fn builtin_type_is_a(
         "exception" | "error" => Some("throwable"),
         "errorexception" | "jsonexception" | "logicexception" | "runtimeexception"
         | "reflectionexception" => Some("exception"),
+        "pdoexception" => Some("runtimeexception"),
         "typeerror" | "compileerror" | "arithmeticerror" | "assertionerror"
         | "unhandledmatcherror" | "valueerror" => Some("error"),
         "argumentcounterror" => Some("typeerror"),
@@ -506,6 +553,43 @@ pub(super) fn collect_class_interfaces(
                 | "underflowexception"
                 | "unexpectedvalueexception"
                 | "reflectionexception"
+                | "pdoexception"
+                | "arrayobject"
+                | "stdclass"
+                | "sessionhandler"
+                | "splfileinfo"
+                | "splfileobject"
+                | "splobjectstorage"
+                | "directoryiterator"
+                | "filesystemiterator"
+                | "recursivedirectoryiterator"
+                | "globiterator"
+                | "recursiveiteratoriterator"
+                | "datetime"
+                | "datetimeimmutable"
+                | "dateinterval"
+                | "datetimezone"
+                | "cachingiterator"
+                | "iteratoriterator"
+                | "filteriterator"
+                | "recursivefilteriterator"
+                | "callbackfilteriterator"
+                | "recursivecallbackfilteriterator"
+                | "parentiterator"
+                | "limititerator"
+                | "norewinditerator"
+                | "infiniteiterator"
+                | "appenditerator"
+                | "emptyiterator"
+                | "arrayiterator"
+                | "recursivearrayiterator"
+                | "recursivecachingiterator"
+                | "recursivetreeiterator"
+                | "multipleiterator"
+                | "reflectionfunctionabstract"
+                | "reflectionfunction"
+                | "reflectionmethod"
+                | "reflectionparameter"
         ) {
             return Err(format!("Class '{parent_name}' not found"));
         }
@@ -560,12 +644,18 @@ pub(super) fn collect_interface_methods<'a>(
                 "iterator",
                 "iteratoraggregate",
                 "countable",
+                "arrayaccess",
+                "serializable",
                 "outeriterator",
                 "recursiveiterator",
                 "jsonserializable",
                 "stringable",
                 "unitenum",
                 "backedenum",
+                "datetimeinterface",
+                "sessionhandlerinterface",
+                "sessionupdatetimestamphandlerinterface",
+                "reflector",
             ]
             .iter()
             .any(|builtin| parent.eq_ignore_ascii_case(builtin))

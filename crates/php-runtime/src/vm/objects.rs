@@ -283,13 +283,20 @@ pub(super) fn execute_instruction(
             } else {
                 name.clone()
             };
-            let resolved_name = if dynamic_name == "static" {
-                match variables.get("\0static_class") {
+            let resolved_name = match dynamic_name.as_str() {
+                "static" | "self" => match variables.get("\0static_class") {
                     Some(Value::String(class)) => class.clone(),
+                    _ if dynamic_name == "self" => {
+                        return Err("self used outside a class method".into())
+                    }
                     _ => return Err("static:: used outside a class method".into()),
-                }
-            } else {
-                dynamic_name
+                },
+                "parent" => access_scope
+                    .as_deref()
+                    .and_then(|scope| classes.get(&scope.to_ascii_lowercase()))
+                    .and_then(|scope| scope.parent.clone())
+                    .ok_or("parent used outside a class method")?,
+                _ => dynamic_name,
             };
             let name = &resolved_name;
             let dynamic_key = name.trim_start_matches('\\').to_ascii_lowercase();
@@ -325,7 +332,10 @@ pub(super) fn execute_instruction(
             let classes = merged_classes.as_ref().unwrap_or(classes);
             if let Some(class) = classes.get(&name.to_ascii_lowercase()) {
                 if let Some(trait_name) = class.unresolved_traits.first() {
-                    return Err(format!("Trait '{}' not found", trait_name));
+                    return Err(format!(
+                        "Trait '{}' not found (required by class '{}')",
+                        trait_name, class.name
+                    ));
                 }
             }
             if name.eq_ignore_ascii_case("ReflectionEnum") {
@@ -646,6 +656,68 @@ pub(super) fn execute_instruction(
                 stack.push(reflection_parameter_object(&function, position, origin));
                 return Ok(true);
             }
+            if name.eq_ignore_ascii_case("ReflectionProperty") {
+                let (arguments, _) = super::builtin_arguments::bind(
+                    "reflectionproperty::__construct",
+                    arguments,
+                    &reference_names,
+                    &argument_names,
+                )?;
+                let requested = arguments
+                    .first()
+                    .ok_or("ReflectionProperty::__construct() expects exactly 2 arguments")?;
+                let property_name = arguments
+                    .get(1)
+                    .ok_or("ReflectionProperty::__construct() expects exactly 2 arguments")?
+                    .show();
+                let (target_name, target_object) = match requested.dereference() {
+                    Value::Object(object) => {
+                        let class = object.borrow().class_name.clone();
+                        (class, Some(requested.clone()))
+                    }
+                    Value::String(class) => (class.clone(), None),
+                    value => return Err(format!("TypeError:ReflectionProperty::__construct(): Argument #1 ($objectOrClass) must be of type object|string, {} given", value.type_name())),
+                };
+                if let Some(property) = super::objects::find_property_in_scope(
+                    &target_name,
+                    &property_name,
+                    None,
+                    classes,
+                ) {
+                    let declaring = property
+                        .declaring_class
+                        .clone();
+                    stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                        class_name: "ReflectionProperty".into(),
+                        properties: HashMap::from([
+                            ("\0target_class".into(), Value::String(declaring)),
+                            ("\0property_name".into(), Value::String(property_name)),
+                        ]),
+                        property_order: Vec::new(),
+                        active_property_hooks: Default::default(),
+                        exception: None,
+                    }))));
+                    return Ok(true);
+                }
+                if let Some(Value::Object(object)) = target_object.as_ref() {
+                    if object.borrow().properties.contains_key(&property_name) {
+                        stack.push(Value::Object(Rc::new(RefCell::new(PhpObject {
+                            class_name: "ReflectionProperty".into(),
+                            properties: HashMap::from([
+                                ("\0target_class".into(), Value::String(target_name)),
+                                ("\0property_name".into(), Value::String(property_name)),
+                                ("\0dynamic_property".into(), Value::Bool(true)),
+                                ("\0target_object".into(), Value::Object(object.clone())),
+                            ]),
+                            property_order: Vec::new(),
+                            active_property_hooks: Default::default(),
+                            exception: None,
+                        }))));
+                        return Ok(true);
+                    }
+                }
+                return Err(format!("ReflectionException:Property {target_name}::${property_name} does not exist"));
+            }
             if name.eq_ignore_ascii_case("ReflectionMethod") {
                 let single_argument_form = arguments.len() == 1;
                 let (arguments, _) = super::builtin_arguments::bind(
@@ -699,7 +771,7 @@ pub(super) fn execute_instruction(
                     .ok_or_else(|| {
                         format!("ReflectionException:Class {class_name} does not exist")
                     })?;
-                let function = super::objects::find_method(
+                let function = super::objects::find_method_including_abstract(
                     &class_name,
                     &method_name.to_ascii_lowercase(),
                     classes,
@@ -817,6 +889,164 @@ pub(super) fn execute_instruction(
                     class_name: "stdClass".into(),
                     properties: HashMap::new(),
                     property_order: Vec::new(),
+                    active_property_hooks: Default::default(),
+                    exception: None,
+                })));
+                global_variables.register_destructor_object(&object);
+                stack.push(object);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("DateTime")
+                || name.eq_ignore_ascii_case("DateTimeImmutable")
+            {
+                let class_name = if name.eq_ignore_ascii_case("DateTimeImmutable") {
+                    "DateTimeImmutable"
+                } else {
+                    "DateTime"
+                };
+                let unix_timestamp = arguments.first().and_then(|argument| {
+                    argument
+                        .show()
+                        .strip_prefix('@')
+                        .and_then(|value| value.parse::<i64>().ok())
+                });
+                let timestamp = unix_timestamp.unwrap_or_else(|| {
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|duration| duration.as_secs() as i64)
+                            .unwrap_or_default()
+                    });
+                let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: class_name.into(),
+                    properties: HashMap::from([
+                        ("\0timestamp".into(), Value::Integer(timestamp)),
+                        ("\0utc".into(), Value::Bool(unix_timestamp.is_some())),
+                    ]),
+                    property_order: Vec::new(),
+                    active_property_hooks: Default::default(),
+                    exception: None,
+                })));
+                global_variables.register_destructor_object(&object);
+                stack.push(object);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("DateInterval") {
+                let interval = arguments
+                    .first()
+                    .ok_or("DateInterval::__construct() expects exactly 1 argument")?
+                    .show();
+                let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "DateInterval".into(),
+                    properties: HashMap::from([(
+                        "\0interval".into(),
+                        Value::String(interval),
+                    )]),
+                    property_order: Vec::new(),
+                    active_property_hooks: Default::default(),
+                    exception: None,
+                })));
+                global_variables.register_destructor_object(&object);
+                stack.push(object);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("DateTimeZone") {
+                let timezone = arguments
+                    .first()
+                    .ok_or("DateTimeZone::__construct() expects exactly 1 argument")?
+                    .show();
+                let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "DateTimeZone".into(),
+                    properties: HashMap::from([(
+                        "\0timezone".into(),
+                        Value::String(timezone),
+                    )]),
+                    property_order: Vec::new(),
+                    active_property_hooks: Default::default(),
+                    exception: None,
+                })));
+                global_variables.register_destructor_object(&object);
+                stack.push(object);
+                return Ok(true);
+            }
+            if name.eq_ignore_ascii_case("ArrayObject") {
+                let flags = arguments.get(1).cloned().unwrap_or(Value::Integer(0));
+                if let Some(Value::Array(array)) = arguments.first().map(Value::dereference) {
+                    let properties = array
+                        .entries
+                        .iter()
+                        .map(|(key, value)| {
+                            let key = match key {
+                                crate::ArrayKey::Integer(index) => index.to_string(),
+                                crate::ArrayKey::String(key) => key.clone(),
+                            };
+                            (key, value.clone())
+                        })
+                        .collect::<HashMap<_, _>>();
+                    let property_order = array
+                        .entries
+                        .iter()
+                        .map(|(key, _)| match key {
+                            crate::ArrayKey::Integer(index) => index.to_string(),
+                            crate::ArrayKey::String(key) => key.clone(),
+                        })
+                        .collect();
+                    let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                        class_name: "ArrayObject".into(),
+                        properties,
+                        property_order,
+                        active_property_hooks: Default::default(),
+                        exception: None,
+                    })));
+                    let _ = flags;
+                    global_variables.register_destructor_object(&object);
+                    stack.push(object);
+                    return Ok(true);
+                }
+                if arguments
+                    .first()
+                    .is_none_or(|value| matches!(value.dereference(), Value::Null))
+                {
+                    let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                        class_name: "ArrayObject".into(),
+                        properties: HashMap::new(),
+                        property_order: Vec::new(),
+                        active_property_hooks: Default::default(),
+                        exception: None,
+                    })));
+                    global_variables.register_destructor_object(&object);
+                    stack.push(object);
+                    return Ok(true);
+                }
+                return Err("TypeError:ArrayObject::__construct(): Argument #1 ($array) must be of type array|object|null".into());
+            }
+            if name.eq_ignore_ascii_case("ArrayIterator") {
+                let (properties, property_order) = match arguments.first().map(Value::dereference) {
+                    Some(Value::Array(array)) => {
+                        let mut properties = HashMap::new();
+                        let mut order = Vec::new();
+                        for (key, value) in &array.entries {
+                            let key = match key {
+                                crate::ArrayKey::Integer(index) => index.to_string(),
+                                crate::ArrayKey::String(key) => key.clone(),
+                            };
+                            order.push(key.clone());
+                            properties.insert(key, value.clone());
+                        }
+                        (properties, order)
+                    }
+                    Some(Value::Object(object)) => {
+                        let object = object.borrow();
+                        (object.properties.clone(), object.property_order.clone())
+                    }
+                    Some(Value::Null) | None => (HashMap::new(), Vec::new()),
+                    Some(value) => {
+                        return Err(format!("TypeError:ArrayIterator::__construct(): Argument #1 ($array) must be of type array|object, {} given", value.type_name()));
+                    }
+                };
+                let object = Value::Object(Rc::new(RefCell::new(PhpObject {
+                    class_name: "ArrayIterator".into(),
+                    properties,
+                    property_order,
                     active_property_hooks: Default::default(),
                     exception: None,
                 })));
@@ -1257,6 +1487,44 @@ pub(super) fn execute_instruction(
             )?;
             stack.push(Value::Reference(reference));
         }
+        Op::LoadPropertyArrayAppendReference(property, key_count, access_scope, in_constructor) => {
+            if stack.len() < key_count + 1 {
+                return Err("Invalid bytecode stack".into());
+            }
+            let raw_keys = stack.split_off(stack.len() - key_count);
+            let keys = raw_keys
+                .into_iter()
+                .map(|key| key.array_key())
+                .collect::<Result<Vec<_>, _>>()?;
+            let receiver = stack.pop().ok_or("Invalid bytecode stack")?;
+            let root = read_property(
+                &receiver,
+                property,
+                access_scope.as_deref(),
+                functions,
+                classes,
+                static_properties,
+                global_variables,
+                output,
+                steps,
+            )?;
+            let reference = Rc::new(RefCell::new(Value::Null));
+            let updated = root.array_append_reference_path(&keys, reference.clone())?;
+            assign_property(
+                &receiver,
+                property,
+                updated,
+                access_scope.as_deref(),
+                *in_constructor,
+                functions,
+                classes,
+                static_properties,
+                global_variables,
+                output,
+                steps,
+            )?;
+            stack.push(Value::Reference(reference));
+        }
         // Writes to inaccessible or undeclared properties are forwarded to __set when available.
         Op::SetProperty(property, access_scope, in_constructor) => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?;
@@ -1678,7 +1946,16 @@ pub(super) fn execute_instruction(
             stack.push(if *post { old_value } else { updated_value });
         }
         Op::IncrementStaticProperty(class_name, property, delta, post, access_scope) => {
-            let resolved_class = resolve_static_class(class_name, variables)?;
+            let scoped_class = match class_name.as_str() {
+                "self" => access_scope.as_deref().unwrap_or("self").to_string(),
+                "parent" => access_scope
+                    .as_deref()
+                    .and_then(|scope| classes.get(&scope.to_ascii_lowercase()))
+                    .and_then(|scope| scope.parent.clone())
+                    .unwrap_or_else(|| "parent".into()),
+                _ => class_name.clone(),
+            };
+            let resolved_class = resolve_static_class(&scoped_class, variables)?;
             let (owner, metadata) = static_property_owner(&resolved_class, property, classes)
                 .ok_or_else(|| {
                     format!("Undefined static property {resolved_class}::${property}")
@@ -3396,6 +3673,22 @@ pub(super) fn execute_instruction(
             stack.push(value);
         }
         Op::GetClassConstant(class_name, constant, access_scope) => {
+            if constant.eq_ignore_ascii_case("class") {
+                let resolved_name = match class_name.as_str() {
+                    "self" | "static" => access_scope.as_deref().unwrap_or(class_name),
+                    "parent" => access_scope
+                        .as_deref()
+                        .and_then(|scope| classes.get(&scope.to_ascii_lowercase()))
+                        .and_then(|scope| scope.parent.as_deref())
+                        .unwrap_or(class_name),
+                    _ => class_name.trim_start_matches('\\'),
+                };
+                let display_name = classes
+                    .get(&resolved_name.to_ascii_lowercase())
+                    .map_or_else(|| resolved_name.to_string(), |class| class.name.clone());
+                stack.push(Value::String(display_name));
+                return Ok(true);
+            }
             let dynamic_class;
             let class_name = if class_name == "\0dynamic" {
                 dynamic_class = stack
@@ -3414,6 +3707,18 @@ pub(super) fn execute_instruction(
                 return Ok(true);
             }
             if let Some(value) = crate::intl_class_constant(class_name, constant) {
+                stack.push(value);
+                return Ok(true);
+            }
+            if let Some(value) = crate::redis_class_constant(class_name, constant) {
+                stack.push(value);
+                return Ok(true);
+            }
+            if let Some(value) = crate::spl_class_constant(class_name, constant) {
+                stack.push(value);
+                return Ok(true);
+            }
+            if let Some(value) = crate::xmlreader_class_constant(class_name, constant) {
                 stack.push(value);
                 return Ok(true);
             }
@@ -4106,11 +4411,12 @@ fn resolve_static_class(
     class_name: &str,
     variables: &HashMap<String, Value>,
 ) -> Result<String, String> {
-    if class_name != "static" {
+    if class_name != "static" && class_name != "self" {
         return Ok(class_name.to_ascii_lowercase());
     }
     match variables.get("\0static_class") {
         Some(Value::String(class)) => Ok(class.clone()),
+        _ if class_name == "self" => Err("self:: used outside a class method".into()),
         _ => Err("static:: used outside a class method".into()),
     }
 }
@@ -4646,11 +4952,29 @@ pub(super) fn find_method<'a>(
     // Method lookup walks up the parent chain only after checking the concrete class.
     let normalized_name = class_name.to_ascii_lowercase();
     let class = classes.get(&normalized_name)?;
-    class.methods.get(method).or_else(|| {
+    class
+        .methods
+        .get(method)
+        .filter(|method| !method.is_abstract)
+        .or_else(|| {
         class
             .parent
             .as_deref()
             .and_then(|parent| find_method(parent, method, classes))
+        })
+}
+
+pub(super) fn find_method_including_abstract<'a>(
+    class_name: &str,
+    method: &str,
+    classes: &'a HashMap<String, BytecodeClass>,
+) -> Option<&'a BytecodeFunction> {
+    let class = classes.get(&class_name.to_ascii_lowercase())?;
+    class.methods.get(method).or_else(|| {
+        class
+            .parent
+            .as_deref()
+            .and_then(|parent| find_method_including_abstract(parent, method, classes))
     })
 }
 
@@ -4663,7 +4987,7 @@ pub(super) fn collect_properties(
     let normalized_name = class_name.to_ascii_lowercase();
     let class = classes
         .get(&normalized_name)
-        .ok_or_else(|| format!("Class '{class_name}' not found"))?;
+        .ok_or_else(|| format!("Class '{class_name}' not found while collecting object properties"))?;
     if let Some(parent) = class
         .parent
         .as_deref()
@@ -4688,7 +5012,7 @@ pub(super) fn collect_property_order(
 ) -> Result<(), String> {
     let class = classes
         .get(&class_name.to_ascii_lowercase())
-        .ok_or_else(|| format!("Class '{class_name}' not found"))?;
+        .ok_or_else(|| format!("Class '{class_name}' not found while collecting property order"))?;
     if let Some(parent) = class
         .parent
         .as_deref()

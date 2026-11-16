@@ -1235,6 +1235,23 @@ fn collect_traversable(
         Value::Object(object) => {
             let class_name = object.borrow().class_name.clone();
             let normalized = class_name.to_ascii_lowercase();
+            if matches!(normalized.as_str(), "arrayiterator" | "arrayobject") {
+                let object = object.borrow();
+                let mut rows = Vec::new();
+                for name in &object.property_order {
+                    let Some(value) = object.properties.get(name) else {
+                        continue;
+                    };
+                    let key = name
+                        .parse::<i64>()
+                        .ok()
+                        .filter(|index| index.to_string() == *name)
+                        .map(ArrayKey::Integer)
+                        .unwrap_or_else(|| ArrayKey::String(name.clone()));
+                    rows.push((key, value.clone()));
+                }
+                return Ok(rows);
+            }
             if super::is_a_type(
                 &normalized,
                 "iteratoraggregate",
@@ -2161,6 +2178,17 @@ pub(super) fn execute_instruction(
                             .show();
                         stack.push(Value::Bool(runtime_function_exists(&name, functions)));
                     }
+                    "extension_loaded" => {
+                        let name = arguments
+                            .first()
+                            .ok_or("extension_loaded() expects exactly 1 argument")?
+                            .show()
+                            .to_ascii_lowercase();
+                        stack.push(Value::Bool(matches!(
+                            name.as_str(),
+                            "core" | "date" | "filter" | "hash" | "json" | "pcre" | "standard"
+                        )));
+                    }
                     "spl_autoload_register" => {
                         let callback = arguments
                             .first()
@@ -2419,6 +2447,38 @@ pub(super) fn execute_instruction(
                         let built_in_class = matches!(
                             key.as_str(),
                             "generator"
+                                | "arrayobject"
+                                | "stdclass"
+                                | "sessionhandler"
+                                | "datetime"
+                                | "datetimeimmutable"
+                                | "datetimezone"
+                                | "cachingiterator"
+                                | "iteratoriterator"
+                                | "filteriterator"
+                                | "recursivefilteriterator"
+                                | "callbackfilteriterator"
+                                | "recursivecallbackfilteriterator"
+                                | "parentiterator"
+                                | "limititerator"
+                                | "norewinditerator"
+                                | "infiniteiterator"
+                                | "appenditerator"
+                                | "emptyiterator"
+                                | "arrayiterator"
+                                | "recursivearrayiterator"
+                                | "recursivecachingiterator"
+                                | "recursivetreeiterator"
+                                | "multipleiterator"
+                                | "dateinterval"
+                                | "splfileinfo"
+                                | "splfileobject"
+                                | "splobjectstorage"
+                                | "directoryiterator"
+                                | "filesystemiterator"
+                                | "recursivedirectoryiterator"
+                                | "globiterator"
+                                | "recursiveiteratoriterator"
                                 | "pdo"
                                 | "pdostatement"
                                 | "reflectionclass"
@@ -2434,6 +2494,7 @@ pub(super) fn execute_instruction(
                                 | "reflectionuniontype"
                                 | "reflectionintersectiontype"
                                 | "reflectionfunction"
+                                | "reflectionfunctionabstract"
                                 | "reflectionmethod"
                                 | "reflectionproperty"
                                 | "reflectionattribute"
@@ -2939,7 +3000,9 @@ pub(super) fn execute_instruction(
                                 method.as_str(),
                                 "getname"
                                     | "getvalue"
+                                    | "getrawvalue"
                                     | "setvalue"
+                                    | "setrawvalue"
                                     | "setaccessible"
                                     | "getdeclaringclass"
                                     | "gettype"
@@ -4375,6 +4438,7 @@ pub(super) fn execute_instruction(
                     | "substr_compare"
                     | "strtok"
                     | "levenshtein"
+                    | "soundex"
                     | "substr"
                     | "substr_replace"
                     | "explode"
@@ -4980,6 +5044,51 @@ pub(super) fn execute_instruction(
                 ));
             };
             let class_name = object.borrow().class_name.clone();
+            if class_name.eq_ignore_ascii_case("DateTime")
+                || class_name.eq_ignore_ascii_case("DateTimeImmutable")
+            {
+                let timestamp = object
+                    .borrow()
+                    .properties
+                    .get("\0timestamp")
+                    .map(Value::dereference)
+                    .and_then(|value| match value {
+                        Value::Integer(value) => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let utc = object
+                    .borrow()
+                    .properties
+                    .get("\0utc")
+                    .is_some_and(Value::truthy);
+                match method.as_str() {
+                    "format" => {
+                        let format = arguments.first().map(Value::show).unwrap_or_default();
+                        stack.push(Value::String(format_php_date(&format, timestamp, utc)?));
+                        return Ok(true);
+                    }
+                    "gettimestamp" => {
+                        stack.push(Value::Integer(timestamp));
+                        return Ok(true);
+                    }
+                    "settimestamp" if class_name.eq_ignore_ascii_case("DateTime") => {
+                        let value = arguments
+                            .first()
+                            .ok_or("DateTime::setTimestamp() expects exactly 1 argument")?;
+                        let timestamp = value.show().parse::<i64>().map_err(|_| {
+                            "TypeError:DateTime::setTimestamp(): Argument #1 ($timestamp) must be of type int"
+                        })?;
+                        object
+                            .borrow_mut()
+                            .properties
+                            .insert("\0timestamp".into(), Value::Integer(timestamp));
+                        stack.push(Value::Object(object));
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+            }
             if class_name.eq_ignore_ascii_case("ReflectionClass")
                 || class_name.eq_ignore_ascii_case("ReflectionObject")
                 || class_name.eq_ignore_ascii_case("ReflectionClassConstant")
@@ -7243,7 +7352,7 @@ pub(super) fn execute_instruction(
                             .first()
                             .ok_or("ReflectionClass::getMethod() expects exactly 1 argument")?
                             .show();
-                        let method = find_method(&target, &name.to_ascii_lowercase(), classes)
+                        let method = super::objects::find_method_including_abstract(&target, &name.to_ascii_lowercase(), classes)
                             .ok_or_else(|| {
                                 format!(
                                     "ReflectionException:Method {target}::{name}() does not exist"
@@ -7368,7 +7477,7 @@ pub(super) fn execute_instruction(
                             .ok_or("Invalid ReflectionMethod name")?
                             .show();
                         let function =
-                            find_method(&target, &method_name.to_ascii_lowercase(), classes)
+                            super::objects::find_method_including_abstract(&target, &method_name.to_ascii_lowercase(), classes)
                                 .ok_or("Reflected method no longer exists")?;
                         let receiver = if function.is_static {
                             if let Some(argument) = arguments.first() {
@@ -7439,7 +7548,7 @@ pub(super) fn execute_instruction(
                             .ok_or("Invalid ReflectionMethod name")?
                             .show();
                         let function =
-                            find_method(&target, &method_name.to_ascii_lowercase(), classes)
+                            super::objects::find_method_including_abstract(&target, &method_name.to_ascii_lowercase(), classes)
                                 .ok_or("Reflected method no longer exists")?;
                         let receiver = if function.is_static {
                             Value::String(target.clone())
@@ -7528,7 +7637,7 @@ pub(super) fn execute_instruction(
                             .ok_or("Invalid ReflectionMethod name")?
                             .show();
                         let function =
-                            find_method(&target, &method_name.to_ascii_lowercase(), classes)
+                            super::objects::find_method_including_abstract(&target, &method_name.to_ascii_lowercase(), classes)
                                 .ok_or("Reflected method no longer exists")?;
                         match method.as_str() {
                             "getnumberofparameters" => {
@@ -7598,7 +7707,7 @@ pub(super) fn execute_instruction(
                             .ok_or("Invalid ReflectionMethod name")?
                             .show();
                         let function =
-                            find_method(&target, &method_name.to_ascii_lowercase(), classes)
+                            super::objects::find_method_including_abstract(&target, &method_name.to_ascii_lowercase(), classes)
                                 .ok_or("Reflected method no longer exists")?;
                         Value::Integer(reflection_method_modifiers(function))
                     }
@@ -7642,7 +7751,7 @@ pub(super) fn execute_instruction(
                             .ok_or("Invalid ReflectionMethod name")?
                             .show();
                         let function =
-                            find_method(&target, &method_name.to_ascii_lowercase(), classes)
+                            super::objects::find_method_including_abstract(&target, &method_name.to_ascii_lowercase(), classes)
                                 .ok_or("Reflected method no longer exists")?;
                         let matches = match method.as_str() {
                             "ispublic" => function.visibility == MemberVisibility::Public,
@@ -8264,7 +8373,7 @@ pub(super) fn execute_instruction(
                         .get("\0property_name")
                         .cloned()
                         .ok_or("Invalid ReflectionProperty")?,
-                    ("reflectionproperty", "getvalue") => {
+                    ("reflectionproperty", "getvalue" | "getrawvalue") => {
                         if internal
                             .get("\0dynamic_property")
                             .is_some_and(Value::truthy)
@@ -8353,7 +8462,7 @@ pub(super) fn execute_instruction(
                         }
                         }
                     }
-                    ("reflectionproperty", "setvalue") => {
+                    ("reflectionproperty", "setvalue" | "setrawvalue") => {
                         if internal
                             .get("\0dynamic_property")
                             .is_some_and(Value::truthy)
@@ -9544,7 +9653,7 @@ pub(super) fn execute_instruction(
                 let class = classes
                     .get(&target.to_ascii_lowercase())
                     .ok_or_else(|| format!("ReflectionException:Class {target} does not exist"))?;
-                let function = find_method(target, &method_name.to_ascii_lowercase(), classes)
+                let function = super::objects::find_method_including_abstract(target, &method_name.to_ascii_lowercase(), classes)
                     .ok_or_else(|| {
                         format!(
                             "ReflectionException:Method {target}::{method_name}() does not exist"

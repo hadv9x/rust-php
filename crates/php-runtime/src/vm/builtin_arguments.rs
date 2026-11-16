@@ -393,8 +393,12 @@ fn signature(name: &str) -> Option<Signature> {
         | "reflectionproperty::isvirtual"
         | "reflectionproperty::hasdefaultvalue"
         | "reflectionproperty::getdefaultvalue" => (&[], &[], false),
-        "reflectionproperty::getvalue" => (&["object"], &[(0, N)], false),
-        "reflectionproperty::setvalue" => (&["object", "value"], &[(0, N)], false),
+        "reflectionproperty::getvalue" | "reflectionproperty::getrawvalue" => {
+            (&["object"], &[(0, N)], false)
+        }
+        "reflectionproperty::setvalue" | "reflectionproperty::setrawvalue" => {
+            (&["object", "value"], &[(0, N)], false)
+        }
         "reflectionproperty::setaccessible" => (&["accessible"], &[], false),
         "reflectionproperty::getdeclaringclass" => (&[], &[], false),
         "reflectionproperty::isinitialized" => (&["object"], &[(0, N)], false),
@@ -545,6 +549,7 @@ fn signature(name: &str) -> Option<Signature> {
         | "pdo::rollback" => (&[], &[], false),
         "pdo::getavailabledrivers" => (&[], &[], false),
         "function_exists" => (&["function"], &[], false),
+        "extension_loaded" => (&["extension"], &[], false),
         "getenv" => (&["name", "local_only"], &[(0, N), (1, F)], false),
         "putenv" => (&["assignment"], &[], false),
         "php_sapi_name" => (&[], &[], false),
@@ -731,7 +736,7 @@ fn signature(name: &str) -> Option<Signature> {
         "json_last_error" | "json_last_error_msg" => (&[], &[], false),
         "strtolower" | "strtoupper" | "strlen" | "ucfirst" | "lcfirst" | "strrev" | "str_rot13" | "quotemeta"
         | "addslashes" | "stripslashes" | "bin2hex" | "hex2bin" | "ord" | "str_increment"
-        | "str_decrement" => (&["string"], &[], false),
+        | "str_decrement" | "soundex" => (&["string"], &[], false),
         "crc32" => (&["string"], &[], false),
         "md5" => (&["string", "binary"], &[(1, F)], false),
         "md5_file" => (&["filename", "binary"], &[(1, F)], false),
@@ -1412,6 +1417,7 @@ mod tests {
             "func_get_args",
             "func_num_args",
             "function_exists",
+            "extension_loaded",
             "fwrite",
             "gc_collect_cycles",
             "get_called_class",

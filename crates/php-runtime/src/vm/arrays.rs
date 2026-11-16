@@ -433,6 +433,26 @@ pub(super) fn execute_instruction(
             )?;
             stack.push(value);
         }
+        Op::LoadArrayAppendReference(variable, key_count) => {
+            if stack.len() < *key_count {
+                return Err("Invalid bytecode stack".into());
+            }
+            let raw_keys = stack.split_off(stack.len() - key_count);
+            let keys = raw_keys
+                .into_iter()
+                .map(|key| array_key_with_diagnostic(key, globals))
+                .collect::<Result<Vec<_>, _>>()?;
+            let reference = super::reference_cell_for_append_path(
+                variable,
+                &keys,
+                variables,
+                bindings,
+                globals,
+                global_scope,
+                frame_id,
+            )?;
+            stack.push(Value::Reference(reference));
+        }
         Op::ArrayAppend => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?.dereference();
             let array = stack.pop().ok_or("Invalid bytecode stack")?;

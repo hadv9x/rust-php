@@ -273,7 +273,22 @@ fn constant_parameter_value_inner(
             }
             Ok(Value::from_array_entries(result))
         }
-        Expr::NewObject(class_name, arguments, _) if arguments.is_empty() => {
+        Expr::NewObject(class_name, arguments, _) => {
+            // PHP 8.1 permits `new Class(constant, ...)` in parameter defaults.
+            // Validate those arguments here even though parameter defaults are
+            // represented as fresh placeholder objects by the current VM.
+            let _arguments = arguments
+                .iter()
+                .map(|argument| {
+                    constant_parameter_value_inner(
+                        argument,
+                        program,
+                        class_context,
+                        parent_context,
+                        resolving,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let mut properties = std::collections::HashMap::new();
             properties.insert(
                 "\0php-rust-parameter-default-object".to_string(),
@@ -432,6 +447,18 @@ fn resolve_class_constant(
         ));
     }
     if let Some(value) = php_runtime::pdo_class_constant(resolved_name, constant_name) {
+        return Ok(value);
+    }
+    if let Some(value) = php_runtime::datetime_class_constant(resolved_name, constant_name) {
+        return Ok(value);
+    }
+    if let Some(value) = php_runtime::redis_class_constant(resolved_name, constant_name) {
+        return Ok(value);
+    }
+    if let Some(value) = php_runtime::spl_class_constant(resolved_name, constant_name) {
+        return Ok(value);
+    }
+    if let Some(value) = php_runtime::xmlreader_class_constant(resolved_name, constant_name) {
         return Ok(value);
     }
     if let Some(value) = php_runtime::intl_class_constant(resolved_name, constant_name) {

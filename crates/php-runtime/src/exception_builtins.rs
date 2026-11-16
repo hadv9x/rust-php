@@ -36,6 +36,7 @@ const EXCEPTION_CLASSES: &[&str] = &[
     "underflowexception",
     "unexpectedvalueexception",
     "reflectionexception",
+    "pdoexception",
 ];
 
 pub(crate) fn is_class(name: &str) -> bool {
@@ -47,7 +48,14 @@ pub(crate) fn is_class(name: &str) -> bool {
 pub(crate) fn is_interface(name: &str) -> bool {
     matches!(
         name.trim_start_matches('\\').to_ascii_lowercase().as_str(),
-        "throwable" | "jsonserializable" | "stringable" | "countable"
+        "throwable"
+            | "jsonserializable"
+            | "stringable"
+            | "countable"
+            | "sessionhandlerinterface"
+            | "sessionupdatetimestamphandlerinterface"
+            | "datetimeinterface"
+            | "reflector"
     )
 }
 
@@ -84,6 +92,7 @@ pub(crate) fn canonical_name(name: &str) -> Option<&'static str> {
             "underflowexception" => "UnderflowException",
             "unexpectedvalueexception" => "UnexpectedValueException",
             "reflectionexception" => "ReflectionException",
+            "pdoexception" => "PDOException",
             _ => unreachable!(),
         })
 }
@@ -111,6 +120,7 @@ pub(crate) fn parent_class(name: &str) -> Option<&'static str> {
         "badmethodcallexception" => Some("BadFunctionCallException"),
         "runtimeexception" => Some("Exception"),
         "reflectionexception" => Some("Exception"),
+        "pdoexception" => Some("RuntimeException"),
         "outofboundsexception"
         | "overflowexception"
         | "rangeexception"

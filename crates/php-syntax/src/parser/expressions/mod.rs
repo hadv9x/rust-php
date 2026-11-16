@@ -1290,7 +1290,11 @@ impl Parser<'_> {
                         }
                     };
                     if member_name.eq_ignore_ascii_case("class") && self.peek() != &TokenKind::Lp {
-                        Expr::String(class_name)
+                        if matches!(class_name.as_str(), "self" | "static" | "parent") {
+                            Expr::ClassConstant(class_name, member_name)
+                        } else {
+                            Expr::String(class_name)
+                        }
                     } else if self.eat(&TokenKind::Lp) {
                         if self.first_class_callable_marker() {
                             Expr::FirstClassCallable(

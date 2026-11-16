@@ -46,12 +46,105 @@ pub(super) fn constant_value(expression: &Expr) -> Result<Value, String> {
     constant_value_in_class(expression, None, None)
 }
 
+pub(super) fn constant_value_in_interface(
+    expression: &Expr,
+    interface: &php_syntax::InterfaceDecl,
+    program: &php_syntax::Program,
+) -> Result<Value, String> {
+    fn qualify_self(expression: &Expr, interface: &php_syntax::InterfaceDecl) -> Expr {
+        match expression {
+            Expr::ClassConstant(owner, name) if owner.eq_ignore_ascii_case("self") => {
+                Expr::ClassConstant(interface.name.clone(), name.clone())
+            }
+            Expr::Binary(operation, left, right) => Expr::Binary(
+                *operation,
+                Box::new(qualify_self(left, interface)),
+                Box::new(qualify_self(right, interface)),
+            ),
+            Expr::Negate(value) => Expr::Negate(Box::new(qualify_self(value, interface))),
+            Expr::Positive(value) => Expr::Positive(Box::new(qualify_self(value, interface))),
+            Expr::Ternary { condition, then_value, else_value } => Expr::Ternary {
+                condition: Box::new(qualify_self(condition, interface)),
+                then_value: Box::new(qualify_self(then_value, interface)),
+                else_value: Box::new(qualify_self(else_value, interface)),
+            },
+            Expr::ShorthandTernary { condition, else_value } => Expr::ShorthandTernary {
+                condition: Box::new(qualify_self(condition, interface)),
+                else_value: Box::new(qualify_self(else_value, interface)),
+            },
+            Expr::Array(entries) => Expr::Array(entries.iter().map(|entry| php_syntax::ArrayEntry {
+                key: entry.key.as_ref().map(|key| qualify_self(key, interface)),
+                value: qualify_self(&entry.value, interface),
+                unpack: entry.unpack,
+                by_reference: entry.by_reference,
+            }).collect()),
+            _ => expression.clone(),
+        }
+    }
+    constant_value_in_class(&qualify_self(expression, interface), None, Some(program))
+}
+
 pub(super) fn constant_value_in_class(
     expression: &Expr,
     class: Option<&php_syntax::ClassDecl>,
     program: Option<&php_syntax::Program>,
 ) -> Result<Value, String> {
+    fn strict_constant_equal(left: &Value, right: &Value) -> Result<bool, String> {
+        match (left, right) {
+            (Value::Null, Value::Null) => Ok(true),
+            (Value::Bool(left), Value::Bool(right)) => Ok(left == right),
+            (Value::Integer(left), Value::Integer(right)) => Ok(left == right),
+            (Value::Number(left), Value::Number(right)) => Ok(left == right),
+            (Value::String(left), Value::String(right)) => Ok(left == right),
+            (left, right) => Err(format!(
+                "strict comparison in a class constant requires matching scalar types, got {} and {}",
+                super::constant_value_type_name(left),
+                super::constant_value_type_name(right)
+            )),
+        }
+    }
+    fn constant_truthy(value: &Value) -> bool {
+        match value {
+            Value::Null => false,
+            Value::Bool(value) => *value,
+            Value::Integer(value) => *value != 0,
+            Value::Number(value) => *value != 0.0,
+            Value::String(value) => !value.is_empty() && value != "0",
+            Value::Array(value) => !value.is_empty(),
+            _ => true,
+        }
+    }
+    fn inherited_interface_constant<'a>(
+        program: &'a php_syntax::Program,
+        interface_name: &str,
+        name: &str,
+        depth: usize,
+    ) -> Option<&'a php_syntax::ClassConstantDecl> {
+        if depth > 64 {
+            return None;
+        }
+        let interface = program
+            .interfaces
+            .iter()
+            .find(|interface| interface.name.eq_ignore_ascii_case(interface_name))?;
+        interface
+            .constants
+            .iter()
+            .find(|constant| constant.name == name)
+            .or_else(|| {
+                interface.parents.iter().find_map(|parent| {
+                    inherited_interface_constant(program, parent, name, depth + 1)
+                })
+            })
+    }
     match expression {
+        Expr::MagicConstant(name)
+            if name.eq_ignore_ascii_case("__class__") && class.is_some() =>
+        {
+            Ok(Value::String(
+                class.expect("checked class context").name.trim_start_matches('\\').to_string(),
+            ))
+        }
         Expr::Integer(value) => Ok(Value::Integer(*value)),
         Expr::Number(value) => Ok(Value::Number(*value)),
         Expr::String(value) => Ok(Value::String(value.clone())),
@@ -102,6 +195,56 @@ pub(super) fn constant_value_in_class(
             let left = integer(left)?;
             let right = integer(right)?;
             Ok(Value::Integer(left | right))
+        }
+        Expr::Binary(BinaryOp::StrictEqual | BinaryOp::StrictNotEqual, left, right) => {
+            let left = constant_value_in_class(left, class, program)?;
+            let right = constant_value_in_class(right, class, program)?;
+            let equal = strict_constant_equal(&left, &right)?;
+            Ok(Value::Bool(if matches!(expression, Expr::Binary(BinaryOp::StrictEqual, _, _)) {
+                equal
+            } else {
+                !equal
+            }))
+        }
+        Expr::Binary(BinaryOp::LogicalAnd | BinaryOp::LogicalOr, left, right) => {
+            let left = constant_value_in_class(left, class, program)?;
+            let right = constant_value_in_class(right, class, program)?;
+            Ok(Value::Bool(if matches!(expression, Expr::Binary(BinaryOp::LogicalAnd, _, _)) {
+                constant_truthy(&left) && constant_truthy(&right)
+            } else {
+                constant_truthy(&left) || constant_truthy(&right)
+            }))
+        }
+        Expr::Binary(BinaryOp::Less, left, right) => {
+            let left = constant_value_in_class(left, class, program)?;
+            let right = constant_value_in_class(right, class, program)?;
+            match (left, right) {
+                (Value::Integer(left), Value::Integer(right)) => Ok(Value::Bool(left < right)),
+                (Value::Number(left), Value::Number(right)) => Ok(Value::Bool(left < right)),
+                (Value::Integer(left), Value::Number(right)) => {
+                    Ok(Value::Bool((left as f64) < right))
+                }
+                (Value::Number(left), Value::Integer(right)) => {
+                    Ok(Value::Bool(left < (right as f64)))
+                }
+                _ => Err("less-than in a class constant requires numeric constants".into()),
+            }
+        }
+        Expr::Ternary { condition, then_value, else_value } => {
+            let condition = constant_value_in_class(condition, class, program)?;
+            constant_value_in_class(
+                if constant_truthy(&condition) { then_value } else { else_value },
+                class,
+                program,
+            )
+        }
+        Expr::ShorthandTernary { condition, else_value } => {
+            let condition_value = constant_value_in_class(condition, class, program)?;
+            if constant_truthy(&condition_value) {
+                Ok(condition_value)
+            } else {
+                constant_value_in_class(else_value, class, program)
+            }
         }
         Expr::Binary(operation, left, right)
             if matches!(
@@ -219,6 +362,18 @@ pub(super) fn constant_value_in_class(
             if let Some(value) = php_runtime::pdo_class_constant(owner, name) {
                 return Ok(value);
             }
+            if let Some(value) = php_runtime::datetime_class_constant(owner, name) {
+                return Ok(value);
+            }
+            if let Some(value) = php_runtime::redis_class_constant(owner, name) {
+                return Ok(value);
+            }
+            if let Some(value) = php_runtime::spl_class_constant(owner, name) {
+                return Ok(value);
+            }
+            if let Some(value) = php_runtime::xmlreader_class_constant(owner, name) {
+                return Ok(value);
+            }
             if let Some(value) = php_runtime::intl_class_constant(owner, name) {
                 return Ok(value);
             }
@@ -264,18 +419,19 @@ pub(super) fn constant_value_in_class(
                     })
                 });
             let Some(target) = current else {
-                if let Some(interface) = program.and_then(|program| {
-                    program
+                if let Some(program) = program {
+                    if let Some(constant) =
+                        inherited_interface_constant(program, owner, name, 0)
+                    {
+                        return constant_value_in_class(&constant.value, None, Some(program));
+                    }
+                    if program
                         .interfaces
                         .iter()
-                        .find(|interface| interface.name.eq_ignore_ascii_case(owner))
-                }) {
-                    let constant = interface
-                        .constants
-                        .iter()
-                        .find(|constant| constant.name == *name)
-                        .ok_or_else(|| format!("Undefined class constant {owner}::{name}"))?;
-                    return constant_value_in_class(&constant.value, None, program);
+                        .any(|interface| interface.name.eq_ignore_ascii_case(owner))
+                    {
+                        return Err(format!("Undefined class constant {owner}::{name}"));
+                    }
                 }
                 return Err(format!("Cannot resolve class constant {owner}::{name}"));
             };
@@ -291,15 +447,7 @@ pub(super) fn constant_value_in_class(
                 .or_else(|| {
                     program.and_then(|program| {
                         target.interfaces.iter().find_map(|interface_name| {
-                            program
-                                .interfaces
-                                .iter()
-                                .find(|interface| {
-                                    interface.name.eq_ignore_ascii_case(interface_name)
-                                })?
-                                .constants
-                                .iter()
-                                .find(|constant| constant.name == *name)
+                            inherited_interface_constant(program, interface_name, name, 0)
                         })
                     })
                 })
@@ -381,6 +529,33 @@ pub(super) fn class_property_default(
     class: &php_syntax::ClassDecl,
     program: &php_syntax::Program,
 ) -> Result<Option<Value>, String> {
+    fn find_interface_constant<'a>(
+        interface: &'a php_syntax::InterfaceDecl,
+        name: &str,
+        program: &'a php_syntax::Program,
+        depth: usize,
+    ) -> Option<&'a php_syntax::ClassConstantDecl> {
+        if depth > 64 {
+            return None;
+        }
+        interface
+            .constants
+            .iter()
+            .find(|constant| constant.name == name)
+            .or_else(|| {
+                interface.parents.iter().find_map(|parent| {
+                    find_interface_constant(
+                        program
+                            .interfaces
+                            .iter()
+                            .find(|candidate| candidate.name.eq_ignore_ascii_case(parent))?,
+                        name,
+                        program,
+                        depth + 1,
+                    )
+                })
+            })
+    }
     fn find_class_constant<'a>(
         class: &'a php_syntax::ClassDecl,
         name: &str,
@@ -396,13 +571,15 @@ pub(super) fn class_property_default(
             .find(|constant| constant.name == name)
             .or_else(|| {
                 class.interfaces.iter().find_map(|interface_name| {
-                    program
-                        .interfaces
-                        .iter()
-                        .find(|interface| interface.name.eq_ignore_ascii_case(interface_name))?
-                        .constants
-                        .iter()
-                        .find(|constant| constant.name == name)
+                    find_interface_constant(
+                        program
+                            .interfaces
+                            .iter()
+                            .find(|interface| interface.name.eq_ignore_ascii_case(interface_name))?,
+                        name,
+                        program,
+                        depth + 1,
+                    )
                 })
             })
             .or_else(|| {
@@ -429,6 +606,9 @@ pub(super) fn class_property_default(
             return Err("class property default nesting is too deep".into());
         }
         match expression {
+            Expr::MagicConstant(name) if name.eq_ignore_ascii_case("__class__") => {
+                Ok(Value::String(class.name.trim_start_matches('\\').to_string()))
+            }
             Expr::ClassConstant(owner, name) if name.eq_ignore_ascii_case("class") => {
                 Ok(Value::String(owner.trim_start_matches('\\').to_string()))
             }
@@ -436,6 +616,30 @@ pub(super) fn class_property_default(
                 if php_runtime::pdo_class_constant(owner, name).is_some() =>
             {
                 Ok(php_runtime::pdo_class_constant(owner, name).expect("checked PDO constant"))
+            }
+            Expr::ClassConstant(owner, name)
+                if php_runtime::datetime_class_constant(owner, name).is_some() =>
+            {
+                Ok(php_runtime::datetime_class_constant(owner, name)
+                    .expect("checked DateTime constant"))
+            }
+            Expr::ClassConstant(owner, name)
+                if php_runtime::redis_class_constant(owner, name).is_some() =>
+            {
+                Ok(php_runtime::redis_class_constant(owner, name)
+                    .expect("checked Redis constant"))
+            }
+            Expr::ClassConstant(owner, name)
+                if php_runtime::spl_class_constant(owner, name).is_some() =>
+            {
+                Ok(php_runtime::spl_class_constant(owner, name)
+                    .expect("checked SPL constant"))
+            }
+            Expr::ClassConstant(owner, name)
+                if php_runtime::xmlreader_class_constant(owner, name).is_some() =>
+            {
+                Ok(php_runtime::xmlreader_class_constant(owner, name)
+                    .expect("checked XMLReader constant"))
             }
             Expr::ClassConstant(owner, name)
                 if php_runtime::intl_class_constant(owner, name).is_some() =>
@@ -526,10 +730,7 @@ pub(super) fn class_property_default(
                         .iter()
                         .find(|candidate| candidate.name.eq_ignore_ascii_case(owner))
                     {
-                        let constant = interface
-                            .constants
-                            .iter()
-                            .find(|constant| constant.name == *name)
+                        let constant = find_interface_constant(interface, name, program, 0)
                             .ok_or_else(|| format!("Undefined class constant {owner}::{name}"))?;
                         return evaluate(&constant.value, class, program, depth + 1);
                     }
@@ -663,6 +864,8 @@ pub(super) fn matches_type(value: &Value, type_name: &str) -> bool {
     match type_name.trim_start_matches('?') {
         "mixed" => true,
         "null" => matches!(value, Value::Null),
+        "true" => matches!(value, Value::Bool(true)),
+        "false" => matches!(value, Value::Bool(false)),
         "int" | "integer" => {
             matches!(value, Value::Integer(_))
                 || matches!(value, Value::Number(number) if number.is_finite() && number.fract() == 0.0)

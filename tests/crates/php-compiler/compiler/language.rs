@@ -8,9 +8,84 @@ fn class_property_defaults_accept_nested_constant_arrays() {
 }
 
 #[test]
+fn php81_parameter_defaults_accept_new_with_constant_arguments() {
+    let source = r#"<?php
+        class DefaultObject {}
+        function with_object($value = new DefaultObject(true, 3, ['mode' => 'safe'])) {
+            return get_class($value);
+        }
+        echo with_object(), ':', with_object(new DefaultObject()), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "DefaultObject:DefaultObject\n");
+}
+
+#[test]
+fn conditionally_declared_trait_is_available_to_class_metadata() {
+    let source = r#"<?php
+        if (true) { trait ConditionalShim { public function value() { return 'then'; } } }
+        else { trait ConditionalShim { public function value() { return 'else'; } } }
+        class UsesConditionalShim { use ConditionalShim; }
+        echo (new UsesConditionalShim())->value(), "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "then\n");
+}
+
+#[test]
 fn laravel_request_property_defaults_accept_inherited_symfony_header_constants() {
     let source = r#"<?php namespace Illuminate\Http; class Request { public int $forwarded = Request::HEADER_X_FORWARDED_FOR; } $request = new Request(); echo $request->forwarded;"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2");
+}
+
+#[test]
+fn class_property_defaults_resolve_constants_from_parent_interfaces() {
+    let source = r#"<?php
+        interface RootFlags { public const SUNDAY = 0; }
+        interface DateFlags extends RootFlags {}
+        class CarbonLike implements DateFlags {
+            public int $sunday = DateFlags::SUNDAY;
+        }
+        echo (new CarbonLike())->sunday, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0\n");
+}
+
+#[test]
+fn class_constant_arrays_resolve_constants_from_parent_interfaces() {
+    let source = r#"<?php
+        interface RootValues { public const BASE = 4; }
+        interface ChildValues extends RootValues {}
+        class CarbonIntervalLike { public const VALUES = [ChildValues::BASE, 3]; }
+        echo CarbonIntervalLike::VALUES[0] + CarbonIntervalLike::VALUES[1], "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "7\n");
+}
+
+#[test]
+fn class_constant_expressions_support_strict_scalar_comparisons() {
+    let source = r#"<?php
+        class PlatformFlags {
+            public const IS_WINDOWS = PHP_OS_FAMILY === 'Windows';
+            public const IS_NOT_WINDOWS = PHP_OS_FAMILY !== 'Windows';
+        }
+        echo PlatformFlags::IS_WINDOWS === false, ':', PlatformFlags::IS_NOT_WINDOWS === true, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:1\n");
+}
+
+#[test]
+fn reference_assignment_can_target_a_new_array_append_slot() {
+    let source = r#"<?php
+        function build() {
+            $result = [];
+            $cursor = &$result;
+            $cursor = &$cursor[];
+            $cursor['name'] = 'nested';
+            return $result;
+        }
+        $result = build();
+        echo $result[0]['name'], "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "nested\n");
 }
 
 #[test]
@@ -1777,6 +1852,89 @@ fn composer_autoload_supports_classmap_and_psr0_directories() {
     let output = compile_file(&entry).unwrap().execute().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
     assert_eq!(output, "psr0:classmap");
+}
+
+#[test]
+fn composer_autoload_ignores_classes_with_absent_optional_namespaced_parents() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_composer_optional_parent_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(directory.join("vendor/package/src")).unwrap();
+    std::fs::write(
+        directory.join("composer.json"),
+        r#"{"autoload":{"psr-4":{"Package\\":"vendor/package/src/"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("vendor/autoload.php"),
+        "<?php // Composer entry point",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("vendor/package/src/OptionalType.php"),
+        "<?php namespace Package; const COMPOSER_CLASSMAP_ONLY = 1; interface OptionalChildInterface extends \\Optional\\MissingParentInterface {} class OptionalType extends \\Optional\\MissingBase {} class OptionalInterfaceType implements \\Optional\\MissingInterface {} class DerivedOptionalType extends OptionalType {} class InterfaceImplementor implements OptionalChildInterface {}",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("vendor/package/src/version85.php"),
+        "<?php const VERSION85_ONLY = 85;",
+    )
+    .unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php require __DIR__ . '/vendor/autoload.php'; if (PHP_VERSION_ID >= 80500) { require __DIR__ . '/vendor/package/src/version85.php'; } echo defined('COMPOSER_CLASSMAP_ONLY') ? 'classmap-defined' : (defined('VERSION85_ONLY') ? 'version-defined' : 'not-defined');",
+    )
+    .unwrap();
+
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "not-defined");
+}
+
+#[test]
+fn composer_autoload_defers_invalid_unused_method_overrides_until_class_load() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_composer_invalid_override_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(directory.join("vendor/package/src")).unwrap();
+    std::fs::write(
+        directory.join("composer.json"),
+        r#"{"autoload":{"psr-4":{"Package\\":"vendor/package/src/"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("vendor/autoload.php"),
+        "<?php // Composer entry point",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("vendor/package/src/Broken.php"),
+        "<?php namespace Package; class ParentType { public static function create(string $name) {} } class Broken extends ParentType { public static function create(string $name, string $target) {} } class BrokenChild extends Broken {}",
+    )
+    .unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php require __DIR__ . '/vendor/autoload.php'; echo 'booted';",
+    )
+    .unwrap();
+
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "booted");
 }
 
 #[test]

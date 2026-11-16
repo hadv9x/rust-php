@@ -21,6 +21,48 @@ fn reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
     }
 }
 
+pub(super) fn append_reference_path(expression: &Expr) -> Option<(String, Vec<&Expr>)> {
+    fn collect<'a>(expression: &'a Expr, keys: &mut Vec<&'a Expr>) -> Option<String> {
+        match expression {
+            Expr::Variable(name) => Some(name.clone()),
+            Expr::Index(array, key) => {
+                let name = collect(array, keys)?;
+                keys.push(key);
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+    let Expr::PropertyAppend(target) = expression else {
+        return None;
+    };
+    let mut keys = Vec::new();
+    let name = collect(target, &mut keys)?;
+    Some((name, keys))
+}
+
+pub(super) fn property_append_reference_path(
+    expression: &Expr,
+) -> Option<(&Expr, &str, Vec<&Expr>)> {
+    fn collect<'a>(expression: &'a Expr, keys: &mut Vec<&'a Expr>) -> Option<(&'a Expr, &'a str)> {
+        match expression {
+            Expr::Property(receiver, property) => Some((receiver, property)),
+            Expr::Index(array, key) => {
+                let root = collect(array, keys)?;
+                keys.push(key);
+                Some(root)
+            }
+            _ => None,
+        }
+    }
+    let Expr::PropertyAppend(target) = expression else {
+        return None;
+    };
+    let mut keys = Vec::new();
+    let (receiver, property) = collect(target, &mut keys)?;
+    Some((receiver, property, keys))
+}
+
 pub(super) fn static_property_path(expression: &Expr) -> Option<(&str, &str, Vec<&Expr>)> {
     fn split<'a>(expression: &'a Expr, keys: &mut Vec<&'a Expr>) -> Option<(&'a str, &'a str)> {
         match expression {
@@ -1421,6 +1463,23 @@ impl CodeGenerator<'_> {
                 }
             }
             Expr::ClassConstant(class, constant) => {
+                if constant.eq_ignore_ascii_case("class") {
+                    let resolved = match class.as_str() {
+                        "self" | "static" => self
+                            .current_class_display
+                            .clone()
+                            .or_else(|| self.current_class.clone())
+                            .unwrap_or_else(|| class.clone()),
+                        "parent" => self
+                            .parent_class
+                            .clone()
+                            .unwrap_or_else(|| class.clone()),
+                        _ => class.trim_start_matches('\\').to_string(),
+                    };
+                    self.instructions
+                        .push(Op::Const(Value::String(resolved)));
+                    return;
+                }
                 let class = match class.as_str() {
                     "self" => self
                         .current_class
@@ -2054,6 +2113,12 @@ impl CodeGenerator<'_> {
                         self.instructions
                             .push(Op::LoadStaticPropertyArrayReference(keys.len()));
                     }
+                } else if let Some((source, keys)) = append_reference_path(value) {
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    self.instructions
+                        .push(Op::LoadArrayAppendReference(source, keys.len()));
                 } else {
                     self.expression(value);
                 }
@@ -2625,10 +2690,13 @@ impl CodeGenerator<'_> {
                     }
                 }
             }
-            Expr::PropertyAppend(_) => self.errors.push(
-                "Appending to an object property array is only supported as an assignment target"
-                    .into(),
-            ),
+            Expr::PropertyAppend(property) => self.errors.push(format!(
+                "Appending to an object property array is only supported as an assignment target ({property:?}){}",
+                self.current_source_file
+                    .as_deref()
+                    .map(|file| format!(" ({file})"))
+                    .unwrap_or_default()
+            )),
         }
     }
 

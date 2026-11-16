@@ -97,6 +97,65 @@ fn function_exists_includes_the_vm_builtin_signature_inventory() {
 }
 
 #[test]
+fn extension_loaded_reports_extensions_available_in_the_runtime() {
+    let source = r#"<?php
+        echo extension_loaded('uuid'), ':', extension_loaded('standard'), ':', function_exists('extension_loaded');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), ":1:1");
+}
+
+#[test]
+fn platform_path_constants_fall_back_from_namespaces() {
+    let source = r#"<?php namespace PathConstantTest; echo DIRECTORY_SEPARATOR, ':', PATH_SEPARATOR;"#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        format!("{}:{}", std::path::MAIN_SEPARATOR, if cfg!(windows) { ";" } else { ":" })
+    );
+}
+
+#[test]
+fn closures_are_instances_of_closure() {
+    assert_eq!(
+        compile_source("<?php function acceptsClosure(Closure $callback) { return 1; } $factory = fn () => null; echo ($factory instanceof Closure), acceptsClosure($factory);")
+            .unwrap()
+            .execute()
+            .unwrap(),
+        "11"
+    );
+}
+
+#[test]
+fn callable_parameters_accept_closures() {
+    assert_eq!(
+        compile_source("<?php function invokeCallback(callable $callback) { return $callback(); } echo invokeCallback(fn () => 'ok');")
+            .unwrap()
+            .execute()
+            .unwrap(),
+        "ok"
+    );
+}
+
+#[test]
+fn self_class_constant_returns_the_declaring_class_name() {
+    let source = r#"<?php namespace ClassConstantTest; class Subject { public function name() { return self::class; } } echo (new Subject())->name();"#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "ClassConstantTest\\Subject"
+    );
+}
+
+#[test]
+fn php_sapi_constant_matches_cli_default() {
+    assert_eq!(
+        compile_source("<?php echo PHP_SAPI, ':', defined('PHP_SAPI');")
+            .unwrap()
+            .execute()
+            .unwrap(),
+        "cli:1"
+    );
+}
+
+#[test]
 fn json_encode_dispatches_as_an_array_callback_with_json_serializable_support() {
     let source = r#"<?php
         class CallbackJsonValue implements JsonSerializable {
@@ -286,6 +345,182 @@ fn common_php_predefined_constants_are_available() {
         compile_source(source).unwrap().execute().unwrap(),
         "1:8:1:15:3:1:1:2:1:1:1:1\n"
     );
+}
+
+#[test]
+fn namespaced_class_constant_expressions_fall_back_to_global_error_constants() {
+    let source = r#"<?php
+        namespace Monolog;
+        class Logger { public const ERROR = E_ERROR; }
+        echo Logger::ERROR, ':', E_WARNING, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:2\n");
+}
+
+#[test]
+fn syslog_constants_are_available_in_namespaced_class_defaults() {
+    let source = r#"<?php
+        namespace Monolog;
+        class SyslogDefaults {
+            public array $facilities = ['auth' => \LOG_AUTH, 'local7' => \LOG_LOCAL7];
+            public function __construct(public int $facility = \LOG_USER) {}
+        }
+        $defaults = new SyslogDefaults();
+        echo $defaults->facilities['auth'], ':', $defaults->facilities['local7'], ':', $defaults->facility, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "32:184:8\n");
+}
+
+#[test]
+fn common_curl_error_constants_are_available_to_namespaced_dependencies() {
+    let source = r#"<?php
+        namespace Monolog\Handler\Curl;
+        class Util {
+            private static array $errors = [
+                CURLE_COULDNT_RESOLVE_HOST,
+                CURLE_COULDNT_CONNECT,
+                CURLE_HTTP_NOT_FOUND,
+                CURLE_READ_ERROR,
+                CURLE_OPERATION_TIMEOUTED,
+                CURLE_HTTP_POST_ERROR,
+                CURLE_SSL_CONNECT_ERROR,
+            ];
+            public static function errors(): array { return self::$errors; }
+        }
+        echo implode(',', Util::errors()), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "6,7,22,26,28,34,35\n"
+    );
+}
+
+#[test]
+fn datetime_interface_format_constants_work_in_class_property_defaults() {
+    let source = r#"<?php
+        class DateFormats {
+            public string $rfc3339 = DateTime::RFC3339;
+            public string $extended = DateTimeInterface::RFC3339_EXTENDED;
+            public string $rfc2822 = DateTimeImmutable::RFC2822;
+        }
+        $formats = new DateFormats();
+        echo $formats->rfc3339, ':', $formats->extended, ':', $formats->rfc2822, "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        r"Y-m-d\TH:i:sP:Y-m-d\TH:i:s.vP:D, d M Y H:i:s O".to_string() + "\n"
+    );
+}
+
+#[test]
+fn common_image_type_constants_are_available_in_namespaced_dependencies() {
+    let source = r#"<?php
+        namespace Nette\Utils;
+        class ImageType {
+            public const JPEG = IMAGETYPE_JPEG;
+            public const PNG = IMAGETYPE_PNG;
+            public const WEBP = IMAGETYPE_WEBP;
+            public const AVIF = IMAGETYPE_AVIF;
+        }
+        echo ImageType::JPEG, ':', ImageType::PNG, ':', ImageType::WEBP, ':', ImageType::AVIF, "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "2:3:18:19\n"
+    );
+}
+
+#[test]
+fn common_tokenizer_constants_are_available_in_class_constant_arrays() {
+    let source = r#"<?php
+        class TokenKinds {
+            private const SKIPPED = [T_WHITESPACE => true, T_COMMENT => true, T_DOC_COMMENT => true, T_OPEN_TAG => true, T_NEW => true, T_INSTANCEOF => true, T_OPEN_TAG_WITH_ECHO => true];
+            public static function values(): array { return array_keys(self::SKIPPED); }
+        }
+        echo implode(',', TokenKinds::values()), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "10004,10000,10001,10002,10003,10021,10082\n"
+    );
+}
+
+#[test]
+fn output_handler_constants_have_core_bitmask_values() {
+    let source = r#"<?php
+        echo PHP_OUTPUT_HANDLER_END, ':', PHP_OUTPUT_HANDLER_FINAL, ':';
+        echo PHP_OUTPUT_HANDLER_STDFLAGS, ':', PHP_OUTPUT_HANDLER_PROCESSED, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "8:8:112:16384\n");
+}
+
+#[test]
+fn common_filter_constants_match_php_values() {
+    let source = r#"<?php
+        echo FILTER_DEFAULT, ':', FILTER_VALIDATE_BOOL, ':', FILTER_CALLBACK, ':';
+        echo FILTER_NULL_ON_FAILURE, ':', FILTER_FLAG_IPV6, "\n";
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "516:258:1024:134217728:2097152\n");
+}
+
+#[test]
+fn common_pcre_constants_match_php_values() {
+    let source = r#"<?php echo PREG_PATTERN_ORDER, ':', PREG_OFFSET_CAPTURE, ':', PREG_UNMATCHED_AS_NULL, ':', PREG_JIT_STACKLIMIT_ERROR, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:256:512:6\n");
+}
+
+#[test]
+fn amqp_flag_constants_are_available_for_optional_dependency_metadata() {
+    let source = r#"<?php class AmqpFlags { public const FLAGS = [AMQP_DURABLE => 'durable', AMQP_AUTOACK => 'autoack']; } echo implode(',', array_keys(AmqpFlags::FLAGS)), "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "2,128\n");
+}
+
+#[test]
+fn dom_legacy_exception_constants_have_standard_values() {
+    let source = r#"<?php echo DOM_INDEX_SIZE_ERR, ':', DOM_HIERARCHY_REQUEST_ERR, ':', DOM_VALIDATION_ERR, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:3:16\n");
+}
+
+#[test]
+fn xml_node_type_constants_have_libxml_values() {
+    let source = r#"<?php echo XML_ELEMENT_NODE, ':', XML_DOCUMENT_NODE, ':', XML_NAMESPACE_DECL_NODE, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:9:18\n");
+}
+
+#[test]
+fn postgres_status_constants_match_libpq_values() {
+    let source = r#"<?php echo PGSQL_TRANSACTION_IDLE, ':', PGSQL_TUPLES_OK, ':', PGSQL_DIAG_SQLSTATE, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:2:67\n");
+}
+
+#[test]
+fn redis_cluster_failover_constants_are_available_for_optional_casters() {
+    let source = r#"<?php echo RedisCluster::FAILOVER_NONE, ':', RedisCluster::FAILOVER_DISTRIBUTE_SLAVES, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:3\n");
+}
+
+#[test]
+fn spl_file_object_constants_are_available_for_optional_casters() {
+    let source = r#"<?php echo SplFileObject::DROP_NEW_LINE, ':', SplFileObject::READ_CSV, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:8\n");
+}
+
+#[test]
+fn xmlreader_constants_are_available_for_optional_casters() {
+    let source = r#"<?php echo XMLReader::NONE, ':', XMLReader::SIGNIFICANT_WHITESPACE, ':', XMLReader::XML_DECLARATION, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:14:17\n");
+}
+
+#[test]
+fn xml_error_constants_match_expat_enum_values() {
+    let source = r#"<?php echo XML_ERROR_NONE, ':', XML_ERROR_INVALID_TOKEN, ':', XML_ERROR_EXTERNAL_ENTITY_HANDLING, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "0:4:21\n");
+}
+
+#[test]
+fn filesystem_lock_and_seek_constants_match_php_values() {
+    let source = r#"<?php echo LOCK_SH, ':', LOCK_NB, ':', SEEK_SET, ':', SEEK_END, "\n";"#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "1:4:0:2\n");
 }
 
 #[test]

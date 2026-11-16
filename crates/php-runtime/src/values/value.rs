@@ -732,6 +732,19 @@ impl Value {
             _ => Err("Cannot append to a non-array value".into()),
         }
     }
+
+    pub(crate) fn array_append_reference_path(
+        self,
+        keys: &[ArrayKey],
+        reference: Rc<RefCell<Value>>,
+    ) -> Result<Value, String> {
+        let Some((key, remaining)) = keys.split_first() else {
+            return self.array_append_reference(reference);
+        };
+        let child = self.array_get(key)?;
+        let updated_child = child.array_append_reference_path(remaining, reference)?;
+        self.array_set(key.clone(), updated_child)
+    }
 }
 
 fn string_offset_index(index: i64, length: usize) -> Result<usize, String> {

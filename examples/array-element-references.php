@@ -59,3 +59,9 @@ $copyOne["reference"] = 2;
 $copyTwo = $copyOne;
 $copyTwo["nested"]["value"] = 30;
 echo $sharedScalar, " ", $copySource["nested"]["value"], " ", $copyOne["nested"]["value"], " ", $copyTwo["nested"]["value"], " ", $copySource["reference"], "\n";
+
+$appendResult = [];
+$appendCursor =& $appendResult;
+$appendCursor =& $appendCursor[];
+$appendCursor['name'] = 'appended reference';
+echo $appendResult[0]['name'], "\n";

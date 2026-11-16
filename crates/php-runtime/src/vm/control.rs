@@ -185,7 +185,17 @@ pub(super) fn execute_instruction(
                 Value::Object(object) => {
                     let class_name = object.borrow().class_name.clone();
                     let normalized_class = class_name.to_ascii_lowercase();
-                    if !super::is_a_type(
+                    if matches!(normalized_class.as_str(), "arrayiterator" | "arrayobject") {
+                        ForeachIterator::Array(
+                            super::objects::foreach_entries(
+                                &object,
+                                classes,
+                                access_scope.as_deref(),
+                                false,
+                            ),
+                            0,
+                        )
+                    } else if !super::is_a_type(
                         &normalized_class,
                         "traversable",
                         classes,

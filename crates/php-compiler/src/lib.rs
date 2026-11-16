@@ -110,8 +110,35 @@ fn source_signature(path: &Path) -> Result<SourceSignature, String> {
 
 /// Compile PHP source into the internal bytecode executed by php-runtime.
 pub fn compile_source(source: &str) -> Result<BytecodeProgram, String> {
-    let syntax_tree = php_syntax::parse(source)?;
+    let mut syntax_tree = php_syntax::parse(source)?;
+    hoist_conditional_trait_declarations(&syntax_tree.statements, &mut syntax_tree.traits);
     codegen::compile(&syntax_tree)
+}
+
+fn hoist_conditional_trait_declarations(statements: &[Stmt], traits: &mut Vec<php_syntax::TraitDecl>) {
+    fn visit(statement: &Stmt, conditional: bool, found: &mut Vec<php_syntax::TraitDecl>) {
+        match statement {
+            Stmt::SourceLine(_, inner) => visit(inner, conditional, found),
+            Stmt::TraitDeclaration(declaration) if conditional => {
+                if !found.iter().any(|trait_decl| {
+                    trait_decl.name.eq_ignore_ascii_case(&declaration.name)
+                }) {
+                    found.push(declaration.clone());
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                for item in then_body.iter().chain(else_body) {
+                    visit(item, true, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = traits.clone();
+    for statement in statements {
+        visit(statement, false, &mut found);
+    }
+    traits.extend(found.into_iter().skip(traits.len()));
 }
 
 /// Compile a PHP file and inline literal or `__DIR__`-relative include/require statements.
@@ -259,6 +286,8 @@ fn compile_file_with_root_and_dependencies(
         active: vec![entry.clone()],
         composer_loaded: HashSet::new(),
         composer_files_loaded: HashSet::new(),
+        composer_class_names: HashSet::new(),
+        composer_interface_names: HashSet::new(),
         static_paths: HashMap::new(),
         strict_types_by_file: HashMap::new(),
         next_anonymous_class_id: 0,
@@ -287,7 +316,119 @@ fn compile_file_with_root_and_dependencies(
         constants: Vec::new(),
     };
     combined.statements = append_file(&entry, &mut combined, &mut state)?;
-    let mut bytecode = codegen::compile(&combined)?;
+    let mut available_interfaces = combined
+        .interfaces
+        .iter()
+        .map(|interface| interface.name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    loop {
+        let unavailable = combined
+            .interfaces
+            .iter()
+            .filter(|interface| {
+                let name = interface.name.to_ascii_lowercase();
+                state.composer_interface_names.contains(&name)
+                    && available_interfaces.contains(&name)
+                    && interface.parents.iter().any(|parent| {
+                        parent.contains('\\')
+                            && !available_interfaces.contains(&parent.to_ascii_lowercase())
+                    })
+            })
+            .map(|interface| interface.name.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        if unavailable.is_empty() {
+            break;
+        }
+        for name in unavailable {
+            available_interfaces.remove(&name);
+        }
+    }
+    combined
+        .interfaces
+        .retain(|interface| available_interfaces.contains(&interface.name.to_ascii_lowercase()));
+    // Composer's optimized classmap scans every PHP file, even though PHP only
+    // loads a class file when that class is requested. Omit Composer classes
+    // whose optional, namespaced parent package is absent so an unrelated
+    // class does not prevent the application from starting.
+    let mut available_classes = combined
+        .classes
+        .iter()
+        .map(|class| class.name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    available_interfaces = combined
+        .interfaces
+        .iter()
+        .map(|interface| interface.name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    loop {
+        let unavailable = combined
+            .classes
+            .iter()
+            .filter(|class| {
+                state
+                    .composer_class_names
+                    .contains(&class.name.to_ascii_lowercase())
+                    && available_classes.contains(&class.name.to_ascii_lowercase())
+                    && (class.parent.as_ref().is_some_and(|parent| {
+                        parent.contains('\\')
+                            && !available_classes.contains(&parent.to_ascii_lowercase())
+                    }) || class.interfaces.iter().any(|interface| {
+                        interface.contains('\\')
+                            && !available_interfaces.contains(&interface.to_ascii_lowercase())
+                    }))
+            })
+            .map(|class| class.name.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        if unavailable.is_empty() {
+            break;
+        }
+        for name in unavailable {
+            available_classes.remove(&name);
+        }
+    }
+    combined.classes.retain(|class| {
+        available_classes.contains(&class.name.to_ascii_lowercase())
+    });
+    let mut bytecode = loop {
+        match codegen::compile(&combined) {
+            Ok(bytecode) => break bytecode,
+            Err(error) => {
+                let Some(class_name) = deferred_composer_class_from_error(&error) else {
+                    return Err(error);
+                };
+                let key = class_name.to_ascii_lowercase();
+                if !state.composer_class_names.contains(&key) {
+                    return Err(error);
+                }
+                let mut deferred = HashSet::from([key]);
+                loop {
+                    let dependent = combined.classes.iter().find_map(|class| {
+                        let class_key = class.name.to_ascii_lowercase();
+                        if !state
+                            .composer_class_names
+                            .contains(&class_key)
+                            || deferred.contains(&class_key)
+                        {
+                            return None;
+                        }
+                        class
+                            .parent
+                            .as_ref()
+                            .map(|parent| parent.to_ascii_lowercase())
+                            .filter(|parent| deferred.contains(parent))
+                            .map(|_| class.name.to_ascii_lowercase())
+                    });
+                    let Some(dependent) = dependent else {
+                        break;
+                    };
+                    deferred.insert(dependent);
+                }
+                combined
+                    .classes
+                    .retain(|class| !deferred.contains(&class.name.to_ascii_lowercase()));
+            }
+        }
+    };
     bytecode.set_source_file(entry.to_string_lossy().into_owned());
     let loader_root = allowed_root.clone();
     bytecode.set_include_loader(std::rc::Rc::new(
@@ -339,6 +480,20 @@ fn compile_file_with_root_and_dependencies(
     Ok((bytecode, state.dependencies.into_iter().collect()))
 }
 
+fn deferred_composer_class_from_error(error: &str) -> Option<String> {
+    let marker = "Method ";
+    let start = error.find(marker)? + marker.len();
+    let rest = &error[start..];
+    let separator = rest.find("::")?;
+    let message = rest.get(separator..)?;
+    if !message.contains("incompatible parameter or return types with parent")
+        && !message.contains("does not match interface")
+    {
+        return None;
+    }
+    Some(rest[..separator].to_string())
+}
+
 struct IncludeState {
     entry: PathBuf,
     allowed_root: Option<PathBuf>,
@@ -348,6 +503,8 @@ struct IncludeState {
     active: Vec<PathBuf>,
     composer_loaded: HashSet<PathBuf>,
     composer_files_loaded: HashSet<PathBuf>,
+    composer_class_names: HashSet<String>,
+    composer_interface_names: HashSet<String>,
     static_paths: HashMap<String, PathBuf>,
     strict_types_by_file: HashMap<PathBuf, bool>,
     next_anonymous_class_id: usize,
@@ -396,6 +553,7 @@ fn append_file(
     let mut program =
         php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id)
             .map_err(|error| format!("{}: {error}", path.display()))?;
+    hoist_conditional_trait_declarations(&program.statements, &mut program.traits);
     state.next_anonymous_class_id += program
         .classes
         .iter()
@@ -563,6 +721,18 @@ fn resolve_function_magic_constants(function: &mut php_syntax::FunctionDecl, cur
 
 fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
     match expression {
+        Expr::MagicConstant(name) if name.eq_ignore_ascii_case("__DIR__") => {
+            *expression = Expr::String(
+                current_file
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        Expr::MagicConstant(name) if name.eq_ignore_ascii_case("__FILE__") => {
+            *expression = Expr::String(current_file.to_string_lossy().into_owned());
+        }
         Expr::Constant(name) if name.ends_with("__DIR__") => {
             *expression = Expr::String(
                 current_file
@@ -579,6 +749,66 @@ fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
             resolve_magic_constants(left, current_file);
             resolve_magic_constants(right, current_file);
         }
+        Expr::Call(_, arguments) | Expr::NewObject(_, arguments, _) => {
+            for argument in arguments {
+                resolve_magic_constants(argument, current_file);
+            }
+        }
+        Expr::MethodCall(receiver, _, arguments)
+        | Expr::DynamicStaticCall(receiver, _, arguments) => {
+            resolve_magic_constants(receiver, current_file);
+            for argument in arguments {
+                resolve_magic_constants(argument, current_file);
+            }
+        }
+        Expr::Index(array, offset) | Expr::Coalesce(array, offset) => {
+            resolve_magic_constants(array, current_file);
+            resolve_magic_constants(offset, current_file);
+        }
+        Expr::DynamicNewObject(class, arguments, _) => {
+            resolve_magic_constants(class, current_file);
+            for argument in arguments {
+                resolve_magic_constants(argument, current_file);
+            }
+        }
+        Expr::Property(receiver, _) | Expr::IssetProperty(receiver, _) => {
+            resolve_magic_constants(receiver, current_file);
+        }
+        Expr::DynamicProperty(receiver, property)
+        | Expr::IssetDynamicProperty(receiver, property) => {
+            resolve_magic_constants(receiver, current_file);
+            resolve_magic_constants(property, current_file);
+        }
+        Expr::NamedArgument(_, value)
+        | Expr::UnpackArgument(value)
+        | Expr::DynamicVariableExpr(value)
+        | Expr::DeprecatedInterpolation(value, _)
+        | Expr::Empty(value)
+        | Expr::Clone(value)
+        | Expr::Negate(value)
+        | Expr::Positive(value)
+        | Expr::Not(value)
+        | Expr::ErrorSuppress(value)
+        | Expr::Cast(_, value)
+        | Expr::BitwiseNot(value)
+        | Expr::YieldFrom(value)
+        | Expr::DynamicClassName(value)
+        | Expr::PropertyAppend(value) => resolve_magic_constants(value, current_file),
+        Expr::Assignment { value, .. }
+        | Expr::ReferenceAssignment { value, .. }
+        | Expr::ArrayAppendAssignment { value, .. }
+        | Expr::StaticPropertyAssignment { value, .. } => {
+            resolve_magic_constants(value, current_file);
+        }
+        Expr::Ternary { condition, then_value, else_value } => {
+            resolve_magic_constants(condition, current_file);
+            resolve_magic_constants(then_value, current_file);
+            resolve_magic_constants(else_value, current_file);
+        }
+        Expr::ShorthandTernary { condition, else_value } => {
+            resolve_magic_constants(condition, current_file);
+            resolve_magic_constants(else_value, current_file);
+        }
         Expr::Array(entries) => {
             for entry in entries {
                 if let Some(key) = &mut entry.key {
@@ -587,7 +817,6 @@ fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
                 resolve_magic_constants(&mut entry.value, current_file);
             }
         }
-        Expr::Negate(value) | Expr::Positive(value) => resolve_magic_constants(value, current_file),
         _ => {}
     }
 }
@@ -779,6 +1008,7 @@ fn expand_statement(
             combined.traits.push(trait_decl);
         }
         Stmt::Expression(expression) => {
+            resolve_magic_constants(expression, current_file);
             if let Expr::Assignment {
                 variable,
                 operation,
@@ -827,6 +1057,9 @@ fn expand_statement(
         Stmt::Return(Some(Expr::Call(name, arguments))) if name.starts_with("\0php_include:") => {
             if arguments.len() != 1 {
                 return Err("internal include expression has an invalid argument count".into());
+            }
+            for argument in arguments.iter_mut() {
+                resolve_magic_constants(argument, current_file);
             }
             let kind = match &name["\0php_include:".len()..] {
                 "include" => IncludeKind::Include,
@@ -889,6 +1122,7 @@ fn expand_statement(
             output.push(statement.clone());
         }
         Stmt::Include { kind, path } => {
+            resolve_magic_constants(path, current_file);
             let requested = match static_include_path(path, current_file, &state.static_paths) {
                 Ok(path) => path,
                 Err(error) if error.contains("include path must be a string literal") => {
@@ -953,6 +1187,13 @@ fn expand_statement(
             then_body,
             else_body,
         } => {
+            resolve_magic_constants(condition, current_file);
+            if let Some(value) = static_php_version_condition(condition) {
+                let selected = if value { then_body } else { else_body };
+                expand_statements(selected, current_file, combined, state)?;
+                output.extend(selected.clone());
+                return Ok(());
+            }
             if let Some((variable, path_expr)) = file_exists_assignment(condition) {
                 if let Ok(requested) =
                     static_include_path(path_expr, current_file, &state.static_paths)
@@ -1050,6 +1291,42 @@ fn expand_statement(
     Ok(())
 }
 
+fn static_php_version_condition(expression: &Expr) -> Option<bool> {
+    let Expr::Binary(operator, left, right) = expression else {
+        return None;
+    };
+    let (version_on_left, literal) = match (&**left, &**right) {
+        (Expr::Constant(name), Expr::Integer(value))
+            if name.trim_start_matches('\\').eq_ignore_ascii_case("PHP_VERSION_ID") =>
+        {
+            (true, *value)
+        }
+        (Expr::Integer(value), Expr::Constant(name))
+            if name.trim_start_matches('\\').eq_ignore_ascii_case("PHP_VERSION_ID") =>
+        {
+            (false, *value)
+        }
+        _ => return None,
+    };
+    let version = 80400_i64;
+    let (left, right) = if version_on_left {
+        (version, literal)
+    } else {
+        (literal, version)
+    };
+    Some(match operator {
+        BinaryOp::Equal => left == right,
+        BinaryOp::NotEqual => left != right,
+        BinaryOp::StrictEqual => left == right,
+        BinaryOp::StrictNotEqual => left != right,
+        BinaryOp::Less => left < right,
+        BinaryOp::LessEqual => left <= right,
+        BinaryOp::Greater => left > right,
+        BinaryOp::GreaterEqual => left >= right,
+        _ => return None,
+    })
+}
+
 fn expand_include_expression(
     expression: Expr,
     current_file: &Path,
@@ -1068,7 +1345,8 @@ fn expand_include_expression(
                 "require_once" => IncludeKind::RequireOnce,
                 _ => return Err("unknown include expression kind".into()),
             };
-            let path_expression = arguments.remove(0);
+            let mut path_expression = arguments.remove(0);
+            resolve_magic_constants(&mut path_expression, current_file);
             let requested =
                 match static_include_path(&path_expression, current_file, &state.static_paths) {
                     Ok(path) => path,
@@ -1506,6 +1784,7 @@ fn append_composer_declarations(
     let mut program =
         php_syntax::parse_with_anonymous_class_id(&source, state.next_anonymous_class_id)
             .map_err(|error| format!("{}: {error}", path.display()))?;
+    hoist_conditional_trait_declarations(&program.statements, &mut program.traits);
     state.next_anonymous_class_id += program
         .classes
         .iter()
@@ -1554,7 +1833,10 @@ fn append_composer_declarations(
             resolve_function_magic_constants(method, path);
         }
     }
-    combined.constants.append(&mut program.constants);
+    // Classmap scanning discovers declarations without executing each file.
+    // Global constants belong to the file's execution, so importing them here
+    // makes unrelated vendor files behave as if Composer had required them.
+    program.constants.clear();
     for mut function in program.functions.drain(..) {
         expand_statements(&mut function.body, path, combined, state)?;
         combined.functions.push(function);
@@ -1563,10 +1845,18 @@ fn append_composer_declarations(
         if skip_polyfill_builtin_class(path, &class.name) {
             continue;
         }
+        state
+            .composer_class_names
+            .insert(class.name.to_ascii_lowercase());
         for method in &mut class.methods {
             expand_statements(&mut method.body, path, combined, state)?;
         }
         combined.classes.push(class);
+    }
+    for interface in &program.interfaces {
+        state
+            .composer_interface_names
+            .insert(interface.name.to_ascii_lowercase());
     }
     combined.interfaces.append(&mut program.interfaces);
     for mut trait_decl in program.traits.drain(..) {

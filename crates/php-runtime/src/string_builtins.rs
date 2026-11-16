@@ -81,6 +81,7 @@ pub(crate) const fn supported_names() -> &'static [&'static str] {
         "substr_compare",
         "strtok",
         "levenshtein",
+        "soundex",
         "similar_text",
         "implode",
         "str_getcsv",
@@ -112,6 +113,53 @@ pub(crate) fn is_supported(name: &str) -> bool {
         .any(|function| function.eq_ignore_ascii_case(name))
 }
 
+fn soundex_key(input: &str) -> String {
+    let Some(first) = input.bytes().find(u8::is_ascii_alphabetic) else {
+        return "0000".into();
+    };
+    let first = first.to_ascii_uppercase();
+    let mut result = String::with_capacity(4);
+    result.push(first as char);
+    let mut previous = soundex_group(first);
+    for byte in input.bytes().skip_while(|byte| !byte.is_ascii_alphabetic()) {
+        if !byte.is_ascii_alphabetic() {
+            continue;
+        }
+        let letter = byte.to_ascii_uppercase();
+        if matches!(letter, b'H' | b'W') {
+            continue;
+        }
+        let group = soundex_group(letter);
+        if group == 0 {
+            previous = 0;
+        } else {
+            if group != previous {
+                result.push(char::from(b'0' + group));
+                if result.len() == 4 {
+                    break;
+                }
+            }
+            previous = group;
+        }
+    }
+    while result.len() < 4 {
+        result.push('0');
+    }
+    result
+}
+
+fn soundex_group(letter: u8) -> u8 {
+    match letter {
+        b'B' | b'F' | b'P' | b'V' => 1,
+        b'C' | b'G' | b'J' | b'K' | b'Q' | b'S' | b'X' | b'Z' => 2,
+        b'D' | b'T' => 3,
+        b'L' => 4,
+        b'M' | b'N' => 5,
+        b'R' => 6,
+        _ => 0,
+    }
+}
+
 /// Return positions whose PHP builtin parameters accept strings or stringable objects.
 pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
     match name.to_ascii_lowercase().as_str() {
@@ -121,6 +169,7 @@ pub(crate) fn string_argument_positions(name: &str) -> &'static [usize] {
         | "strpbrk" | "substr_count" | "substr_compare" | "explode" | "str_getcsv" => &[0, 1, 2, 3],
         "strtok" => &[0, 1],
         "levenshtein" => &[0, 1],
+        "soundex" => &[0],
         "similar_text" => &[0, 1],
         "count_chars" | "crc32" | "md5" | "sha1" | "base64_encode" | "base64_decode" => &[0],
         "str_replace" | "str_ireplace" => &[0, 1, 2],
@@ -2492,6 +2541,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         | "rawurlencode"
         | "rawurldecode"
         | "quotemeta"
+        | "soundex"
         | "parse_url" => 1,
         "str_word_count" => 1,
         "strspn" | "strcspn" | "strpbrk" => 2,
@@ -2513,7 +2563,7 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
         | "str_shuffle" | "str_rot13" | "addslashes" | "stripslashes" | "stripcslashes"
         | "bin2hex" | "hex2bin" | "base64_encode" | "chr" | "ord" | "crc32" | "md5"
         | "str_increment" | "str_decrement" | "urlencode" | "urldecode" | "rawurlencode"
-        | "rawurldecode" | "quotemeta" => 1,
+        | "rawurldecode" | "quotemeta" | "soundex" => 1,
         "base64_decode" => 2,
         "html_entity_decode" => 3,
         "addcslashes" => 2,
@@ -2580,6 +2630,9 @@ pub(crate) fn call(name: &str, arguments: &[Value]) -> Result<Value, String> {
     }
     if function == "str_word_count" {
         return word_count(arguments);
+    }
+    if function == "soundex" {
+        return Ok(Value::String(soundex_key(&arguments[0].show())));
     }
 
     let string = arguments

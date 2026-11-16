@@ -32,6 +32,20 @@ fn strrchr_returns_the_suffix_from_the_last_character_and_supports_before_needle
 }
 
 #[test]
+fn soundex_matches_php_reference_vectors_and_handles_nonletters() {
+    let source = r#"<?php
+        $words = ['Euler', 'Ellery', 'Gauss', 'Ghosh', 'Hilbert', 'Heilbronn', 'Knuth', 'Kant', 'Lloyd', 'Ladd', 'Lukasiewicz', 'Lissajous'];
+        echo implode(',', array_map('soundex', $words)), "\n";
+        echo soundex(string: ''), ':', soundex('123-!'), ':', soundex('!!!Robert'), "\n";
+        echo function_exists('soundex');
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "E460,E460,G200,G200,H416,H416,K530,K530,L300,L300,L222,L222\n0000:0000:R163\n1"
+    );
+}
+
+#[test]
 fn md5_hashes_strings_with_hex_and_binary_modes_and_callback_dispatch() {
     let source = r#"<?php
         echo md5(''), '|', md5(string: 'abc'), '|', md5(str_repeat('a', 1000000)), '|';

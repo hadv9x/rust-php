@@ -215,6 +215,7 @@ impl Parser<'_> {
                 | "boolean"
                 | "array"
                 | "iterable"
+                | "callable"
                 | "object"
                 | "mixed"
                 | "void"

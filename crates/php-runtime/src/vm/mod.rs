@@ -419,7 +419,26 @@ fn is_superglobal(name: &str) -> bool {
 }
 
 pub(super) fn builtin_constant(name: &str) -> Option<Value> {
+    if matches!(name, "STDIN" | "STDOUT" | "STDERR") {
+        let (readable, writable) = match name {
+            "STDIN" => (true, false),
+            "STDOUT" | "STDERR" => (false, true),
+            _ => unreachable!(),
+        };
+        return crate::PhpStream::temporary(readable, writable)
+            .ok()
+            .map(|stream| Value::Stream(std::rc::Rc::new(std::cell::RefCell::new(stream))));
+    }
     match name {
+        "PHP_VERSION_ID" => return Some(Value::Integer(80400)),
+        "PHP_VERSION" => return Some(Value::String("8.4.0".into())),
+        "PHP_SAPI" => return Some(Value::String("cli".into())),
+        "DIRECTORY_SEPARATOR" => {
+            return Some(Value::String(std::path::MAIN_SEPARATOR.to_string()))
+        }
+        "PATH_SEPARATOR" => {
+            return Some(Value::String(if cfg!(windows) { ";" } else { ":" }.into()))
+        }
         "PHP_EOL" => {
             return Some(Value::String(
                 if cfg!(windows) { "\r\n" } else { "\n" }.into(),
@@ -432,6 +451,376 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "PHP_INT_SIZE" => return Some(Value::Integer(std::mem::size_of::<i64>() as i64)),
         "PHP_QUERY_RFC1738" => return Some(Value::Integer(1)),
         "PHP_QUERY_RFC3986" => return Some(Value::Integer(2)),
+        "PHP_OUTPUT_HANDLER_START" => return Some(Value::Integer(1)),
+        "PHP_OUTPUT_HANDLER_WRITE" | "PHP_OUTPUT_HANDLER_CONT" => {
+            return Some(Value::Integer(0))
+        }
+        "PHP_OUTPUT_HANDLER_CLEAN" => return Some(Value::Integer(2)),
+        "PHP_OUTPUT_HANDLER_FLUSH" => return Some(Value::Integer(4)),
+        "PHP_OUTPUT_HANDLER_FINAL" | "PHP_OUTPUT_HANDLER_END" => {
+            return Some(Value::Integer(8))
+        }
+        "PHP_OUTPUT_HANDLER_CLEANABLE" => return Some(Value::Integer(16)),
+        "PHP_OUTPUT_HANDLER_FLUSHABLE" => return Some(Value::Integer(32)),
+        "PHP_OUTPUT_HANDLER_REMOVABLE" => return Some(Value::Integer(64)),
+        "PHP_OUTPUT_HANDLER_STDFLAGS" => return Some(Value::Integer(112)),
+        "PHP_OUTPUT_HANDLER_STARTED" => return Some(Value::Integer(4096)),
+        "PHP_OUTPUT_HANDLER_DISABLED" => return Some(Value::Integer(8192)),
+        "PHP_OUTPUT_HANDLER_PROCESSED" => return Some(Value::Integer(16384)),
+        "FILTER_VALIDATE_INT" => return Some(Value::Integer(257)),
+        "FILTER_VALIDATE_BOOL" | "FILTER_VALIDATE_BOOLEAN" => {
+            return Some(Value::Integer(258))
+        }
+        "FILTER_VALIDATE_FLOAT" => return Some(Value::Integer(259)),
+        "FILTER_VALIDATE_REGEXP" => return Some(Value::Integer(272)),
+        "FILTER_VALIDATE_URL" => return Some(Value::Integer(273)),
+        "FILTER_VALIDATE_EMAIL" => return Some(Value::Integer(274)),
+        "FILTER_VALIDATE_IP" => return Some(Value::Integer(275)),
+        "FILTER_VALIDATE_MAC" => return Some(Value::Integer(276)),
+        "FILTER_VALIDATE_DOMAIN" => return Some(Value::Integer(277)),
+        "FILTER_DEFAULT" | "FILTER_UNSAFE_RAW" => return Some(Value::Integer(516)),
+        "FILTER_SANITIZE_STRING" => return Some(Value::Integer(513)),
+        "FILTER_SANITIZE_ENCODED" => return Some(Value::Integer(514)),
+        "FILTER_SANITIZE_SPECIAL_CHARS" => return Some(Value::Integer(515)),
+        "FILTER_SANITIZE_EMAIL" => return Some(Value::Integer(517)),
+        "FILTER_SANITIZE_URL" => return Some(Value::Integer(518)),
+        "FILTER_SANITIZE_NUMBER_INT" => return Some(Value::Integer(519)),
+        "FILTER_SANITIZE_NUMBER_FLOAT" => return Some(Value::Integer(520)),
+        "FILTER_SANITIZE_FULL_SPECIAL_CHARS" => return Some(Value::Integer(522)),
+        "FILTER_SANITIZE_ADD_SLASHES" => return Some(Value::Integer(523)),
+        "FILTER_CALLBACK" => return Some(Value::Integer(1024)),
+        "FILTER_FLAG_NONE" => return Some(Value::Integer(0)),
+        "FILTER_REQUIRE_ARRAY" => return Some(Value::Integer(16777216)),
+        "FILTER_REQUIRE_SCALAR" => return Some(Value::Integer(33554432)),
+        "FILTER_FORCE_ARRAY" => return Some(Value::Integer(67108864)),
+        "FILTER_NULL_ON_FAILURE" => return Some(Value::Integer(134217728)),
+        "FILTER_FLAG_ALLOW_OCTAL" => return Some(Value::Integer(1)),
+        "FILTER_FLAG_ALLOW_HEX" => return Some(Value::Integer(2)),
+        "FILTER_FLAG_STRIP_LOW" => return Some(Value::Integer(4)),
+        "FILTER_FLAG_STRIP_HIGH" => return Some(Value::Integer(8)),
+        "FILTER_FLAG_ENCODE_LOW" => return Some(Value::Integer(16)),
+        "FILTER_FLAG_ENCODE_HIGH" => return Some(Value::Integer(32)),
+        "FILTER_FLAG_ENCODE_AMP" => return Some(Value::Integer(64)),
+        "FILTER_FLAG_NO_ENCODE_QUOTES" => return Some(Value::Integer(128)),
+        "FILTER_FLAG_EMPTY_STRING_NULL" => return Some(Value::Integer(256)),
+        "FILTER_FLAG_STRIP_BACKTICK" => return Some(Value::Integer(512)),
+        "FILTER_FLAG_ALLOW_FRACTION" => return Some(Value::Integer(4096)),
+        "FILTER_FLAG_ALLOW_THOUSAND" => return Some(Value::Integer(8192)),
+        "FILTER_FLAG_ALLOW_SCIENTIFIC" => return Some(Value::Integer(16384)),
+        "FILTER_FLAG_SCHEME_REQUIRED" => return Some(Value::Integer(65536)),
+        "FILTER_FLAG_HOST_REQUIRED" => return Some(Value::Integer(131072)),
+        "FILTER_FLAG_PATH_REQUIRED" => return Some(Value::Integer(262144)),
+        "FILTER_FLAG_QUERY_REQUIRED" => return Some(Value::Integer(524288)),
+        "FILTER_FLAG_HOSTNAME" | "FILTER_FLAG_EMAIL_UNICODE" => {
+            return Some(Value::Integer(1048576))
+        }
+        "FILTER_FLAG_IPV4" => return Some(Value::Integer(1048576)),
+        "FILTER_FLAG_IPV6" => return Some(Value::Integer(2097152)),
+        "FILTER_FLAG_NO_RES_RANGE" => return Some(Value::Integer(4194304)),
+        "FILTER_FLAG_NO_PRIV_RANGE" => return Some(Value::Integer(8388608)),
+        "FILTER_FLAG_GLOBAL_RANGE" => return Some(Value::Integer(268435456)),
+        "PREG_PATTERN_ORDER" => return Some(Value::Integer(1)),
+        "PREG_SET_ORDER" => return Some(Value::Integer(2)),
+        "PREG_OFFSET_CAPTURE" => return Some(Value::Integer(256)),
+        "PREG_UNMATCHED_AS_NULL" => return Some(Value::Integer(512)),
+        "PREG_SPLIT_NO_EMPTY" => return Some(Value::Integer(1)),
+        "PREG_SPLIT_DELIM_CAPTURE" => return Some(Value::Integer(2)),
+        "PREG_SPLIT_OFFSET_CAPTURE" => return Some(Value::Integer(4)),
+        "PREG_GREP_INVERT" => return Some(Value::Integer(1)),
+        "PREG_NO_ERROR" => return Some(Value::Integer(0)),
+        "PREG_INTERNAL_ERROR" => return Some(Value::Integer(1)),
+        "PREG_BACKTRACK_LIMIT_ERROR" => return Some(Value::Integer(2)),
+        "PREG_RECURSION_LIMIT_ERROR" => return Some(Value::Integer(3)),
+        "PREG_BAD_UTF8_ERROR" => return Some(Value::Integer(4)),
+        "PREG_BAD_UTF8_OFFSET_ERROR" => return Some(Value::Integer(5)),
+        "PREG_JIT_STACKLIMIT_ERROR" => return Some(Value::Integer(6)),
+        "PCRE_VERSION_MAJOR" => return Some(Value::Integer(10)),
+        "PCRE_VERSION_MINOR" => return Some(Value::Integer(45)),
+        "AMQP_NOPARAM" => return Some(Value::Integer(0)),
+        "AMQP_DURABLE" => return Some(Value::Integer(2)),
+        "AMQP_PASSIVE" => return Some(Value::Integer(4)),
+        "AMQP_EXCLUSIVE" => return Some(Value::Integer(8)),
+        "AMQP_AUTODELETE" => return Some(Value::Integer(16)),
+        "AMQP_INTERNAL" => return Some(Value::Integer(32)),
+        "AMQP_NOLOCAL" => return Some(Value::Integer(64)),
+        "AMQP_AUTOACK" => return Some(Value::Integer(128)),
+        "AMQP_IFEMPTY" => return Some(Value::Integer(256)),
+        "AMQP_IFUNUSED" => return Some(Value::Integer(512)),
+        "AMQP_MANDATORY" => return Some(Value::Integer(1024)),
+        "AMQP_IMMEDIATE" => return Some(Value::Integer(2048)),
+        "AMQP_MULTIPLE" => return Some(Value::Integer(4096)),
+        "AMQP_NOWAIT" => return Some(Value::Integer(8192)),
+        "AMQP_REQUEUE" => return Some(Value::Integer(16384)),
+        "AMQP_EX_TYPE_DIRECT" => return Some(Value::Integer(1)),
+        "AMQP_EX_TYPE_FANOUT" => return Some(Value::Integer(2)),
+        "AMQP_EX_TYPE_TOPIC" => return Some(Value::Integer(3)),
+        "AMQP_EX_TYPE_HEADERS" => return Some(Value::Integer(4)),
+        "DOM_INDEX_SIZE_ERR" => return Some(Value::Integer(1)),
+        "DOM_DOMSTRING_SIZE_ERR" | "DOMSTRING_SIZE_ERR" => return Some(Value::Integer(2)),
+        "DOM_HIERARCHY_REQUEST_ERR" => return Some(Value::Integer(3)),
+        "DOM_WRONG_DOCUMENT_ERR" => return Some(Value::Integer(4)),
+        "DOM_INVALID_CHARACTER_ERR" => return Some(Value::Integer(5)),
+        "DOM_NO_DATA_ALLOWED_ERR" => return Some(Value::Integer(6)),
+        "DOM_NO_MODIFICATION_ALLOWED_ERR" => return Some(Value::Integer(7)),
+        "DOM_NOT_FOUND_ERR" => return Some(Value::Integer(8)),
+        "DOM_NOT_SUPPORTED_ERR" => return Some(Value::Integer(9)),
+        "DOM_INUSE_ATTRIBUTE_ERR" => return Some(Value::Integer(10)),
+        "DOM_INVALID_STATE_ERR" => return Some(Value::Integer(11)),
+        "DOM_SYNTAX_ERR" => return Some(Value::Integer(12)),
+        "DOM_INVALID_MODIFICATION_ERR" => return Some(Value::Integer(13)),
+        "DOM_NAMESPACE_ERR" => return Some(Value::Integer(14)),
+        "DOM_INVALID_ACCESS_ERR" => return Some(Value::Integer(15)),
+        "DOM_VALIDATION_ERR" => return Some(Value::Integer(16)),
+        "DOM_PHP_ERR" => return Some(Value::Integer(0)),
+        "XML_ELEMENT_NODE" => return Some(Value::Integer(1)),
+        "XML_ATTRIBUTE_NODE" => return Some(Value::Integer(2)),
+        "XML_TEXT_NODE" => return Some(Value::Integer(3)),
+        "XML_CDATA_SECTION_NODE" => return Some(Value::Integer(4)),
+        "XML_ENTITY_REF_NODE" => return Some(Value::Integer(5)),
+        "XML_ENTITY_NODE" => return Some(Value::Integer(6)),
+        "XML_PI_NODE" => return Some(Value::Integer(7)),
+        "XML_COMMENT_NODE" => return Some(Value::Integer(8)),
+        "XML_DOCUMENT_NODE" => return Some(Value::Integer(9)),
+        "XML_DOCUMENT_TYPE_NODE" => return Some(Value::Integer(10)),
+        "XML_DOCUMENT_FRAG_NODE" => return Some(Value::Integer(11)),
+        "XML_NOTATION_NODE" => return Some(Value::Integer(12)),
+        "XML_HTML_DOCUMENT_NODE" => return Some(Value::Integer(13)),
+        "XML_DTD_NODE" => return Some(Value::Integer(14)),
+        "XML_ELEMENT_DECL_NODE" => return Some(Value::Integer(15)),
+        "XML_ATTRIBUTE_DECL_NODE" => return Some(Value::Integer(16)),
+        "XML_ENTITY_DECL_NODE" => return Some(Value::Integer(17)),
+        "XML_NAMESPACE_DECL_NODE" => return Some(Value::Integer(18)),
+        "XML_ERROR_NONE" => return Some(Value::Integer(0)),
+        "XML_ERROR_NO_MEMORY" => return Some(Value::Integer(1)),
+        "XML_ERROR_SYNTAX" => return Some(Value::Integer(2)),
+        "XML_ERROR_NO_ELEMENTS" => return Some(Value::Integer(3)),
+        "XML_ERROR_INVALID_TOKEN" => return Some(Value::Integer(4)),
+        "XML_ERROR_UNCLOSED_TOKEN" => return Some(Value::Integer(5)),
+        "XML_ERROR_PARTIAL_CHAR" => return Some(Value::Integer(6)),
+        "XML_ERROR_TAG_MISMATCH" => return Some(Value::Integer(7)),
+        "XML_ERROR_DUPLICATE_ATTRIBUTE" => return Some(Value::Integer(8)),
+        "XML_ERROR_JUNK_AFTER_DOC_ELEMENT" => return Some(Value::Integer(9)),
+        "XML_ERROR_PARAM_ENTITY_REF" => return Some(Value::Integer(10)),
+        "XML_ERROR_UNDEFINED_ENTITY" => return Some(Value::Integer(11)),
+        "XML_ERROR_RECURSIVE_ENTITY_REF" => return Some(Value::Integer(12)),
+        "XML_ERROR_ASYNC_ENTITY" => return Some(Value::Integer(13)),
+        "XML_ERROR_BAD_CHAR_REF" => return Some(Value::Integer(14)),
+        "XML_ERROR_BINARY_ENTITY_REF" => return Some(Value::Integer(15)),
+        "XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF" => return Some(Value::Integer(16)),
+        "XML_ERROR_MISPLACED_XML_PI" => return Some(Value::Integer(17)),
+        "XML_ERROR_UNKNOWN_ENCODING" => return Some(Value::Integer(18)),
+        "XML_ERROR_INCORRECT_ENCODING" => return Some(Value::Integer(19)),
+        "XML_ERROR_UNCLOSED_CDATA_SECTION" => return Some(Value::Integer(20)),
+        "XML_ERROR_EXTERNAL_ENTITY_HANDLING" => return Some(Value::Integer(21)),
+        "PGSQL_CONNECTION_OK" => return Some(Value::Integer(0)),
+        "PGSQL_CONNECTION_BAD" => return Some(Value::Integer(1)),
+        "PGSQL_TRANSACTION_IDLE" => return Some(Value::Integer(0)),
+        "PGSQL_TRANSACTION_ACTIVE" => return Some(Value::Integer(1)),
+        "PGSQL_TRANSACTION_INTRANS" => return Some(Value::Integer(2)),
+        "PGSQL_TRANSACTION_INERROR" => return Some(Value::Integer(3)),
+        "PGSQL_TRANSACTION_UNKNOWN" => return Some(Value::Integer(4)),
+        "PGSQL_EMPTY_QUERY" => return Some(Value::Integer(0)),
+        "PGSQL_COMMAND_OK" => return Some(Value::Integer(1)),
+        "PGSQL_TUPLES_OK" => return Some(Value::Integer(2)),
+        "PGSQL_COPY_OUT" => return Some(Value::Integer(3)),
+        "PGSQL_COPY_IN" => return Some(Value::Integer(4)),
+        "PGSQL_BAD_RESPONSE" => return Some(Value::Integer(5)),
+        "PGSQL_NONFATAL_ERROR" => return Some(Value::Integer(6)),
+        "PGSQL_FATAL_ERROR" => return Some(Value::Integer(7)),
+        "PGSQL_DIAG_SEVERITY" => return Some(Value::Integer(i64::from(b'S'))),
+        "PGSQL_DIAG_SQLSTATE" => return Some(Value::Integer(i64::from(b'C'))),
+        "PGSQL_DIAG_MESSAGE_PRIMARY" => return Some(Value::Integer(i64::from(b'M'))),
+        "PGSQL_DIAG_MESSAGE_DETAIL" => return Some(Value::Integer(i64::from(b'D'))),
+        "PGSQL_DIAG_MESSAGE_HINT" => return Some(Value::Integer(i64::from(b'H'))),
+        "PGSQL_DIAG_STATEMENT_POSITION" => return Some(Value::Integer(i64::from(b'P'))),
+        "PGSQL_DIAG_INTERNAL_POSITION" => return Some(Value::Integer(i64::from(b'p'))),
+        "PGSQL_DIAG_INTERNAL_QUERY" => return Some(Value::Integer(i64::from(b'q'))),
+        "PGSQL_DIAG_CONTEXT" => return Some(Value::Integer(i64::from(b'W'))),
+        "PGSQL_DIAG_SOURCE_FILE" => return Some(Value::Integer(i64::from(b'F'))),
+        "PGSQL_DIAG_SOURCE_LINE" => return Some(Value::Integer(i64::from(b'L'))),
+        "PGSQL_DIAG_SOURCE_FUNCTION" => return Some(Value::Integer(i64::from(b'R'))),
+        "PGSQL_ATTR_DISABLE_PREPARES" => return Some(Value::Integer(1000)),
+        "PGSQL_STATUS_STRING" => return Some(Value::Integer(1)),
+        "LOCK_NB" => return Some(Value::Integer(4)),
+        "GLOB_NOSORT" => return Some(Value::Integer(4)),
+        "GLOB_NOESCAPE" => return Some(Value::Integer(64)),
+        "GLOB_ONLYDIR" => return Some(Value::Integer(256)),
+        "GLOB_BRACE" => return Some(Value::Integer(1024)),
+        // Stable reserved IDs for the partial tokenizer-constant surface. PHP
+        // explicitly warns that parser token numbers vary across versions.
+        "T_COMMENT" => return Some(Value::Integer(10000)),
+        "T_DOC_COMMENT" => return Some(Value::Integer(10001)),
+        "T_OPEN_TAG" => return Some(Value::Integer(10002)),
+        "T_NEW" => return Some(Value::Integer(10003)),
+        "T_WHITESPACE" => return Some(Value::Integer(10004)),
+        "T_STRING" => return Some(Value::Integer(10005)),
+        "T_STATIC" => return Some(Value::Integer(10006)),
+        "T_ABSTRACT" => return Some(Value::Integer(10007)),
+        "T_FINAL" => return Some(Value::Integer(10008)),
+        "T_PRIVATE" => return Some(Value::Integer(10009)),
+        "T_PROTECTED" => return Some(Value::Integer(10010)),
+        "T_PUBLIC" => return Some(Value::Integer(10011)),
+        "T_READONLY" => return Some(Value::Integer(10012)),
+        "T_INCLUDE" => return Some(Value::Integer(10013)),
+        "T_INCLUDE_ONCE" => return Some(Value::Integer(10014)),
+        "T_EVAL" => return Some(Value::Integer(10015)),
+        "T_REQUIRE" => return Some(Value::Integer(10016)),
+        "T_REQUIRE_ONCE" => return Some(Value::Integer(10017)),
+        "T_LOGICAL_OR" => return Some(Value::Integer(10018)),
+        "T_LOGICAL_XOR" => return Some(Value::Integer(10019)),
+        "T_LOGICAL_AND" => return Some(Value::Integer(10020)),
+        "T_INSTANCEOF" => return Some(Value::Integer(10021)),
+        "T_CLONE" => return Some(Value::Integer(10022)),
+        "T_EXIT" => return Some(Value::Integer(10023)),
+        "T_IF" => return Some(Value::Integer(10024)),
+        "T_ELSEIF" => return Some(Value::Integer(10025)),
+        "T_ELSE" => return Some(Value::Integer(10026)),
+        "T_ENDIF" => return Some(Value::Integer(10027)),
+        "T_ECHO" => return Some(Value::Integer(10028)),
+        "T_DO" => return Some(Value::Integer(10029)),
+        "T_WHILE" => return Some(Value::Integer(10030)),
+        "T_ENDWHILE" => return Some(Value::Integer(10031)),
+        "T_FOR" => return Some(Value::Integer(10032)),
+        "T_ENDFOR" => return Some(Value::Integer(10033)),
+        "T_FOREACH" => return Some(Value::Integer(10034)),
+        "T_ENDFOREACH" => return Some(Value::Integer(10035)),
+        "T_DECLARE" => return Some(Value::Integer(10036)),
+        "T_ENDDECLARE" => return Some(Value::Integer(10037)),
+        "T_AS" => return Some(Value::Integer(10038)),
+        "T_TRY" => return Some(Value::Integer(10039)),
+        "T_CATCH" => return Some(Value::Integer(10040)),
+        "T_FINALLY" => return Some(Value::Integer(10041)),
+        "T_THROW" => return Some(Value::Integer(10042)),
+        "T_USE" => return Some(Value::Integer(10043)),
+        "T_INSTEADOF" => return Some(Value::Integer(10044)),
+        "T_GLOBAL" => return Some(Value::Integer(10045)),
+        "T_VAR" => return Some(Value::Integer(10046)),
+        "T_UNSET" => return Some(Value::Integer(10047)),
+        "T_ISSET" => return Some(Value::Integer(10048)),
+        "T_EMPTY" => return Some(Value::Integer(10049)),
+        "T_CONTINUE" => return Some(Value::Integer(10050)),
+        "T_GOTO" => return Some(Value::Integer(10051)),
+        "T_FUNCTION" => return Some(Value::Integer(10052)),
+        "T_CONST" => return Some(Value::Integer(10053)),
+        "T_RETURN" => return Some(Value::Integer(10054)),
+        "T_PRINT" => return Some(Value::Integer(10055)),
+        "T_YIELD" => return Some(Value::Integer(10056)),
+        "T_LIST" => return Some(Value::Integer(10057)),
+        "T_SWITCH" => return Some(Value::Integer(10058)),
+        "T_ENDSWITCH" => return Some(Value::Integer(10059)),
+        "T_CASE" => return Some(Value::Integer(10060)),
+        "T_DEFAULT" => return Some(Value::Integer(10061)),
+        "T_BREAK" => return Some(Value::Integer(10062)),
+        "T_ARRAY" => return Some(Value::Integer(10063)),
+        "T_CALLABLE" => return Some(Value::Integer(10064)),
+        "T_EXTENDS" => return Some(Value::Integer(10065)),
+        "T_IMPLEMENTS" => return Some(Value::Integer(10066)),
+        "T_NAMESPACE" => return Some(Value::Integer(10067)),
+        "T_TRAIT" => return Some(Value::Integer(10068)),
+        "T_INTERFACE" => return Some(Value::Integer(10069)),
+        "T_CLASS" => return Some(Value::Integer(10070)),
+        "T_CLASS_C" => return Some(Value::Integer(10071)),
+        "T_TRAIT_C" => return Some(Value::Integer(10072)),
+        "T_FUNC_C" => return Some(Value::Integer(10073)),
+        "T_METHOD_C" => return Some(Value::Integer(10074)),
+        "T_LINE" => return Some(Value::Integer(10075)),
+        "T_FILE" => return Some(Value::Integer(10076)),
+        "T_DIR" => return Some(Value::Integer(10077)),
+        "T_NS_C" => return Some(Value::Integer(10078)),
+        "T_HALT_COMPILER" => return Some(Value::Integer(10079)),
+        "T_FN" => return Some(Value::Integer(10080)),
+        "T_MATCH" => return Some(Value::Integer(10081)),
+        "T_OPEN_TAG_WITH_ECHO" => return Some(Value::Integer(10082)),
+        "T_NAME_FULLY_QUALIFIED" => return Some(Value::Integer(10083)),
+        "T_NAME_QUALIFIED" => return Some(Value::Integer(10084)),
+        "T_NAME_RELATIVE" => return Some(Value::Integer(10085)),
+        "T_NS_SEPARATOR" => return Some(Value::Integer(10086)),
+        "T_BAD_CHARACTER" => return Some(Value::Integer(10087)),
+        "T_CLOSE_TAG" => return Some(Value::Integer(10088)),
+        "T_VARIABLE" => return Some(Value::Integer(10089)),
+        "T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG" => return Some(Value::Integer(10100)),
+        "T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG" => return Some(Value::Integer(10101)),
+        "T_AND_EQUAL" => return Some(Value::Integer(10102)),
+        "T_ARRAY_CAST" => return Some(Value::Integer(10103)),
+        "T_ATTRIBUTE" => return Some(Value::Integer(10104)),
+        "T_BACKTICK" => return Some(Value::Integer(10105)),
+        "T_BOOLEAN_AND" => return Some(Value::Integer(10106)),
+        "T_BOOLEAN_OR" => return Some(Value::Integer(10107)),
+        "T_BOOL_CAST" => return Some(Value::Integer(10108)),
+        "T_COALESCE" => return Some(Value::Integer(10109)),
+        "T_COALESCE_EQUAL" => return Some(Value::Integer(10110)),
+        "T_CONCAT_EQUAL" => return Some(Value::Integer(10111)),
+        "T_CONSTANT_ENCAPSED_STRING" => return Some(Value::Integer(10112)),
+        "T_CURLY_OPEN" => return Some(Value::Integer(10113)),
+        "T_DEC" => return Some(Value::Integer(10114)),
+        "T_DIV_EQUAL" => return Some(Value::Integer(10115)),
+        "T_DNUMBER" => return Some(Value::Integer(10116)),
+        "T_DOLLAR_OPEN_CURLY_BRACES" => return Some(Value::Integer(10117)),
+        "T_DOUBLE_ARROW" => return Some(Value::Integer(10118)),
+        "T_DOUBLE_CAST" => return Some(Value::Integer(10119)),
+        "T_DOUBLE_COLON" => return Some(Value::Integer(10120)),
+        "T_ELLIPSIS" => return Some(Value::Integer(10121)),
+        "T_END_HEREDOC" => return Some(Value::Integer(10122)),
+        "T_ENUM" => return Some(Value::Integer(10123)),
+        "T_ENCAPSED_AND_WHITESPACE" => return Some(Value::Integer(10124)),
+        "T_INC" => return Some(Value::Integer(10125)),
+        "T_INLINE_HTML" => return Some(Value::Integer(10126)),
+        "T_INT_CAST" => return Some(Value::Integer(10127)),
+        "T_IS_EQUAL" => return Some(Value::Integer(10128)),
+        "T_IS_GREATER_OR_EQUAL" => return Some(Value::Integer(10129)),
+        "T_IS_IDENTICAL" => return Some(Value::Integer(10130)),
+        "T_IS_NOT_EQUAL" => return Some(Value::Integer(10131)),
+        "T_IS_NOT_IDENTICAL" => return Some(Value::Integer(10132)),
+        "T_IS_SMALLER_OR_EQUAL" => return Some(Value::Integer(10133)),
+        "T_LNUMBER" => return Some(Value::Integer(10134)),
+        "T_MINUS_EQUAL" => return Some(Value::Integer(10135)),
+        "T_MOD_EQUAL" => return Some(Value::Integer(10136)),
+        "T_MUL_EQUAL" => return Some(Value::Integer(10137)),
+        "T_NUM_STRING" => return Some(Value::Integer(10138)),
+        "T_OBJECT_CAST" => return Some(Value::Integer(10139)),
+        "T_OBJECT_OPERATOR" => return Some(Value::Integer(10140)),
+        "T_NULLSAFE_OBJECT_OPERATOR" => return Some(Value::Integer(10141)),
+        "T_OR_EQUAL" => return Some(Value::Integer(10142)),
+        "T_PAAMAYIM_NEKUDOTAYIM" => return Some(Value::Integer(10143)),
+        "T_PLUS_EQUAL" => return Some(Value::Integer(10144)),
+        "T_POW" => return Some(Value::Integer(10145)),
+        "T_POW_EQUAL" => return Some(Value::Integer(10146)),
+        "T_PRIVATE_SET" => return Some(Value::Integer(10147)),
+        "T_PROPERTY_C" => return Some(Value::Integer(10148)),
+        "T_PROTECTED_SET" => return Some(Value::Integer(10149)),
+        "T_PUBLIC_SET" => return Some(Value::Integer(10150)),
+        "T_SL" => return Some(Value::Integer(10151)),
+        "T_SL_EQUAL" => return Some(Value::Integer(10152)),
+        "T_SPACESHIP" => return Some(Value::Integer(10153)),
+        "T_SR" => return Some(Value::Integer(10154)),
+        "T_SR_EQUAL" => return Some(Value::Integer(10155)),
+        "T_START_HEREDOC" => return Some(Value::Integer(10156)),
+        "T_STRING_CAST" => return Some(Value::Integer(10157)),
+        "T_STRING_VARNAME" => return Some(Value::Integer(10158)),
+        "T_UNSET_CAST" => return Some(Value::Integer(10159)),
+        "T_VOID_CAST" => return Some(Value::Integer(10160)),
+        "T_XOR_EQUAL" => return Some(Value::Integer(10161)),
+        "T_YIELD_FROM" => return Some(Value::Integer(10162)),
+        "T_PIPE" => return Some(Value::Integer(10164)),
+        "IMAGETYPE_GIF" => return Some(Value::Integer(1)),
+        "IMAGETYPE_JPEG" => return Some(Value::Integer(2)),
+        "IMAGETYPE_PNG" => return Some(Value::Integer(3)),
+        "IMAGETYPE_SWF" => return Some(Value::Integer(4)),
+        "IMAGETYPE_PSD" => return Some(Value::Integer(5)),
+        "IMAGETYPE_BMP" => return Some(Value::Integer(6)),
+        "IMAGETYPE_TIFF_II" => return Some(Value::Integer(7)),
+        "IMAGETYPE_TIFF_MM" => return Some(Value::Integer(8)),
+        "IMAGETYPE_JPC" => return Some(Value::Integer(9)),
+        "IMAGETYPE_JP2" => return Some(Value::Integer(10)),
+        "IMAGETYPE_JPX" => return Some(Value::Integer(11)),
+        "IMAGETYPE_JB2" => return Some(Value::Integer(12)),
+        "IMAGETYPE_SWC" => return Some(Value::Integer(13)),
+        "IMAGETYPE_IFF" => return Some(Value::Integer(14)),
+        "IMAGETYPE_WBMP" => return Some(Value::Integer(15)),
+        "IMAGETYPE_XBM" => return Some(Value::Integer(16)),
+        "IMAGETYPE_ICO" => return Some(Value::Integer(17)),
+        "IMAGETYPE_WEBP" => return Some(Value::Integer(18)),
+        "IMAGETYPE_AVIF" => return Some(Value::Integer(19)),
         "PHP_URL_SCHEME" => return Some(Value::Integer(0)),
         "PHP_URL_HOST" => return Some(Value::Integer(1)),
         "PHP_URL_PORT" => return Some(Value::Integer(2)),
@@ -446,14 +835,55 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "INF" | "INFINITY" => return Some(Value::Number(f64::INFINITY)),
         "NAN" => return Some(Value::Number(f64::NAN)),
         "PHP_FLOAT_DIG" => return Some(Value::Integer(15)),
+        "E_ERROR" => return Some(Value::Integer(1)),
         "E_WARNING" => return Some(Value::Integer(2)),
+        "E_PARSE" => return Some(Value::Integer(4)),
         "E_NOTICE" => return Some(Value::Integer(8)),
-        "E_DEPRECATED" => return Some(Value::Integer(8192)),
+        "E_CORE_ERROR" => return Some(Value::Integer(16)),
+        "E_CORE_WARNING" => return Some(Value::Integer(32)),
+        "E_COMPILE_ERROR" => return Some(Value::Integer(64)),
+        "E_COMPILE_WARNING" => return Some(Value::Integer(128)),
         "E_USER_ERROR" => return Some(Value::Integer(256)),
         "E_USER_WARNING" => return Some(Value::Integer(512)),
         "E_USER_NOTICE" => return Some(Value::Integer(1024)),
+        "E_STRICT" => return Some(Value::Integer(2048)),
+        "E_RECOVERABLE_ERROR" => return Some(Value::Integer(4096)),
+        "E_DEPRECATED" => return Some(Value::Integer(8192)),
         "E_USER_DEPRECATED" => return Some(Value::Integer(16384)),
         "E_ALL" => return Some(Value::Integer(32767)),
+        "LOG_EMERG" => return Some(Value::Integer(0)),
+        "LOG_ALERT" => return Some(Value::Integer(1)),
+        "LOG_CRIT" => return Some(Value::Integer(2)),
+        "LOG_ERR" => return Some(Value::Integer(3)),
+        "LOG_WARNING" => return Some(Value::Integer(4)),
+        "LOG_NOTICE" => return Some(Value::Integer(5)),
+        "LOG_INFO" => return Some(Value::Integer(6)),
+        "LOG_DEBUG" => return Some(Value::Integer(7)),
+        "LOG_KERN" => return Some(Value::Integer(0)),
+        "LOG_USER" => return Some(Value::Integer(8)),
+        "LOG_MAIL" => return Some(Value::Integer(16)),
+        "LOG_DAEMON" => return Some(Value::Integer(24)),
+        "LOG_AUTH" => return Some(Value::Integer(32)),
+        "LOG_SYSLOG" => return Some(Value::Integer(40)),
+        "LOG_LPR" => return Some(Value::Integer(48)),
+        "LOG_NEWS" => return Some(Value::Integer(56)),
+        "LOG_UUCP" => return Some(Value::Integer(64)),
+        "LOG_CRON" => return Some(Value::Integer(72)),
+        "LOG_AUTHPRIV" => return Some(Value::Integer(80)),
+        "LOG_FTP" => return Some(Value::Integer(88)),
+        "LOG_LOCAL0" => return Some(Value::Integer(128)),
+        "LOG_LOCAL1" => return Some(Value::Integer(136)),
+        "LOG_LOCAL2" => return Some(Value::Integer(144)),
+        "LOG_LOCAL3" => return Some(Value::Integer(152)),
+        "LOG_LOCAL4" => return Some(Value::Integer(160)),
+        "LOG_LOCAL5" => return Some(Value::Integer(168)),
+        "LOG_LOCAL6" => return Some(Value::Integer(176)),
+        "LOG_LOCAL7" => return Some(Value::Integer(184)),
+        "LOG_CONS" => return Some(Value::Integer(2)),
+        "LOG_NDELAY" => return Some(Value::Integer(8)),
+        "LOG_ODELAY" => return Some(Value::Integer(4)),
+        "LOG_NOWAIT" => return Some(Value::Integer(16)),
+        "LOG_PID" => return Some(Value::Integer(1)),
         "PHP_ROUND_HALF_UP" => return Some(Value::Integer(1)),
         "PHP_ROUND_HALF_DOWN" => return Some(Value::Integer(2)),
         "PHP_ROUND_HALF_EVEN" => return Some(Value::Integer(3)),
@@ -495,9 +925,6 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "UUID_TYPE_TIME_V7" => return Some(Value::Integer(7)),
         "UUID_TYPE_VENDOR" => return Some(Value::Integer(8)),
         "FILE_USE_INCLUDE_PATH" => return Some(Value::Integer(1)),
-        "PATH_SEPARATOR" => {
-            return Some(Value::String(if cfg!(windows) { ";" } else { ":" }.into()))
-        }
         "FILE_IGNORE_NEW_LINES" => return Some(Value::Integer(2)),
         "FILE_SKIP_EMPTY_LINES" => return Some(Value::Integer(4)),
         "FILE_APPEND" => return Some(Value::Integer(8)),
@@ -571,6 +998,14 @@ pub(super) fn builtin_constant(name: &str) -> Option<Value> {
         "JSON_ERROR_INVALID_PROPERTY_NAME" => 9.0,
         "JSON_ERROR_UTF16" => 10.0,
         "JSON_ERROR_NON_BACKED_ENUM" => 11.0,
+        // Common libcurl errors referenced by Monolog during Laravel autoload.
+        "CURLE_COULDNT_RESOLVE_HOST" => 6.0,
+        "CURLE_COULDNT_CONNECT" => 7.0,
+        "CURLE_HTTP_NOT_FOUND" => 22.0,
+        "CURLE_READ_ERROR" => 26.0,
+        "CURLE_OPERATION_TIMEOUTED" => 28.0,
+        "CURLE_HTTP_POST_ERROR" => 34.0,
+        "CURLE_SSL_CONNECT_ERROR" => 35.0,
         "ENT_COMPAT" => 2.0,
         "ENT_QUOTES" => 3.0,
         "ENT_NOQUOTES" | "ENT_HTML401" => 0.0,
@@ -594,6 +1029,24 @@ pub(super) fn constant_exists(name: &str, globals: &GlobalVariables) -> bool {
 
 pub(super) fn read_constant(name: &str, globals: &GlobalVariables) -> Result<Value, String> {
     let name = name.trim_start_matches('\\');
+    if name.eq_ignore_ascii_case("PHP_SAPI") {
+        return Ok(globals
+            .get("\0sapi_name")
+            .cloned()
+            .unwrap_or_else(|| Value::String("cli".into())));
+    }
+    if name.eq_ignore_ascii_case("__FILE__") {
+        return Ok(Value::String(globals.source_file.clone()));
+    }
+    if name.eq_ignore_ascii_case("__DIR__") {
+        return Ok(Value::String(
+            std::path::Path::new(&globals.source_file)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_string_lossy()
+                .into_owned(),
+        ));
+    }
     if let Some(value) = globals.constants.get(name) {
         return Ok(value.clone());
     }
@@ -1386,6 +1839,30 @@ pub(super) fn reference_cell_for_path(
     Ok((key, reference))
 }
 
+pub(super) fn reference_cell_for_append_path(
+    name: &str,
+    keys: &[ArrayKey],
+    variables: &mut HashMap<String, Value>,
+    bindings: &mut HashMap<String, VariableBinding>,
+    globals: &mut GlobalVariables,
+    global_scope: bool,
+    frame_id: u64,
+) -> Result<Rc<RefCell<Value>>, String> {
+    if name == "GLOBALS" {
+        return Err("Cannot append a reference to $GLOBALS".into());
+    }
+    let storage_key = reference_storage_key(name, variables, bindings, globals, global_scope, frame_id);
+    let root = globals
+        .get(&storage_key)
+        .map(Value::dereference)
+        .unwrap_or(Value::Null);
+    let reference = Rc::new(RefCell::new(Value::Null));
+    let updated = root.array_append_reference_path(keys, reference.clone())?;
+    globals.set(storage_key, updated);
+    globals.store_reference(reference.clone());
+    Ok(reference)
+}
+
 fn bind_array_reference(
     target: &str,
     target_keys: Vec<ArrayKey>,
@@ -1873,6 +2350,8 @@ fn value_matches_type(
         "string" => matches!(value, Value::String(_)),
         "bool" | "boolean" => matches!(value, Value::Bool(_)),
         "array" => matches!(value, Value::Array(_)),
+        "closure" => matches!(value, Value::Closure(_)),
+        "callable" => matches!(value, Value::Closure(_) | Value::String(_)),
         "iterable" => value_is_iterable(value, classes),
         "object" => matches!(
             value,
@@ -1889,6 +2368,7 @@ fn value_matches_type(
                 )
             }
             Value::Generator(_) => expected.eq_ignore_ascii_case("generator"),
+            Value::Closure(_) => expected.eq_ignore_ascii_case("closure"),
             _ => false,
         },
     }
@@ -1933,13 +2413,35 @@ pub(super) fn is_a_type(
                 | "iteratoraggregate"
                 | "generator"
                 | "pdostatement"
+                | "arrayobject"
                 | "arrayiterator"
+                | "iteratoriterator"
                 | "appenditerator"
                 | "directoryiterator"
                 | "filesystemiterator"
                 | "recursivearrayiterator"
                 | "recursiveiteratoriterator"
                 | "splfileobject"
+                | "filteriterator"
+                | "recursivefilteriterator"
+                | "callbackfilteriterator"
+                | "recursivecallbackfilteriterator"
+                | "parentiterator"
+                | "limititerator"
+                | "norewinditerator"
+                | "infiniteiterator"
+                | "emptyiterator"
+                | "recursivecachingiterator"
+                | "recursivetreeiterator"
+                | "multipleiterator"
+        )
+    {
+        return true;
+    }
+    if expected.eq_ignore_ascii_case("DateTimeInterface")
+        && matches!(
+            actual.to_ascii_lowercase().as_str(),
+            "datetime" | "datetimeimmutable"
         )
     {
         return true;
@@ -3980,6 +4482,7 @@ fn execute_frame(
                             is_a_type(&actual, &expected, &active_classes, &mut HashSet::new())
                         }
                         Value::Generator(_) => expected == "generator",
+                        Value::Closure(_) => expected == "closure",
                         _ => false,
                     };
                     stack.push(Value::Bool(matches));

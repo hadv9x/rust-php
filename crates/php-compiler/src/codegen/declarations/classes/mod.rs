@@ -629,6 +629,42 @@ fn expanded_trait_methods(
 pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass>, String> {
     validate_attribute_class_declarations(program)?;
     let builtin_classes = [
+        ("arrayobject", None),
+        ("stdclass", None),
+        ("sessionhandler", None),
+        ("reflectionfunctionabstract", None),
+        ("reflectionfunction", Some("reflectionfunctionabstract")),
+        ("reflectionmethod", Some("reflectionfunctionabstract")),
+        ("reflectionparameter", None),
+        ("datetime", None),
+        ("datetimeimmutable", None),
+        ("dateinterval", None),
+        ("datetimezone", None),
+        ("cachingiterator", None),
+        ("iteratoriterator", None),
+        ("filteriterator", Some("iteratoriterator")),
+        ("recursivefilteriterator", Some("filteriterator")),
+        ("callbackfilteriterator", Some("filteriterator")),
+        ("recursivecallbackfilteriterator", Some("callbackfilteriterator")),
+        ("parentiterator", Some("recursivefilteriterator")),
+        ("limititerator", Some("iteratoriterator")),
+        ("norewinditerator", Some("iteratoriterator")),
+        ("infiniteiterator", Some("iteratoriterator")),
+        ("appenditerator", Some("iteratoriterator")),
+        ("emptyiterator", None),
+        ("arrayiterator", None),
+        ("recursivearrayiterator", Some("arrayiterator")),
+        ("recursivecachingiterator", Some("cachingiterator")),
+        ("recursivetreeiterator", Some("recursiveiteratoriterator")),
+        ("multipleiterator", None),
+        ("splfileinfo", None),
+        ("splfileobject", Some("splfileinfo")),
+        ("directoryiterator", Some("splfileinfo")),
+        ("filesystemiterator", Some("directoryiterator")),
+        ("recursivedirectoryiterator", Some("filesystemiterator")),
+        ("globiterator", Some("filesystemiterator")),
+        ("recursiveiteratoriterator", None),
+        ("splobjectstorage", None),
         ("exception", None),
         ("errorexception", Some("exception")),
         ("error", None),
@@ -656,6 +692,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         ("underflowexception", Some("runtimeexception")),
         ("unexpectedvalueexception", Some("runtimeexception")),
         ("reflectionexception", Some("exception")),
+        ("pdoexception", Some("runtimeexception")),
     ];
     if let Some(class) = program.classes.iter().find(|class| {
         builtin_classes
@@ -670,12 +707,18 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         "iterator",
         "iteratoraggregate",
         "countable",
+        "arrayaccess",
+        "serializable",
         "outeriterator",
         "recursiveiterator",
         "jsonserializable",
         "stringable",
         "unitenum",
         "backedenum",
+        "sessionhandlerinterface",
+        "sessionupdatetimestamphandlerinterface",
+        "datetimeinterface",
+        "reflector",
     ];
     if let Some(interface) = program.interfaces.iter().find(|interface| {
         builtin_interfaces
@@ -796,24 +839,36 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         ("iterator", vec!["traversable".into()]),
         ("iteratoraggregate", vec!["traversable".into()]),
         ("countable", Vec::new()),
+        ("arrayaccess", Vec::new()),
+        ("serializable", Vec::new()),
         ("outeriterator", vec!["iterator".into()]),
         ("recursiveiterator", vec!["iterator".into()]),
         ("jsonserializable", Vec::new()),
         ("stringable", Vec::new()),
         ("unitenum", Vec::new()),
         ("backedenum", vec!["unitenum".into()]),
+        ("sessionhandlerinterface", Vec::new()),
+        ("sessionupdatetimestamphandlerinterface", Vec::new()),
+        ("datetimeinterface", Vec::new()),
+        ("reflector", Vec::new()),
     ] {
         let canonical = match name {
             "traversable" => "Traversable",
             "iterator" => "Iterator",
             "iteratoraggregate" => "IteratorAggregate",
             "countable" => "Countable",
+            "arrayaccess" => "ArrayAccess",
+            "serializable" => "Serializable",
             "outeriterator" => "OuterIterator",
             "recursiveiterator" => "RecursiveIterator",
             "jsonserializable" => "JsonSerializable",
             "stringable" => "Stringable",
             "unitenum" => "UnitEnum",
             "backedenum" => "BackedEnum",
+            "sessionhandlerinterface" => "SessionHandlerInterface",
+            "sessionupdatetimestamphandlerinterface" => "SessionUpdateTimestampHandlerInterface",
+            "datetimeinterface" => "DateTimeInterface",
+            "reflector" => "Reflector",
             _ => unreachable!(),
         };
         classes.insert(
@@ -851,6 +906,42 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
     }
     for (name, parent) in builtin_classes {
         let canonical_name = match name {
+            "arrayobject" => "ArrayObject",
+            "stdclass" => "stdClass",
+            "sessionhandler" => "SessionHandler",
+            "reflectionfunctionabstract" => "ReflectionFunctionAbstract",
+            "reflectionfunction" => "ReflectionFunction",
+            "reflectionmethod" => "ReflectionMethod",
+            "reflectionparameter" => "ReflectionParameter",
+            "datetime" => "DateTime",
+            "datetimeimmutable" => "DateTimeImmutable",
+            "dateinterval" => "DateInterval",
+            "datetimezone" => "DateTimeZone",
+            "cachingiterator" => "CachingIterator",
+            "iteratoriterator" => "IteratorIterator",
+            "filteriterator" => "FilterIterator",
+            "recursivefilteriterator" => "RecursiveFilterIterator",
+            "callbackfilteriterator" => "CallbackFilterIterator",
+            "recursivecallbackfilteriterator" => "RecursiveCallbackFilterIterator",
+            "parentiterator" => "ParentIterator",
+            "limititerator" => "LimitIterator",
+            "norewinditerator" => "NoRewindIterator",
+            "infiniteiterator" => "InfiniteIterator",
+            "appenditerator" => "AppendIterator",
+            "emptyiterator" => "EmptyIterator",
+            "arrayiterator" => "ArrayIterator",
+            "recursivearrayiterator" => "RecursiveArrayIterator",
+            "recursivecachingiterator" => "RecursiveCachingIterator",
+            "recursivetreeiterator" => "RecursiveTreeIterator",
+            "multipleiterator" => "MultipleIterator",
+            "splfileinfo" => "SplFileInfo",
+            "splfileobject" => "SplFileObject",
+            "directoryiterator" => "DirectoryIterator",
+            "filesystemiterator" => "FilesystemIterator",
+            "recursivedirectoryiterator" => "RecursiveDirectoryIterator",
+            "globiterator" => "GlobIterator",
+            "recursiveiteratoriterator" => "RecursiveIteratorIterator",
+            "splobjectstorage" => "SplObjectStorage",
             "exception" => "Exception",
             "errorexception" => "ErrorException",
             "error" => "Error",
@@ -878,6 +969,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
             "underflowexception" => "UnderflowException",
             "unexpectedvalueexception" => "UnexpectedValueException",
             "reflectionexception" => "ReflectionException",
+            "pdoexception" => "PDOException",
             _ => unreachable!(),
         };
         classes.insert(
@@ -893,7 +985,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 is_interface: false,
                 is_trait: false,
                 unresolved_traits: Vec::new(),
-                is_abstract: false,
+                is_abstract: name == "reflectionfunctionabstract",
                 is_final: false,
                 is_readonly: false,
                 is_enum: false,
@@ -1150,16 +1242,15 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         let mut method_order = Vec::new();
         let mut trait_methods: HashMap<String, Vec<(String, FunctionDecl)>> = HashMap::new();
         let mut trait_method_order = Vec::new();
-        let is_anonymous = class.name.starts_with("class@anonymous#");
         let mut unresolved_traits = Vec::new();
         // Trait members are inserted first so explicit class members can override them.
         for trait_name in &class.traits {
             if !trait_declarations.contains_key(&trait_name.to_ascii_lowercase()) {
-                if is_anonymous {
-                    unresolved_traits.push(trait_name.clone());
-                    continue;
-                }
-                return Err(format!("Trait '{trait_name}' not found"));
+                // Composer class maps can mention classes that depend on
+                // optional packages. Resolve missing traits only if that
+                // class is actually instantiated at runtime.
+                unresolved_traits.push(trait_name.clone());
+                continue;
             }
             for constant in expanded_trait_constants(
                 trait_name,
@@ -1521,7 +1612,10 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                     .parameter_types
                     .get(index)
                     .and_then(Option::as_deref)
-                    .is_some_and(|actual| !actual.eq_ignore_ascii_case(expected))
+                    .is_some_and(|actual| {
+                        !actual.eq_ignore_ascii_case(expected)
+                            && !actual.eq_ignore_ascii_case("mixed")
+                    })
                 {
                     return Err(format!(
                         "{}::{}() parameter #{} must be of type {expected}",
@@ -1535,7 +1629,6 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 "__serialize" | "__sleep" | "__debuginfo" => Some("array"),
                 "__unserialize" | "__wakeup" | "__set" | "__unset" | "__clone" => Some("void"),
                 "__set_state" => Some("object"),
-                "__get" | "__call" | "__callstatic" => Some("mixed"),
                 "__isset" => Some("bool"),
                 "__tostring" => Some("string"),
                 _ => None,
@@ -2002,7 +2095,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
             constants.insert(
                 constant.name.clone(),
                 BytecodeConstant {
-                    value: constant_value(&constant.value)?,
+                    value: constant_value_in_interface(&constant.value, interface, program)?,
                     visibility: MemberVisibility::Public,
                     declaring_class: interface.name.to_ascii_lowercase(),
                     is_final: false,
@@ -2047,7 +2140,12 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 method.parameter_types.clone(),
                 method.parameter_by_reference.clone(),
                 method.parameter_variadic.clone(),
-                super::parameter_defaults(&method.parameter_defaults, Some(program), None, None)?,
+                super::parameter_defaults(
+                    &method.parameter_defaults,
+                    Some(program),
+                    Some(&interface.name),
+                    None,
+                )?,
                 method.return_type.clone(),
                 method.returns_by_reference,
                 Vec::new(),
@@ -2192,7 +2290,16 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
             ));
         }
         if !class.is_abstract {
-            if let Some((method, _)) = available.iter().find(|(_, function)| function.is_abstract) {
+            let mut inherited = HashMap::new();
+            if let Some(parent) = &class.parent {
+                collect_class_methods(&parent.to_ascii_lowercase(), &classes, &mut inherited)?;
+            }
+            if let Some((method, _)) = available.iter().find(|(name, function)| {
+                function.is_abstract
+                    && !inherited
+                        .get(*name)
+                        .is_some_and(|parent_method| !parent_method.is_abstract)
+            }) {
                 return Err(format!(
                     "Class {} must be abstract or implement {}()",
                     class.name, method
@@ -2318,6 +2425,8 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                                 parent_method.return_type.as_deref(),
                                 &class_declarations,
                                 &interface_declarations,
+                                &class.name,
+                                parent_name,
                             )
                         {
                             return Err(format!("Method {}::{}() has incompatible parameter or return types with parent", class.name, method_name));
@@ -2417,12 +2526,15 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 if method_name.eq_ignore_ascii_case("__construct") {
                     continue;
                 }
-                let implementation = available.get(&method_name).ok_or_else(|| {
-                    format!(
+                let Some(implementation) = available.get(&method_name) else {
+                    if class.is_abstract {
+                        continue;
+                    }
+                    return Err(format!(
                         "Class {} must implement {}() from interface {}",
                         class.name, method_name, interface_name
-                    )
-                })?;
+                    ));
+                };
                 let implementation_has_default = implementation
                     .parameter_defaults
                     .iter()
@@ -2452,11 +2564,25 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                         signature.return_type.as_deref(),
                         &class_declarations,
                         &interface_declarations,
+                        &class.name,
+                        interface_name,
                     )
                 {
                     return Err(format!(
-                        "Method {}::{}() does not match interface {} signature",
-                        class.name, method_name, interface_name
+                        "Method {}::{}() does not match interface {} signature (implementation params {:?}, return {:?}, by-ref {:?}, variadic {:?}, defaults {:?}; interface params {:?}, return {:?}, by-ref {:?}, variadic {:?}, defaults {:?})",
+                        class.name,
+                        method_name,
+                        interface_name,
+                        implementation.parameter_types,
+                        implementation.return_type,
+                        implementation.parameter_by_reference,
+                        implementation.parameter_variadic,
+                        implementation.parameter_defaults,
+                        signature.parameter_types,
+                        signature.return_type,
+                        signature.parameter_by_reference,
+                        signature.parameter_variadic,
+                        signature.parameter_defaults,
                     ));
                 }
                 if signature.visibility == Visibility::Public
@@ -2524,13 +2650,9 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                         return Err(format!("Class {} must implement JsonSerializable::jsonSerialize() without parameters", class.name));
                     }
                     if interface_name.eq_ignore_ascii_case("Stringable")
-                        && (!method.parameters.is_empty()
-                            || !method
-                                .return_type
-                                .as_deref()
-                                .is_some_and(|ty| ty.eq_ignore_ascii_case("string")))
+                        && !method.parameters.is_empty()
                     {
-                        return Err(format!("Class {} must implement Stringable::__toString(): string without parameters", class.name));
+                        return Err(format!("Class {} must implement Stringable::__toString() without parameters", class.name));
                     }
                 }
             }

@@ -126,3 +126,4 @@ Current status: **the project implements a useful but narrow PHP subset. The man
 
 String helper additions include `quotemeta()` for PHP's documented regex metacharacter set; its empty-input result is `false`.
 The string inventory also includes `strrchr()` with last-character matching and the PHP 8.3 `before_needle` parameter.
+`soundex()` implements four-character ASCII keys with PHP's documented `0000` result when no ASCII letters are present.

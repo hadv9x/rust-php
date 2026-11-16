@@ -270,6 +270,33 @@ impl CodeGenerator<'_> {
                     ));
                     self.instructions
                         .push(Op::BindReturnedReference(target.clone()));
+                } else if let Some((source, keys)) =
+                    super::expressions::append_reference_path(source)
+                {
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    self.instructions
+                        .push(Op::LoadArrayAppendReference(source, keys.len()));
+                    self.instructions
+                        .push(Op::BindReturnedReference(target.clone()));
+                } else if let Some((receiver, property, keys)) =
+                    super::expressions::property_append_reference_path(source)
+                {
+                    self.expression(receiver);
+                    for key in &keys {
+                        self.expression(key);
+                    }
+                    self.instructions.push(Op::LoadPropertyArrayAppendReference(
+                        property.to_string(),
+                        keys.len(),
+                        self.current_class.clone(),
+                        self.current_method
+                            .as_deref()
+                            .is_some_and(|method| method.eq_ignore_ascii_case("__construct")),
+                    ));
+                    self.instructions
+                        .push(Op::BindReturnedReference(target.clone()));
                 } else if let Some((class, property, keys)) =
                     super::expressions::static_property_path(source)
                 {

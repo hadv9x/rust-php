@@ -87,8 +87,12 @@ pub enum Op {
     LoadPropertyReference(String, Option<String>),
     /// Push a shared reference to an array slot held by an object property.
     LoadPropertyArrayReference(String, usize, Option<String>),
+    /// Return a reference to a new appended slot inside an object property array path.
+    LoadPropertyArrayAppendReference(String, usize, Option<String>, bool),
     /// Push the shared storage cell for a static property.
     LoadStaticPropertyReference(String, String, Option<String>),
+    /// Append a reference cell to an array path and push it for reference binding.
+    LoadArrayAppendReference(String, usize),
     /// Push/create a shared reference to an array element in a static-property cell.
     LoadStaticPropertyArrayReference(usize),
     /// Bind a local name to the shared program-global variable table in this frame.

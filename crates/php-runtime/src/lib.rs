@@ -51,6 +51,99 @@ pub fn pdo_class_constant(class: &str, constant: &str) -> Option<Value> {
     pdo::class_constant(class, constant)
 }
 
+/// Resolve the common date/time format constants exposed by DateTimeInterface.
+pub fn datetime_class_constant(class: &str, constant: &str) -> Option<Value> {
+    let class = class.rsplit('\\').next()?.to_ascii_lowercase();
+    if !matches!(class.as_str(), "datetime" | "datetimeimmutable" | "datetimeinterface") {
+        return None;
+    }
+    let value = match constant.to_ascii_uppercase().as_str() {
+        "ATOM" => "Y-m-d\\TH:i:sP",
+        "COOKIE" => "l, d-M-Y H:i:s T",
+        "ISO8601" => "Y-m-d\\TH:i:sO",
+        "RFC822" | "RFC1036" => "D, d M y H:i:s O",
+        "RFC850" => "l, d-M-y H:i:s T",
+        "RFC1123" | "RFC2822" => "D, d M Y H:i:s O",
+        "RFC3339" | "W3C" => "Y-m-d\\TH:i:sP",
+        "RFC3339_EXTENDED" => "Y-m-d\\TH:i:s.vP",
+        "RSS" => "D, d M Y H:i:s O",
+        "RFC7231" => "D, d M Y H:i:s \\G\\M\\T",
+        _ => return None,
+    };
+    Some(Value::String(value.into()))
+}
+
+/// Resolve RedisCluster constants used by optional framework diagnostic casters.
+pub fn redis_class_constant(class: &str, constant: &str) -> Option<Value> {
+    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("RedisCluster") {
+        return None;
+    }
+    let value = match constant.to_ascii_uppercase().as_str() {
+        "FAILOVER_NONE" => 0,
+        "FAILOVER_ERROR" => 1,
+        "FAILOVER_DISTRIBUTE" => 2,
+        "FAILOVER_DISTRIBUTE_SLAVES" => 3,
+        _ => return None,
+    };
+    Some(Value::Integer(value))
+}
+
+/// Resolve constants used by SPL diagnostic casters.
+pub fn spl_class_constant(class: &str, constant: &str) -> Option<Value> {
+    let class = class.rsplit('\\').next()?;
+    let value = if class.eq_ignore_ascii_case("SplFileObject") {
+        match constant.to_ascii_uppercase().as_str() {
+            "DROP_NEW_LINE" => 1,
+            "READ_AHEAD" => 2,
+            "SKIP_EMPTY" => 4,
+            "READ_CSV" => 8,
+            _ => return None,
+        }
+    } else if class.eq_ignore_ascii_case("ArrayObject") {
+        match constant.to_ascii_uppercase().as_str() {
+            "STD_PROP_LIST" => 1,
+            "ARRAY_AS_PROPS" => 2,
+            _ => return None,
+        }
+    } else {
+        return None;
+    };
+    Some(Value::Integer(value))
+}
+
+/// Resolve XMLReader node and parser option constants used by framework casters.
+pub fn xmlreader_class_constant(class: &str, constant: &str) -> Option<Value> {
+    if !class.rsplit('\\').next()?.eq_ignore_ascii_case("XMLReader") {
+        return None;
+    }
+    let value = match constant.to_ascii_uppercase().as_str() {
+        "NONE" => 0,
+        "ELEMENT" => 1,
+        "ATTRIBUTE" => 2,
+        "TEXT" => 3,
+        "CDATA" => 4,
+        "ENTITY_REF" => 5,
+        "ENTITY" => 6,
+        "PI" => 7,
+        "COMMENT" => 8,
+        "DOC" => 9,
+        "DOC_TYPE" => 10,
+        "DOC_FRAGMENT" => 11,
+        "NOTATION" => 12,
+        "WHITESPACE" => 13,
+        "SIGNIFICANT_WHITESPACE" => 14,
+        "END_ELEMENT" => 15,
+        "END_ENTITY" => 16,
+        "XML_DECLARATION" => 17,
+        "LOADDTD" => 1,
+        "DEFAULTATTRS" => 2,
+        "VALIDATE" => 3,
+        "SUBST_ENTITIES" => 4,
+        _ => return None,
+    };
+    Some(Value::Integer(value))
+}
+
 /// Resolve the integer constants on PHP's Intl `NumberFormatter` class.
 pub fn intl_class_constant(class: &str, constant: &str) -> Option<Value> {
     if !class
