@@ -131,6 +131,7 @@ See [`examples/math-functions.php`](../examples/math-functions.php) for common m
 - Core output handler phase and status constants are exposed with PHP bitmask values; output buffering APIs remain partial.
 - Common `FILTER_*` IDs and flags are exposed with core values to support framework defaults; the Filter extension functions are not implemented.
 - Common `PREG_*` match, split, and error constants are exposed with core values; PCRE behavior remains partial.
+- `ReflectionAttribute::IS_INSTANCEOF` is available with PHP's value `2`; attribute instantiation and filtering still depend on the implemented Reflection surface.
 - Class property defaults support scalar constant ternaries, logical AND/OR, numeric less-than, and PCRE version constants (profiled as PCRE2 10.45 for framework bootstrap).
 - AMQP flag and exchange type constants used by optional Symfony VarDumper metadata are exposed; AMQP functions and classes are not implemented.
 - Legacy DOM exception code constants are exposed for Symfony metadata; the DOM extension is not implemented.
