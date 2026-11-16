@@ -622,6 +622,25 @@ fn json_decode_reports_overflowing_exponent_as_infinity_error() {
 }
 
 #[test]
+fn json_decode_handles_integer_overflow_beyond_finite_float_range() {
+    let oversized_integer = "9".repeat(400);
+    let source = format!(
+        "<?php\n\
+        $value = '{oversized_integer}';\n\
+        $decoded = json_decode($value);\n\
+        echo $decoded === null, ':', json_last_error(), ':';\n\
+        $as_string = json_decode($value, flags: JSON_BIGINT_AS_STRING);\n\
+        echo is_string($as_string), ':', strlen($as_string), ':', json_last_error(), \"\\n\";\n\
+        try {{ json_decode($value, flags: JSON_THROW_ON_ERROR); }}\n\
+        catch (JsonException $error) {{ echo $error->getCode(), ':', $error->getMessage(), \"\\n\"; }}"
+    );
+    assert_eq!(
+        compile_source(&source).unwrap().execute().unwrap(),
+        "1:7:1:400:0\n7:Inf and NaN cannot be JSON encoded\n"
+    );
+}
+
+#[test]
 fn json_numeric_check_reports_overflow_instead_of_quoting_the_number() {
     let source = r#"<?php
         echo json_encode('1e400', JSON_NUMERIC_CHECK), ':', json_last_error(), ':';

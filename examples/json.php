@@ -98,4 +98,9 @@ try {
 $finiteBoundary = json_decode('1.7976931348623157e308');
 $overflowBoundary = json_decode('1.7976931348623159e308');
 echo is_float($finiteBoundary), ':', $overflowBoundary === null, ':', json_last_error(), ':', JSON_ERROR_INF_OR_NAN, "\n";
+$oversizedIntegerJson = str_repeat('9', 400);
+$oversizedInteger = json_decode($oversizedIntegerJson);
+$oversizedIntegerError = json_last_error();
+$oversizedIntegerString = json_decode($oversizedIntegerJson, flags: JSON_BIGINT_AS_STRING);
+echo $oversizedInteger === null, ':', $oversizedIntegerError, ':', strlen($oversizedIntegerString), ':', json_last_error(), "\n";
 ?>
