@@ -2111,6 +2111,47 @@ fn error_reporting_masks_warning_and_deprecation_diagnostics() {
 }
 
 #[test]
+fn error_control_operator_masks_diagnostics_and_restores_reporting_state() {
+    let source = r#"<?php
+        error_reporting(E_ALL);
+        set_error_handler(function($severity) {
+            echo 'handler:', $severity, ':', error_reporting(), ';';
+            return false;
+        });
+        @$missingForAt;
+        echo error_reporting(), ':', error_get_last()['type'], ';';
+        error_reporting(E_WARNING);
+        @$missingForAtAgain;
+        echo error_reporting();
+    "#;
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(result.output, "handler:2:4437;32767:2;handler:2:0;2");
+    assert!(result.diagnostics.is_empty());
+}
+
+#[test]
+fn error_control_scope_restores_after_caught_exception_and_generator_yield() {
+    let source = r#"<?php
+        error_reporting(E_ALL);
+        try { @(function() { throw new Exception('stop'); })(); }
+        catch (Exception $error) { echo error_reporting(), ':'; }
+        function values() { @yield $missingInGenerator; echo error_reporting(), ':'; }
+        $generator = values();
+        $generator->current();
+        error_reporting(0);
+        $generator->next();
+        echo error_reporting();
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "32767:32767:32767"
+    );
+}
+
+#[test]
 fn prefix_and_postfix_increment_support_array_paths_in_properties() {
     let source = r#"<?php
         class IncrementContainers {

@@ -165,6 +165,7 @@ pub(super) struct GlobalVariables {
     output_offset: usize,
     last_error: Option<crate::RuntimeDiagnostic>,
     error_reporting: Option<i64>,
+    error_suppress_scopes: Vec<ErrorSuppressScope>,
     error_handler: Option<Value>,
     error_handler_stack: Vec<(Option<Value>, i64)>,
     error_handler_mask: i64,
@@ -187,6 +188,13 @@ pub(super) struct GlobalVariables {
     autoload_extensions: Option<String>,
     /// Object handles whose readonly properties may be reinitialized during their __clone hook.
     readonly_clone_objects: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct ErrorSuppressScope {
+    frame_id: u64,
+    end_pc: usize,
+    previous: Option<i64>,
 }
 
 impl GlobalVariables {
@@ -1357,6 +1365,7 @@ struct FrameContinuation {
     frame_id: u64,
     awaiting_resume: bool,
     yielded: Option<(Option<Value>, Value)>,
+    error_suppress_scopes: Vec<ErrorSuppressScope>,
 }
 
 impl FrameContinuation {
@@ -1372,6 +1381,7 @@ impl FrameContinuation {
             frame_id,
             awaiting_resume: false,
             yielded: None,
+            error_suppress_scopes: Vec::new(),
         }
     }
 }
@@ -3064,6 +3074,86 @@ fn execute_frame(
     output: &mut String,
     steps: &mut u64,
 ) -> Result<Option<Value>, String> {
+    let frame_id = continuation.frame_id;
+    let result = execute_frame_inner(
+        code,
+        functions,
+        classes,
+        static_properties,
+        variables,
+        global_variables,
+        global_scope,
+        frame_scope,
+        continuation,
+        resume_value,
+        resume_exception,
+        allow_yield,
+        yield_by_reference,
+        output,
+        steps,
+    );
+    if continuation.yielded.is_none() {
+        restore_error_suppress_scopes(global_variables, frame_id);
+        continuation.error_suppress_scopes.clear();
+    }
+    result
+}
+
+fn restore_error_suppress_scopes(global_variables: &mut GlobalVariables, frame_id: u64) {
+    while global_variables
+        .error_suppress_scopes
+        .last()
+        .is_some_and(|scope| scope.frame_id == frame_id)
+    {
+        if let Some(scope) = global_variables.error_suppress_scopes.pop() {
+            global_variables.error_reporting = scope.previous;
+        }
+    }
+}
+
+fn restore_one_error_suppress_scope(global_variables: &mut GlobalVariables) {
+    if let Some(scope) = global_variables.error_suppress_scopes.pop() {
+        global_variables.error_reporting = scope.previous;
+    }
+}
+
+fn suspend_error_suppress_scopes(
+    global_variables: &mut GlobalVariables,
+    frame_id: u64,
+    continuation: &mut FrameContinuation,
+) {
+    let mut scopes = Vec::new();
+    while global_variables
+        .error_suppress_scopes
+        .last()
+        .is_some_and(|scope| scope.frame_id == frame_id)
+    {
+        if let Some(scope) = global_variables.error_suppress_scopes.pop() {
+            global_variables.error_reporting = scope.previous;
+            scopes.push(scope);
+        }
+    }
+    scopes.reverse();
+    continuation.error_suppress_scopes = scopes;
+}
+
+fn execute_frame_inner(
+    code: &[Op],
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    variables: &mut HashMap<String, Value>,
+    global_variables: &mut GlobalVariables,
+    global_scope: bool,
+    frame_scope: &str,
+    continuation: &mut FrameContinuation,
+    resume_value: Value,
+    resume_exception: Option<Value>,
+    allow_yield: bool,
+    yield_by_reference: bool,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Option<Value>, String> {
     let mut stack = std::mem::take(&mut continuation.stack);
     let mut iterators = std::mem::take(&mut continuation.iterators);
     let mut yield_from = std::mem::take(&mut continuation.yield_from);
@@ -3094,9 +3184,20 @@ fn execute_frame(
         }
         continuation.awaiting_resume = false;
     }
+    for scope in std::mem::take(&mut continuation.error_suppress_scopes) {
+        global_variables.error_reporting = Some(scope.previous.unwrap_or(32767) & 4437);
+        global_variables.error_suppress_scopes.push(scope);
+    }
     continuation.yielded = None;
 
     while pc < code.len() && !global_variables.exiting {
+        while global_variables
+            .error_suppress_scopes
+            .last()
+            .is_some_and(|scope| scope.frame_id == frame_id && pc > scope.end_pc)
+        {
+            restore_one_error_suppress_scope(global_variables);
+        }
         if seen_symbol_generation != global_variables.dynamic_symbol_generation {
             if global_variables.dynamic_symbol_generation != 0 {
                 let mut combined_functions = functions.clone();
@@ -3212,6 +3313,24 @@ fn execute_frame(
                 return Ok(None);
             }
             match instruction {
+                Op::ErrorSuppressStart(end_pc) => {
+                    let previous = global_variables.error_reporting;
+                    global_variables.error_reporting =
+                        Some(global_variables.error_reporting.unwrap_or(32767) & 4437);
+                    global_variables.error_suppress_scopes.push(ErrorSuppressScope {
+                        frame_id,
+                        end_pc: *end_pc,
+                        previous,
+                    });
+                }
+                Op::ErrorSuppressEnd => {
+                    let scope = global_variables
+                        .error_suppress_scopes
+                        .pop()
+                        .filter(|scope| scope.frame_id == frame_id)
+                        .ok_or("Invalid error-suppression scope")?;
+                    global_variables.error_reporting = scope.previous;
+                }
                 Op::ReportDiagnostic(level, message) => {
                     global_variables.report_diagnostic(crate::RuntimeDiagnostic {
                         level: *level,
@@ -4136,6 +4255,7 @@ fn execute_frame(
                     continuation.bindings = std::mem::take(&mut bindings);
                     continuation.awaiting_resume = true;
                     continuation.yielded = Some((key, value));
+                    suspend_error_suppress_scopes(global_variables, frame_id, continuation);
                     return Ok(Some(Value::Null));
                 }
                 Op::YieldFrom => {
@@ -4333,6 +4453,7 @@ fn execute_frame(
                         continuation.bindings = std::mem::take(&mut bindings);
                         continuation.awaiting_resume = true;
                         continuation.yielded = Some((Some(key), value));
+                        suspend_error_suppress_scopes(global_variables, frame_id, continuation);
                         return Ok(Some(Value::Null));
                     }
                     if let Some(iterator) = yield_from.remove(&iterator_key) {

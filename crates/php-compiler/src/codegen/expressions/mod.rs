@@ -1327,7 +1327,14 @@ impl CodeGenerator<'_> {
                 self.instructions
                     .push(Op::GetDynamicProperty(self.current_class.clone()));
             }
-            Expr::ErrorSuppress(value) => self.expression(value),
+            Expr::ErrorSuppress(value) => {
+                let start = self.instructions.len();
+                self.instructions.push(Op::ErrorSuppressStart(0));
+                self.expression(value);
+                let end = self.instructions.len();
+                self.instructions.push(Op::ErrorSuppressEnd);
+                self.instructions[start] = Op::ErrorSuppressStart(end);
+            }
             Expr::DynamicPropertyAssignment {
                 receiver,
                 property,

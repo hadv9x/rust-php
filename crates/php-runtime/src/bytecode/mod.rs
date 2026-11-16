@@ -405,6 +405,10 @@ pub enum Op {
     },
     /// Keep the top stack value and jump if non-null; otherwise discard it and continue.
     CoalesceJump(usize),
+    /// Temporarily apply PHP's error_reporting() mask for an error-control expression.
+    ErrorSuppressStart(usize),
+    /// Restore the error_reporting() value active before an error-control expression.
+    ErrorSuppressEnd,
 }
 
 /// Runtime include/require behavior attached to an include opcode.
