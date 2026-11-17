@@ -237,6 +237,20 @@ pub(super) fn range(
 ) -> Result<Value, String> {
     require_count("range", args, 2, 3)?;
     for (index, value) in args.iter().take(2).enumerate() {
+        if matches!(value.dereference(), Value::Null) {
+            let parameter = if index == 0 { "start" } else { "end" };
+            diagnostics.push(RuntimeDiagnostic {
+                level: DiagnosticLevel::Deprecated,
+                message: format!(
+                    "range(): Passing null to parameter #{} (${parameter}) of type string|int|float is deprecated",
+                    index + 1
+                ),
+                source_file: None,
+                source_line: None,
+                output_offset: 0,
+            });
+            continue;
+        }
         if !matches!(
             value.dereference(),
             Value::String(_) | Value::Integer(_) | Value::Number(_)

@@ -1675,6 +1675,29 @@ fn range_emits_php_83_boundary_and_character_step_warnings() {
 }
 
 #[test]
+fn range_null_boundaries_deprecate_and_coerce_to_zero() {
+    let source = r#"<?php
+        echo implode(',', range(null, 2)), '|', implode(',', range(1, null));
+    "#;
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(result.output, "0,1,2|1,0");
+    assert_eq!(result.diagnostics.len(), 2);
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.level == php_runtime::DiagnosticLevel::Deprecated));
+    assert!(result.diagnostics[0]
+        .message
+        .contains("parameter #1 ($start) of type string|int|float is deprecated"));
+    assert!(result.diagnostics[1]
+        .message
+        .contains("parameter #2 ($end) of type string|int|float is deprecated"));
+}
+
+#[test]
 fn range_dereferences_numeric_string_and_character_boundaries() {
     let source = r#"<?php
         $decimalStart = '1.5';
