@@ -9591,6 +9591,67 @@ pub(super) fn execute_instruction(
                 return Err("Invalid $this object".into());
             };
             let concrete_class = object.borrow().class_name.clone();
+            if (parent.eq_ignore_ascii_case("DateTime")
+                || parent.eq_ignore_ascii_case("DateTimeImmutable"))
+                && method.eq_ignore_ascii_case("__construct")
+            {
+                let input = arguments.first().map(Value::show).unwrap_or_else(|| "now".into());
+                let unix_timestamp = input
+                    .strip_prefix('@')
+                    .and_then(|value| value.parse::<i64>().ok());
+                let now = unix_time().0 as i64;
+                let timestamp = unix_timestamp
+                    .or_else(|| parse_php_strtotime(&input, now))
+                    .unwrap_or(now);
+                let mut object = object.borrow_mut();
+                object.properties.insert("\0timestamp".into(), Value::Integer(timestamp));
+                object.properties.insert("\0utc".into(), Value::Bool(unix_timestamp.is_some()));
+                stack.push(Value::Null);
+                return Ok(true);
+            }
+            if (parent.eq_ignore_ascii_case("DateTime")
+                || parent.eq_ignore_ascii_case("DateTimeImmutable"))
+                && method.eq_ignore_ascii_case("getlasterrors")
+            {
+                stack.push(Value::Bool(false));
+                return Ok(true);
+            }
+            if (parent.eq_ignore_ascii_case("DateTime")
+                || parent.eq_ignore_ascii_case("DateTimeImmutable"))
+                && method.eq_ignore_ascii_case("format")
+            {
+                let timestamp = object
+                    .borrow()
+                    .properties
+                    .get("\0timestamp")
+                    .map(Value::dereference)
+                    .and_then(|value| match value {
+                        Value::Integer(value) => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let utc = object.borrow().properties.get("\0utc").is_some_and(Value::truthy);
+                let format = arguments.first().map(Value::show).unwrap_or_default();
+                stack.push(Value::String(format_php_date(&format, timestamp, utc)?));
+                return Ok(true);
+            }
+            if (parent.eq_ignore_ascii_case("DateTime")
+                || parent.eq_ignore_ascii_case("DateTimeImmutable"))
+                && method.eq_ignore_ascii_case("gettimestamp")
+            {
+                let timestamp = object
+                    .borrow()
+                    .properties
+                    .get("\0timestamp")
+                    .map(Value::dereference)
+                    .and_then(|value| match value {
+                        Value::Integer(value) => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                stack.push(Value::Integer(timestamp));
+                return Ok(true);
+            }
             if method.eq_ignore_ascii_case("__construct")
                 && find_method(parent, method, classes).is_none()
                 && super::is_a_type(

@@ -18,6 +18,7 @@ Anonymous classes support constructor arguments, properties, methods, `extends`,
 
 - User classes implementing `ArrayAccess` dispatch direct indexed reads, reads passed to ordinary function/method arguments, `isset()`, direct indexed writes, append writes, and `unset()` to `offsetGet()`, `offsetExists()`, `offsetSet()`, and `offsetUnset()`. Methods inherited from a parent are found, and original offset values are preserved. Compilation checks required methods, public visibility, non-static methods, parameter compatibility, and declared return compatibility; omitted tentative return types are accepted without PHP's deprecation notice. Nested offset paths and by-reference argument behavior remain incomplete; see [`examples/array-access.php`](../examples/array-access.php).
 - Classes, single class inheritance, `new`, constructors, instance/static methods, `self::`, `parent::`, and late-static `static::` for method/property/constant lookup and `new static()`.
+- `DateTime` and `DateTimeImmutable` subclasses can call the native parent constructor, `format()`, `getTimestamp()`, and `getLastErrors()` through `parent::`; this is a narrow bridge over the runtime's existing date helpers, not general DateTime object support.
 - `new stdClass()` creates an empty standard object that accepts dynamic properties; constructor arguments are rejected.
 - Anonymous classes with constructor arguments, properties, methods, one parent, and implemented interfaces.
 - Public/protected/private access checks for properties, methods, constructors, and class constants.

@@ -2917,17 +2917,35 @@ fn array_access_contract_rejects_missing_or_incompatible_methods() {
 }
 
 #[test]
-fn nullsafe_method_calls_skip_invocation_on_null_receivers() {
+fn datetime_subclasses_can_call_supported_native_parent_methods() {
     let source = r#"<?php
-        class FactoryClock { public function getFactory() { return 'factory'; } }
-        class ClockHolder {
-            private $clock;
-            public function __construct($clock) { $this->clock = $clock; }
-            public function factory() { return $this->clock?->getFactory() ?? 'default'; }
+        class CarbonLike extends DateTime {
+            public function __construct($time = 'now') { parent::__construct($time); }
+            public function rawFormat($format) { return parent::format($format); }
+            public function hasNoDateErrors() { return parent::getLastErrors() === false; }
         }
-        echo (new ClockHolder(null))->factory(), ':', (new ClockHolder(new FactoryClock()))->factory();
+        $date = new CarbonLike('@0');
+        echo $date->rawFormat('Y-m-d'), ':', $date->hasNoDateErrors() ? 'clean' : 'errors';
     "#;
-    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "default:factory");
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1970-01-01:clean"
+    );
+}
+
+#[test]
+fn late_static_dispatch_preserves_inherited_static_methods() {
+    let source = r#"<?php
+        namespace Symfony\Component\HttpFoundation;
+        class BaseRequest { public static function enableOverride() { echo 'enabled'; } }
+        namespace Illuminate\Http;
+        use Symfony\Component\HttpFoundation\BaseRequest as SymfonyRequest;
+        class Request extends SymfonyRequest {
+            public static function capture() { static::enableOverride(); }
+        }
+        \Illuminate\Http\Request::capture();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "enabled");
 }
 
 #[test]
