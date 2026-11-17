@@ -2949,6 +2949,15 @@ fn late_static_dispatch_preserves_inherited_static_methods() {
 }
 
 #[test]
+fn static_methods_can_be_called_through_an_object_operator() {
+    let source = r#"<?php class StaticThroughObject { public static function value() { return isset($this) ? 'has-this' : 'static'; } } echo (new StaticThroughObject())->value();"#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "static"
+    );
+}
+
+#[test]
 fn stringable_accepts_legacy_untyped_tostring_method() {
     let source = r#"<?php class LegacyStringValue implements Stringable { public function __toString() { return 'value'; } } echo (string) new LegacyStringValue();"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value");

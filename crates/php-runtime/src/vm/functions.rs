@@ -9488,11 +9488,6 @@ pub(super) fn execute_instruction(
                     "Cannot call abstract method {class_name}::{method}()"
                 ));
             }
-            if function.is_static {
-                return Err(format!(
-                    "Non-static method {class_name}::{method}() cannot be called statically"
-                ));
-            }
             let (mut locals, parameter_bindings) = prepare_reference_arguments(
                 arguments,
                 &reference_names,
@@ -9508,15 +9503,21 @@ pub(super) fn execute_instruction(
                 *strict_types,
             )?;
             let concrete_class = object.borrow().class_name.clone();
-            locals.insert("this".to_string(), Value::Object(object));
+            if !function.is_static {
+                locals.insert("this".to_string(), Value::Object(object));
+            }
             locals.insert(
                 "\0static_class".to_string(),
                 Value::String(concrete_class.clone()),
             );
-            super::initialize_local_order(
-                &mut locals,
-                std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()),
-            );
+            if function.is_static {
+                super::initialize_local_order(&mut locals, function.parameters.iter().cloned());
+            } else {
+                super::initialize_local_order(
+                    &mut locals,
+                    std::iter::once("this".to_string()).chain(function.parameters.iter().cloned()),
+                );
+            }
             if super::is_generator_function(function) {
                 stack.push(super::new_generator(
                     function.clone(),
