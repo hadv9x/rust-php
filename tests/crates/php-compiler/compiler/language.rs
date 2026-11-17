@@ -2050,23 +2050,23 @@ fn composer_autoload_preserves_inherited_late_static_method_flags() {
     std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
     std::fs::write(
         directory.join("src/Symfony/Component/HttpFoundation/Request.php"),
-        "<?php namespace Symfony\\Component\\HttpFoundation; class Request { public static function enableHttpMethodParameterOverride(): void { echo 'enabled'; } }",
+        "<?php namespace Symfony\\Component\\HttpFoundation; class Request { protected static $httpMethodParameterOverride = false; public static function enableHttpMethodParameterOverride(): void { self::$httpMethodParameterOverride = true; echo 'enabled'; } }",
     )
     .unwrap();
     std::fs::write(
         directory.join("src/Illuminate/Http/Request.php"),
-        "<?php namespace Illuminate\\Http; use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest; class Request extends SymfonyRequest { public static function capture(): void { static::enableHttpMethodParameterOverride(); } }",
+        "<?php namespace Illuminate\\Http; use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest; class Request extends SymfonyRequest { public static function capture() { static::enableHttpMethodParameterOverride(); return static::$httpMethodParameterOverride; } }",
     )
     .unwrap();
     let entry = directory.join("entry.php");
     std::fs::write(
         &entry,
-        "<?php require __DIR__ . '/vendor/autoload.php'; \\Illuminate\\Http\\Request::capture();",
+        "<?php require __DIR__ . '/vendor/autoload.php'; echo \\Illuminate\\Http\\Request::capture() ? 'enabled' : 'disabled';",
     )
     .unwrap();
     let output = compile_file(&entry).unwrap().execute().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
-    assert_eq!(output, "enabled");
+    assert_eq!(output, "enabledenabled");
 }
 
 #[test]
