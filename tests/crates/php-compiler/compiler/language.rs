@@ -2029,6 +2029,47 @@ fn composer_autoload_array_access_dispatches_through_parent_interface() {
 }
 
 #[test]
+fn composer_autoload_preserves_inherited_late_static_method_flags() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_composer_late_static_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::create_dir_all(directory.join("src/Symfony/Component/HttpFoundation")).unwrap();
+    std::fs::create_dir_all(directory.join("src/Illuminate/Http")).unwrap();
+    std::fs::write(
+        directory.join("composer.json"),
+        r#"{"autoload":{"psr-4":{"Symfony\\":"src/Symfony/","Illuminate\\":"src/Illuminate/"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(
+        directory.join("src/Symfony/Component/HttpFoundation/Request.php"),
+        "<?php namespace Symfony\\Component\\HttpFoundation; class Request { public static function enableHttpMethodParameterOverride(): void { echo 'enabled'; } }",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("src/Illuminate/Http/Request.php"),
+        "<?php namespace Illuminate\\Http; use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest; class Request extends SymfonyRequest { public static function capture(): void { static::enableHttpMethodParameterOverride(); } }",
+    )
+    .unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        "<?php require __DIR__ . '/vendor/autoload.php'; \\Illuminate\\Http\\Request::capture();",
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "enabled");
+}
+
+#[test]
 fn composer_autoload_ignores_classes_with_absent_optional_namespaced_parents() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(
