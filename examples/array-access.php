@@ -22,9 +22,14 @@ class LoggingArrayAccess implements ArrayAccess
     }
 }
 
+function resolve($value): mixed
+{
+    return $value;
+}
+
 $items = new LoggingArrayAccess();
 $items['item'] = 'value';
 $items[] = 'next';
-echo $items['item'], "\n";
+echo resolve($items['item']), "\n";
 echo isset($items['item']) ? "exists\n" : "missing\n";
 unset($items['item']);

@@ -271,6 +271,11 @@ pub(super) fn execute_instruction(
                     argument_names,
                     unpack,
                     classes,
+                    functions,
+                    static_properties,
+                    global_variables,
+                    output,
+                    steps,
                 )?;
             let dynamic_name = if name == "\0dynamic" {
                 match stack
@@ -4447,7 +4452,7 @@ fn array_access_class_name(
         classes: &HashMap<String, BytecodeClass>,
         visited: &mut std::collections::HashSet<String>,
     ) -> bool {
-        let name = name.to_ascii_lowercase();
+        let name = name.trim_start_matches('\\').to_ascii_lowercase();
         if !visited.insert(name.clone()) {
             return false;
         }

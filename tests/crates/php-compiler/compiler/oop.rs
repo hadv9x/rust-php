@@ -2853,6 +2853,22 @@ fn array_access_receives_the_original_offset_value() {
 }
 
 #[test]
+fn array_access_function_arguments_preserve_original_offset_types() {
+    let source = r#"<?php
+        class ArgumentOffsetArray implements ArrayAccess {
+            public function offsetExists($offset) { return false; }
+            public function offsetGet($offset) { return is_array($offset) ? 'array-offset' : 'other-offset'; }
+            public function offsetSet($offset, $value) {}
+            public function offsetUnset($offset) {}
+        }
+        function identity($value) { return $value; }
+        $value = new ArgumentOffsetArray();
+        echo identity($value[[]]);
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "array-offset");
+}
+
+#[test]
 fn array_access_dispatches_direct_writes_appends_and_unsets() {
     let source = r#"<?php
         class DispatchArrayAccess implements ArrayAccess {
@@ -2868,6 +2884,50 @@ fn array_access_dispatches_direct_writes_appends_and_unsets() {
         echo $value['key'], isset($value['key']) ? '1' : '0';
     "#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "SAUR1");
+}
+
+#[test]
+fn array_access_contract_rejects_missing_or_incompatible_methods() {
+    let missing = compile_source(
+        "<?php class MissingArrayAccess implements ArrayAccess { public function offsetExists($offset) {} }",
+    )
+    .err()
+    .expect("missing ArrayAccess methods should fail compilation");
+    assert!(missing.contains("must implement ArrayAccess::offsetGet()"), "{missing}");
+
+    let incompatible = compile_source(
+        "<?php class NarrowArrayAccess implements ArrayAccess { public function offsetExists($offset): bool { return true; } public function offsetGet(array $offset): mixed { return null; } public function offsetSet($offset, $value): void {} public function offsetUnset($offset): void {} }",
+    )
+    .err()
+    .expect("narrow ArrayAccess parameters should fail compilation");
+    assert!(
+        incompatible.contains("offsetGet() does not match interface ArrayAccess signature"),
+        "{incompatible}"
+    );
+
+    let invalid_return = compile_source(
+        "<?php class WrongReturnArrayAccess implements ArrayAccess { public function offsetExists($offset): int { return 1; } public function offsetGet($offset): mixed { return null; } public function offsetSet($offset, $value): void {} public function offsetUnset($offset): void {} }",
+    )
+    .err()
+    .expect("incompatible ArrayAccess returns should fail compilation");
+    assert!(
+        invalid_return.contains("return type int is not compatible with ArrayAccess::offsetExists(): bool"),
+        "{invalid_return}"
+    );
+}
+
+#[test]
+fn nullsafe_method_calls_skip_invocation_on_null_receivers() {
+    let source = r#"<?php
+        class FactoryClock { public function getFactory() { return 'factory'; } }
+        class ClockHolder {
+            private $clock;
+            public function __construct($clock) { $this->clock = $clock; }
+            public function factory() { return $this->clock?->getFactory() ?? 'default'; }
+        }
+        echo (new ClockHolder(null))->factory(), ':', (new ClockHolder(new FactoryClock()))->factory();
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "default:factory");
 }
 
 #[test]

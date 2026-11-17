@@ -627,6 +627,91 @@ fn expanded_trait_methods(
 }
 
 /// Resolve traits, compile methods, assemble class metadata, and check interfaces.
+fn validate_array_access_contract(
+    class_name: &str,
+    is_abstract: bool,
+    methods: &HashMap<String, &BytecodeFunction>,
+    classes: &HashMap<String, &php_syntax::ClassDecl>,
+    interfaces: &HashMap<String, &php_syntax::InterfaceDecl>,
+) -> Result<(), String> {
+    for (method_name, parameter_count, return_type) in [
+        ("offsetexists", 1, "bool"),
+        ("offsetget", 1, "mixed"),
+        ("offsetset", 2, "void"),
+        ("offsetunset", 1, "void"),
+    ] {
+        let display_name = match method_name {
+            "offsetexists" => "offsetExists",
+            "offsetget" => "offsetGet",
+            "offsetset" => "offsetSet",
+            "offsetunset" => "offsetUnset",
+            _ => unreachable!(),
+        };
+        let Some(implementation) = methods.get(method_name) else {
+            if is_abstract {
+                continue;
+            }
+            return Err(format!(
+                "Class {class_name} must implement ArrayAccess::{display_name}()"
+            ));
+        };
+        if implementation.is_static {
+            return Err(format!(
+                "Method {class_name}::{display_name}() must be non-static to implement interface ArrayAccess"
+            ));
+        }
+        if implementation.visibility != MemberVisibility::Public {
+            return Err(format!(
+                "Method {class_name}::{display_name}() must be public to implement interface ArrayAccess"
+            ));
+        }
+        let contract_parameters = vec![Some("mixed".to_string()); parameter_count];
+        let contract_by_reference = vec![false; parameter_count];
+        let contract_variadic = vec![false; parameter_count];
+        let contract_has_default = vec![false; parameter_count];
+        let implementation_has_default = implementation
+            .parameter_defaults
+            .iter()
+            .map(Option::is_some)
+            .collect::<Vec<_>>();
+        let parameter_map = parameter_compatibility_map(
+            &implementation.parameter_by_reference,
+            &implementation.parameter_variadic,
+            &implementation_has_default,
+            &contract_by_reference,
+            &contract_variadic,
+            &contract_has_default,
+        );
+        if parameter_map.is_none()
+            || !signature_compatible(
+                &implementation.parameter_types,
+                None,
+                &contract_parameters,
+                parameter_map.as_deref().unwrap_or(&[]),
+                None,
+                classes,
+                interfaces,
+                class_name,
+                "ArrayAccess",
+            )
+        {
+            return Err(format!(
+                "Method {class_name}::{display_name}() does not match interface ArrayAccess signature"
+            ));
+        }
+        // PHP currently treats these interface return types as tentative. Enforce a declared
+        // return type when present, while allowing legacy implementations without one.
+        if let Some(actual_return) = implementation.return_type.as_deref() {
+            if !is_subtype(actual_return, return_type, classes, interfaces) {
+                return Err(format!(
+                    "Method {class_name}::{display_name}() return type {actual_return} is not compatible with ArrayAccess::{display_name}(): {return_type}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass>, String> {
     validate_attribute_class_declarations(program)?;
     for class in &program.classes {
@@ -2552,6 +2637,16 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         for interface_name in &implemented_interfaces {
             let Some(interface) = interface_declarations.get(&interface_name.to_ascii_lowercase())
             else {
+                if interface_name.eq_ignore_ascii_case("ArrayAccess") {
+                    validate_array_access_contract(
+                        &class.name,
+                        class.is_abstract,
+                        &available,
+                        &class_declarations,
+                        &interface_declarations,
+                    )?;
+                    continue;
+                }
                 if builtin_interfaces
                     .iter()
                     .any(|name| interface_name.eq_ignore_ascii_case(name))

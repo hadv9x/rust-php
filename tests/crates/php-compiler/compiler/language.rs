@@ -2004,7 +2004,7 @@ fn composer_autoload_array_access_dispatches_through_parent_interface() {
     std::fs::write(
         directory.join("src/Illuminate/Container/Container.php"),
         r#"<?php namespace Illuminate\Container; use ArrayAccess; class Container implements ArrayAccess {
-            private $items = ['request' => 'resolved'];
+            private $items = ['request' => 'resolved', 'nested' => ['value' => 'nested-resolved']];
             public function offsetExists($offset) { return isset($this->items[$offset]); }
             public function offsetGet($offset) { return $this->items[$offset]; }
             public function offsetSet($offset, $value) { $this->items[$offset] = $value; }
@@ -2020,12 +2020,12 @@ fn composer_autoload_array_access_dispatches_through_parent_interface() {
     let entry = directory.join("entry.php");
     std::fs::write(
         &entry,
-        r#"<?php require __DIR__ . '/vendor/autoload.php'; $app = new \Illuminate\Foundation\Application(); echo $app['request'];"#,
+        r#"<?php require __DIR__ . '/vendor/autoload.php'; $app = new \Illuminate\Foundation\Application(); echo resolve($app['request']), ':', resolve($app['nested']['value']), ':'; $wrapper = new Wrapper($app); echo resolve($wrapper->app['request']); function resolve($value) { return $value; } class Wrapper { public $app; function __construct($app) { $this->app = $app; } }"#,
     )
     .unwrap();
     let output = compile_file(&entry).unwrap().execute().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
-    assert_eq!(output, "resolved");
+    assert_eq!(output, "resolved:nested-resolved:resolved");
 }
 
 #[test]

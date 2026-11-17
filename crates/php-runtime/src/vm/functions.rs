@@ -879,12 +879,53 @@ fn instantiate_reflection_class(
         .ok_or_else(|| "Invalid ReflectionClass instantiation result".into())
 }
 
+fn read_argument_path(
+    root: Value,
+    raw_keys: &[Value],
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<(Value, Vec<ArrayKey>, bool), String> {
+    let mut current = root;
+    let mut array_keys = Vec::new();
+    let mut has_array_access = false;
+    for raw_key in raw_keys {
+        if let Some(value) = super::objects::array_access_get(
+            &current,
+            raw_key.clone(),
+            false,
+            functions,
+            classes,
+            static_properties,
+            global_variables,
+            output,
+            steps,
+        )? {
+            current = value;
+            has_array_access = true;
+        } else {
+            let key = raw_key.array_key()?;
+            array_keys.push(key.clone());
+            current = current.array_get(&key)?;
+        }
+    }
+    Ok((current, array_keys, has_array_access))
+}
+
 pub(super) fn take_call_arguments(
     stack: &mut Vec<Value>,
     descriptors: &[Option<ReferenceDescriptor>],
     argument_names: &[Option<String>],
     unpack: &[bool],
     classes: &HashMap<String, BytecodeClass>,
+    functions: &HashMap<String, BytecodeFunction>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
 ) -> Result<
     (
         Vec<Value>,
@@ -937,10 +978,12 @@ pub(super) fn take_call_arguments(
                 names.push(argument_names.get(index).cloned().flatten());
                 continue;
             }
-            let keys = (0..descriptor.array_key_count)
-                .map(|_| operands.next().ok_or("Invalid bytecode stack")?.array_key())
+            let raw_keys = (0..descriptor.array_key_count)
+                .map(|_| operands.next().ok_or("Invalid bytecode stack"))
                 .collect::<Result<Vec<_>, _>>()?;
-            let (value, object_property) = if let Some(property) = &descriptor.object_property {
+            let (value, object_property, keys, has_array_access) = if let Some(property) =
+                &descriptor.object_property
+            {
                 let Value::Object(object) = &root_or_value else {
                     return Err("Attempt to pass a property on a non-object by reference".into());
                 };
@@ -980,24 +1023,37 @@ pub(super) fn take_call_arguments(
                     .get(&storage_key)
                     .cloned()
                     .unwrap_or(Value::Null);
+                let (value, keys, has_array_access) = read_argument_path(
+                    current,
+                    &raw_keys,
+                    functions,
+                    classes,
+                    static_properties,
+                    global_variables,
+                    output,
+                    steps,
+                )?;
                 (
-                    if keys.is_empty() {
-                        current
-                    } else {
-                        current.array_get_path(&keys)?
-                    },
+                    value,
                     Some((root_or_value.clone(), storage_key)),
+                    keys,
+                    has_array_access,
                 )
             } else {
-                let resolved = if keys.is_empty() {
-                    root_or_value
-                } else {
-                    root_or_value.array_get_path(&keys)?
-                };
-                (resolved, None)
+                let (resolved, keys, has_array_access) = read_argument_path(
+                    root_or_value,
+                    &raw_keys,
+                    functions,
+                    classes,
+                    static_properties,
+                    global_variables,
+                    output,
+                    steps,
+                )?;
+                (resolved, None, keys, has_array_access)
             };
             arguments.push(value);
-            references.push(Some(ReferenceArgument {
+            references.push((!has_array_access).then_some(ReferenceArgument {
                 variable: descriptor.variable.clone(),
                 array_keys: keys,
                 object_property,
@@ -1605,7 +1661,10 @@ pub(super) fn execute_instruction(
         }
         Op::Call(name, descriptors, argument_names, unpack, strict_types) => {
             let (arguments, by_reference, argument_names) =
-                take_call_arguments(stack, descriptors, argument_names, unpack, classes)?;
+                take_call_arguments(
+                    stack, descriptors, argument_names, unpack, classes, functions,
+                    static_properties, global_variables, output, steps,
+                )?;
             let normalized_name = name.to_ascii_lowercase();
             if functions.contains_key(&normalized_name) {
                 let result = invoke_with_references(
@@ -5049,7 +5108,10 @@ pub(super) fn execute_instruction(
         }
         Op::CallValue(_argument_count, reference_names, argument_names, unpack, strict_types) => {
             let (arguments, reference_names, argument_names) =
-                take_call_arguments(stack, reference_names, argument_names, unpack, classes)?;
+                take_call_arguments(
+                    stack, reference_names, argument_names, unpack, classes, functions,
+                    static_properties, global_variables, output, steps,
+                )?;
             if stack.is_empty() {
                 return Err("Invalid bytecode stack".into());
             }
@@ -5154,7 +5216,10 @@ pub(super) fn execute_instruction(
             strict_types,
         ) => {
             let (mut arguments, mut reference_names, argument_names) =
-                take_call_arguments(stack, reference_names, argument_names, unpack, classes)?;
+                take_call_arguments(
+                    stack, reference_names, argument_names, unpack, classes, functions,
+                    static_properties, global_variables, output, steps,
+                )?;
             let method_display = if method == "\0dynamic" {
                 stack.pop().ok_or("Missing dynamic method name")?.show()
             } else {
@@ -9514,7 +9579,10 @@ pub(super) fn execute_instruction(
             strict_types,
         ) => {
             let (arguments, reference_names, argument_names) =
-                take_call_arguments(stack, reference_names, argument_names, unpack, classes)?;
+                take_call_arguments(
+                    stack, reference_names, argument_names, unpack, classes, functions,
+                    static_properties, global_variables, output, steps,
+                )?;
             let object = variables
                 .get("this")
                 .cloned()
@@ -9650,7 +9718,10 @@ pub(super) fn execute_instruction(
             strict_types,
         ) => {
             let (mut arguments, reference_names, argument_names) =
-                take_call_arguments(stack, reference_names, argument_names, unpack, classes)?;
+                take_call_arguments(
+                    stack, reference_names, argument_names, unpack, classes, functions,
+                    static_properties, global_variables, output, steps,
+                )?;
             let method = if method == "\0dynamic" {
                 stack
                     .pop()
