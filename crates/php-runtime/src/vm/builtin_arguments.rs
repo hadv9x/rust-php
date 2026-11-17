@@ -204,6 +204,12 @@ fn signature(name: &str) -> Option<Signature> {
         "reflectionfunction::getclosure" => (&[], &[], false),
         "reflectionmethod::__construct" => (&["objectOrMethod", "method"], &[(1, N)], false),
         "reflectionmethod::createfrommethodname" => (&["method"], &[], false),
+        "weakmap::__construct" | "weakmap::count" => (&[], &[], false),
+        "weakmap::get" => (&["object", "default"], &[(1, N)], false),
+        "weakmap::offsetexists" | "weakmap::offsetget" | "weakmap::offsetunset" => {
+            (&["object"], &[], false)
+        }
+        "weakmap::offsetset" => (&["object", "value"], &[], false),
         "reflectionmethod::getclosure" => (&["object"], &[(0, N)], false),
         "reflectionmethod::isvariadic"
         | "reflectionmethod::returnsreference"

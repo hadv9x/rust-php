@@ -100,6 +100,9 @@ pub(super) fn count(
         Value::Array(items) => items.len() as i64,
         Value::Object(object) => {
             let class_name = object.borrow().class_name.clone();
+            if class_name.eq_ignore_ascii_case("WeakMap") {
+                return Ok(Value::Integer(crate::vm::objects::weak_map_count(&object) as i64));
+            }
             if !implements_countable(&class_name, classes, &mut HashSet::new()) {
                 return Err(format!("TypeError:count(): Argument #1 ($value) must be of type Countable|array, {class_name} given"));
             }
@@ -138,6 +141,9 @@ fn implements_countable(
     classes: &HashMap<String, BytecodeClass>,
     visited: &mut HashSet<String>,
 ) -> bool {
+    if class_name.eq_ignore_ascii_case("WeakMap") {
+        return true;
+    }
     let normalized = class_name.to_ascii_lowercase();
     if !visited.insert(normalized.clone()) {
         return false;

@@ -11,7 +11,7 @@ mod arrays;
 mod builtin_arguments;
 mod control;
 mod functions;
-mod objects;
+pub(crate) mod objects;
 mod operators;
 mod symbol_table;
 

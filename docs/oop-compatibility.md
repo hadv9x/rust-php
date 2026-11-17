@@ -20,6 +20,7 @@ Anonymous classes support constructor arguments, properties, methods, `extends`,
 - Classes, single class inheritance, `new`, constructors, instance/static methods, `self::`, `parent::`, and late-static `static::` for method/property/constant lookup and `new static()`.
 - Static methods may also be invoked through an object operator (`$object->staticMethod()`); the call does not create a `$this` variable in the static method.
 - `DateTime` and `DateTimeImmutable` subclasses can call the native parent constructor, `format()`, `getTimestamp()`, and `getLastErrors()` through `parent::`; this is a narrow bridge over the runtime's existing date helpers, not general DateTime object support.
+- The built-in `WeakMap` supports object-only weak keys through indexed reads/writes, `isset()`, `unset()`, `get()`, `offsetExists()`, `offsetGet()`, `offsetSet()`, `offsetUnset()`, and `count()`. Dropped key objects are pruned on the next map operation. IteratorAggregate iteration and broader reflection metadata remain unsupported.
 - `new stdClass()` creates an empty standard object that accepts dynamic properties; constructor arguments are rejected.
 - Anonymous classes with constructor arguments, properties, methods, one parent, and implemented interfaces.
 - Public/protected/private access checks for properties, methods, constructors, and class constants.

@@ -753,6 +753,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
     let builtin_classes = [
         ("php_user_filter", None),
         ("arrayobject", None),
+        ("weakmap", None),
         ("stdclass", None),
         ("sessionhandler", None),
         ("reflectionfunctionabstract", None),
@@ -1031,6 +1032,7 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
         let canonical_name = match name {
             "php_user_filter" => "php_user_filter",
             "arrayobject" => "ArrayObject",
+            "weakmap" => "WeakMap",
             "stdclass" => "stdClass",
             "sessionhandler" => "SessionHandler",
             "reflectionfunctionabstract" => "ReflectionFunctionAbstract",
@@ -1103,7 +1105,11 @@ pub(super) fn compile(program: &Program) -> Result<HashMap<String, BytecodeClass
                 reflection_name: canonical_name.into(),
                 attributes: Vec::new(),
                 parent: parent.map(str::to_string),
-                interfaces: Vec::new(),
+                interfaces: if name == "weakmap" {
+                    vec!["ArrayAccess".into(), "Countable".into()]
+                } else {
+                    Vec::new()
+                },
                 traits: Vec::new(),
                 trait_aliases: Vec::new(),
                 is_interface: false,

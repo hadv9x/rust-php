@@ -3228,6 +3228,8 @@ pub(super) fn execute_instruction(
                                 || crate::exception_builtins::method_exists(&class_name, &method)
                                 || inherited_throwable_method
                                 || inherited_error_exception_method
+                            || class_name.eq_ignore_ascii_case("WeakMap")
+                                && super::objects::is_weak_map_method(&method)
                                 || !class_name.is_empty()
                                     && (find_method(&class_name, &method, classes).is_some()
                                         || crate::pdo::method_exists(&class_name, &method)
@@ -5272,6 +5274,26 @@ pub(super) fn execute_instruction(
                 ));
             };
             let class_name = object.borrow().class_name.clone();
+            if class_name.eq_ignore_ascii_case("WeakMap") {
+                let signature = format!("weakmap::{method}");
+                if super::objects::is_weak_map_method(&method) {
+                    arguments = super::builtin_arguments::bind(
+                        &signature,
+                        arguments,
+                        &reference_names,
+                        &argument_names,
+                    )?
+                    .0;
+                }
+                if let Some(result) = super::objects::call_weak_map_method(
+                    &object,
+                    &method,
+                    &arguments,
+                ) {
+                    stack.push(result?);
+                    return Ok(true);
+                }
+            }
             if class_name.eq_ignore_ascii_case("DateTime")
                 || class_name.eq_ignore_ascii_case("DateTimeImmutable")
             {
@@ -14671,7 +14693,12 @@ fn callable_status(
                         &mut std::collections::HashSet::new(),
                     )
                     && crate::exception_builtins::method_exists("Exception", &method);
-                user_method || magic_method || native_exception_method
+                user_method
+                    || magic_method
+                    || native_exception_method
+                    || class_name.eq_ignore_ascii_case("weakmap")
+                        && is_object
+                        && super::objects::is_weak_map_method(&method)
             };
             (callable, format!("{class_name}::{method}"))
         }

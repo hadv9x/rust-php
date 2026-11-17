@@ -2934,6 +2934,54 @@ fn datetime_subclasses_can_call_supported_native_parent_methods() {
 }
 
 #[test]
+fn weakmap_uses_weak_object_keys_and_supports_arrayaccess() {
+    let source = r#"<?php
+        $map = new WeakMap();
+        $key = new stdClass();
+        $map[$key] = 'value';
+        echo $map->get($key), ':', count($map), ':', $map instanceof ArrayAccess ? 'array' : 'no';
+        echo ':', $map instanceof Countable ? 'countable' : 'no';
+        echo ':', method_exists($map, 'offsetGet') ? 'method' : 'no', ':', is_callable([$map, 'get']) ? 'callable' : 'no';
+        unset($key);
+        echo ':', count($map);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "value:1:array:countable:method:callable:0"
+    );
+}
+
+#[test]
+fn weakmap_rejects_non_object_keys_and_returns_defaults() {
+    let source = r#"<?php
+        $map = new WeakMap();
+        $key = new stdClass();
+        echo $map->get($key, 'fallback'), ':', $map->offsetExists($key) ? 'present' : 'missing';
+        try { $map[1] = 'invalid'; } catch (TypeError $error) { echo ':', get_class($error); }
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "fallback:missing:TypeError"
+    );
+}
+
+#[test]
+fn weakmap_offset_unset_and_null_values_keep_key_existence_semantics() {
+    let source = r#"<?php
+        $map = new WeakMap();
+        $key = new stdClass();
+        $map[$key] = null;
+        echo isset($map[$key]) ? 'present' : 'missing', ':', $map->get($key, 'fallback') === null ? 'null' : 'other';
+        unset($map[$key]);
+        echo ':', isset($map[$key]) ? 'present' : 'missing', ':', count($map);
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "present:null:missing:0"
+    );
+}
+
+#[test]
 fn late_static_dispatch_preserves_inherited_static_methods() {
     let source = r#"<?php
         namespace Symfony\Component\HttpFoundation;

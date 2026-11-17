@@ -3,7 +3,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 use super::{
@@ -16,11 +16,189 @@ use crate::{
     MemberVisibility, PhpObject, Value,
 };
 
+#[derive(Default)]
+struct WeakMapStorage {
+    owner: Weak<RefCell<PhpObject>>,
+    entries: HashMap<usize, (Weak<RefCell<PhpObject>>, String)>,
+}
+
+thread_local! {
+    static WEAK_MAP_STORAGE: RefCell<HashMap<usize, WeakMapStorage>> = RefCell::new(HashMap::new());
+}
+
+fn with_weak_map_entries<R>(
+    map: &Rc<RefCell<PhpObject>>,
+    operation: impl FnOnce(&mut HashMap<usize, (Weak<RefCell<PhpObject>>, String)>) -> R,
+) -> R {
+    let map_id = Rc::as_ptr(map) as usize;
+    WEAK_MAP_STORAGE.with(|storage| {
+        let mut storage = storage.borrow_mut();
+        storage.retain(|_, map| map.owner.strong_count() > 0);
+        let entries = storage.entry(map_id).or_insert_with(|| WeakMapStorage {
+            owner: Rc::downgrade(map),
+            entries: HashMap::new(),
+        });
+        let dead_properties = entries
+            .entries
+            .iter()
+            .filter_map(|(_, (key, property))| {
+                // The VM's shutdown queue keeps one strong handle to every
+                // object. Treat that queue-only handle as unreachable so it
+                // cannot make a WeakMap key appear alive until shutdown.
+                (key.strong_count() <= 1).then(|| property.clone())
+            })
+            .collect::<Vec<_>>();
+        entries.entries.retain(|_, (key, _)| key.strong_count() > 1);
+        if !dead_properties.is_empty() {
+            let mut owner = map.borrow_mut();
+            for property in dead_properties {
+                owner.properties.remove(&property);
+            }
+        }
+        operation(&mut entries.entries)
+    })
+}
+
+fn weak_map_key(key: &Value) -> Result<(usize, Weak<RefCell<PhpObject>>), String> {
+    match key.dereference() {
+        Value::Object(object) => Ok((Rc::as_ptr(&object) as usize, Rc::downgrade(&object))),
+        value => Err(format!(
+            "TypeError:WeakMap key must be an object, {} given",
+            value.type_name()
+        )),
+    }
+}
+
+fn weak_map_value(map: &Rc<RefCell<PhpObject>>, key: &Value) -> Result<Option<Value>, String> {
+    let (key_id, key_weak) = weak_map_key(key)?;
+    Ok(with_weak_map_entries(map, |entries| {
+        entries
+            .get(&key_id)
+            .filter(|(stored_key, _)| Weak::ptr_eq(stored_key, &key_weak))
+            .and_then(|(_, property)| map.borrow().properties.get(property).cloned())
+    }))
+}
+
+fn weak_map_insert(
+    map: &Rc<RefCell<PhpObject>>,
+    key: &Value,
+    value: Value,
+) -> Result<(), String> {
+    let (key_id, key_weak) = weak_map_key(key)?;
+    with_weak_map_entries(map, |entries| {
+        let property = entries
+            .get(&key_id)
+            .map(|(_, property)| property.clone())
+            .unwrap_or_else(|| format!("\0weakmap:{key_id}"));
+        map.borrow_mut().properties.insert(property.clone(), value);
+        entries.insert(key_id, (key_weak, property));
+    });
+    Ok(())
+}
+
+fn weak_map_remove(map: &Rc<RefCell<PhpObject>>, key: &Value) -> Result<(), String> {
+    let (key_id, key_weak) = weak_map_key(key)?;
+    with_weak_map_entries(map, |entries| {
+        let property = if entries
+            .get(&key_id)
+            .is_some_and(|(stored_key, _)| Weak::ptr_eq(stored_key, &key_weak))
+        {
+            entries.remove(&key_id).map(|(_, property)| property)
+        } else {
+            None
+        };
+        if let Some(property) = property {
+            map.borrow_mut().properties.remove(&property);
+        }
+    });
+    Ok(())
+}
+
+pub(crate) fn weak_map_count(map: &Rc<RefCell<PhpObject>>) -> usize {
+    with_weak_map_entries(map, |entries| entries.len())
+}
+
+pub(super) fn call_weak_map_method(
+    map: &Rc<RefCell<PhpObject>>,
+    method: &str,
+    arguments: &[Value],
+) -> Option<Result<Value, String>> {
+    let result = match method {
+        "get" => {
+            if !(1..=2).contains(&arguments.len()) {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::get() expects between 1 and 2 arguments, {} given",
+                    arguments.len()
+                )));
+            }
+            weak_map_value(map, &arguments[0])
+                .map(|value| value.unwrap_or_else(|| arguments.get(1).cloned().unwrap_or(Value::Null)))
+        }
+        "offsetget" => {
+            if arguments.len() != 1 {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::offsetGet() expects exactly 1 argument, {} given",
+                    arguments.len()
+                )));
+            }
+            weak_map_value(map, &arguments[0]).and_then(|value| {
+                value.ok_or_else(|| "Error:Object not contained in WeakMap".into())
+            })
+        }
+        "offsetexists" => {
+            if arguments.len() != 1 {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::offsetExists() expects exactly 1 argument, {} given",
+                    arguments.len()
+                )));
+            }
+            weak_map_value(map, &arguments[0]).map(|value| Value::Bool(value.is_some()))
+        }
+        "offsetset" => {
+            if arguments.len() != 2 {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::offsetSet() expects exactly 2 arguments, {} given",
+                    arguments.len()
+                )));
+            }
+            weak_map_insert(map, &arguments[0], arguments[1].clone()).map(|()| Value::Null)
+        }
+        "offsetunset" => {
+            if arguments.len() != 1 {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::offsetUnset() expects exactly 1 argument, {} given",
+                    arguments.len()
+                )));
+            }
+            weak_map_remove(map, &arguments[0]).map(|()| Value::Null)
+        }
+        "count" => {
+            if !arguments.is_empty() {
+                return Some(Err(format!(
+                    "ArgumentCountError:WeakMap::count() expects exactly 0 arguments, {} given",
+                    arguments.len()
+                )));
+            }
+            Ok(Value::Integer(weak_map_count(map) as i64))
+        }
+        _ => return None,
+    };
+    Some(result)
+}
+
+pub(super) fn is_weak_map_method(method: &str) -> bool {
+    matches!(
+        method,
+        "get" | "offsetexists" | "offsetget" | "offsetset" | "offsetunset" | "count"
+    )
+}
+
 fn is_builtin_runtime_class_name(name: &str) -> bool {
     crate::exception_builtins::is_class(name)
         || matches!(
             name,
             "generator"
+                | "weakmap"
                 | "stdclass"
                 | "pdo"
                 | "pdostatement"
@@ -4482,6 +4660,21 @@ pub(super) fn array_access_get(
     output: &mut String,
     steps: &mut u64,
 ) -> Result<Option<Value>, String> {
+    if let Value::Object(map) = receiver.dereference() {
+        if map.borrow().class_name.eq_ignore_ascii_case("WeakMap") {
+            let value = weak_map_value(&map, &key)?;
+            if exists_only {
+                return Ok(Some(if value.is_some() {
+                    Value::Bool(true)
+                } else {
+                    Value::Null
+                }));
+            }
+            return value
+                .map(Some)
+                .ok_or_else(|| "Error:Object not contained in WeakMap".into());
+        }
+    }
     let Some(class_name) = array_access_class_name(receiver, classes) else {
         return Ok(None);
     };
@@ -4500,7 +4693,13 @@ pub(super) fn array_access_get(
             output,
             steps,
         )
-        .map(|value| Some(Value::Bool(value.truthy())));
+        .map(|value| {
+            Some(if value.truthy() {
+                Value::Bool(true)
+            } else {
+                Value::Null
+            })
+        });
     }
     let Some(get_method) = find_method(&class_name, "offsetget", classes) else {
         return Err(format!("Class {class_name} must implement ArrayAccess::offsetGet()"));
@@ -4531,6 +4730,12 @@ pub(super) fn array_access_set(
     output: &mut String,
     steps: &mut u64,
 ) -> Result<bool, String> {
+    if let Value::Object(map) = receiver.dereference() {
+        if map.borrow().class_name.eq_ignore_ascii_case("WeakMap") {
+            weak_map_insert(&map, &key, value)?;
+            return Ok(true);
+        }
+    }
     let Some(class_name) = array_access_class_name(receiver, classes) else {
         return Ok(false);
     };
@@ -4586,6 +4791,12 @@ pub(super) fn array_access_unset(
     output: &mut String,
     steps: &mut u64,
 ) -> Result<bool, String> {
+    if let Value::Object(map) = receiver.dereference() {
+        if map.borrow().class_name.eq_ignore_ascii_case("WeakMap") {
+            weak_map_remove(&map, &key)?;
+            return Ok(true);
+        }
+    }
     let Some(class_name) = array_access_class_name(receiver, classes) else {
         return Ok(false);
     };
