@@ -959,6 +959,17 @@ impl CodeGenerator<'_> {
                     self.current_class.clone(),
                 ));
             }
+            Expr::NullsafeProperty(object, property) => {
+                self.expression(object);
+                let null_receiver = self.instructions.len();
+                self.instructions.push(Op::JumpIfNull(0));
+                self.instructions.push(Op::GetProperty(
+                    property.clone(),
+                    self.current_class.clone(),
+                ));
+                let end = self.instructions.len();
+                self.instructions[null_receiver] = Op::JumpIfNull(end);
+            }
             // Emit a dedicated opcode to avoid reading the property before __isset runs.
             Expr::IssetProperty(object, property) => {
                 self.expression(object);

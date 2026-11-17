@@ -794,6 +794,7 @@ fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
                 resolve_magic_constants(argument, current_file);
             }
         }
+        Expr::NullsafeProperty(receiver, _) => resolve_magic_constants(receiver, current_file),
         Expr::Index(array, offset) | Expr::Coalesce(array, offset) => {
             resolve_magic_constants(array, current_file);
             resolve_magic_constants(offset, current_file);
@@ -1538,6 +1539,15 @@ fn expand_include_expression(
                 .into_iter()
                 .map(|argument| expand_include_expression(argument, current_file, combined, state))
                 .collect::<Result<_, _>>()?,
+        )),
+        Expr::NullsafeProperty(receiver, property) => Ok(Expr::NullsafeProperty(
+            Box::new(expand_include_expression(
+                *receiver,
+                current_file,
+                combined,
+                state,
+            )?),
+            property,
         )),
         Expr::Property(receiver, property) => Ok(Expr::Property(
             Box::new(expand_include_expression(

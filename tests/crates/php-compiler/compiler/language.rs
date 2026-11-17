@@ -2070,6 +2070,19 @@ fn composer_autoload_preserves_inherited_late_static_method_flags() {
 }
 
 #[test]
+fn nullsafe_property_access_skips_null_receivers_and_chains() {
+    let source = r#"<?php
+        class Label { public $name = 'ready'; }
+        class Wrapper { public $value; public function __construct($value) { $this->value = $value; } }
+        $missing = new Wrapper(null);
+        $present = new Wrapper(new Label());
+        echo ($missing->value?->name ?? 'empty'), ':', ($present->value?->name ?? 'empty');
+        echo ':', ($missing?->value?->name ?? 'empty');
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "empty:ready:empty");
+}
+
+#[test]
 fn composer_autoload_ignores_classes_with_absent_optional_namespaced_parents() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(

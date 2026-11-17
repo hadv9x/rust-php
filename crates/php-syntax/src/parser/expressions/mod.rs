@@ -1671,7 +1671,12 @@ impl Parser<'_> {
                         )
                     };
                 } else {
-                    left = Expr::Property(Box::new(left), self.source_word(member_offset));
+                    let property = self.source_word(member_offset);
+                    left = if nullsafe {
+                        Expr::NullsafeProperty(Box::new(left), property)
+                    } else {
+                        Expr::Property(Box::new(left), property)
+                    };
                 }
             } else if self.eat(&TokenKind::PlusPlus) {
                 let target = increment_target(left).ok_or_else(|| {

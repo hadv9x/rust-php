@@ -781,6 +781,7 @@ fn collect_arrow_captures(
                     visit(argument, parameters, captures);
                 }
             }
+            Expr::NullsafeProperty(object, _) => visit(object, parameters, captures),
             Expr::DynamicMethodCall(object, method, arguments) => {
                 visit(object, parameters, captures);
                 visit(method, parameters, captures);
