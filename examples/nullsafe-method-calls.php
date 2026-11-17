@@ -28,9 +28,17 @@ class NullsafeHolder
     {
         return $this->factory?->label ?? 'no label';
     }
+
+    public function dynamicLabel($member)
+    {
+        return $this->factory?->{$member} ?? 'no dynamic label';
+    }
 }
 
 echo (new NullsafeHolder(null))->create('item'), "\n";
 echo (new NullsafeHolder(new NullsafeFactory()))->create('item'), "\n";
 echo (new NullsafeHolder(null))->label(), "\n";
 echo (new NullsafeHolder(new NullsafeFactory()))->label(), "\n";
+$member = 'label';
+echo (new NullsafeHolder(null))->dynamicLabel($member), "\n";
+echo (new NullsafeHolder(new NullsafeFactory()))->dynamicLabel($member), "\n";

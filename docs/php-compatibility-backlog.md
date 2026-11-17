@@ -12,7 +12,7 @@ For a broader comparison against the official PHP Manual, see the [manual covera
 
 ## 1. Syntax and parser — partial
 
-Nullsafe method calls with static names (`?->method(...)`) short-circuit the call and its argument expressions, and nullsafe property reads (`?->property`) return null for null receivers and chain; both participate in compile-time expression traversals. Dynamic nullsafe member names remain open.
+Nullsafe method calls (`?->method(...)`) short-circuit the call and its argument expressions, and nullsafe property reads (`?->property`) return null for null receivers and chain. Dynamic method/property names using `?->$name` or `?->{expression}` also short-circuit before evaluating the member name. All forms participate in compile-time expression traversals.
 
 - [x] Skip PHP block and PHPDoc comments in the lexer and diagnose unterminated block comments.
 - [x] Parse `declare(strict_types=0|1)` and enforce strict scalar argument types at compiled function, instance/static method, closure, callable, and constructor call sites, plus strict scalar return checks (with PHP's `int` to `float` allowance). Statically expanded include/require files preserve their own callsite and return modes; runtime/dynamic included files execute with their own declaration modes, while other edge cases still need implementation.

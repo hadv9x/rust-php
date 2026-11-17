@@ -67,6 +67,8 @@ pub enum Expr {
     MethodCall(Box<Expr>, String, Vec<Expr>),
     NullsafeMethodCall(Box<Expr>, String, Vec<Expr>),
     NullsafeProperty(Box<Expr>, String),
+    NullsafeDynamicMethodCall(Box<Expr>, Box<Expr>, Vec<Expr>),
+    NullsafeDynamicProperty(Box<Expr>, Box<Expr>),
     DynamicMethodCall(Box<Expr>, Box<Expr>, Vec<Expr>),
     ParentMethodCall(String, Vec<Expr>),
     StaticCall(String, String, Vec<Expr>),

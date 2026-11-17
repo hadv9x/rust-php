@@ -1590,7 +1590,40 @@ impl Parser<'_> {
                 if self.eat(&TokenKind::Lb) {
                     let property = self.grouped_expression(0)?;
                     self.expect(TokenKind::Rb, "Expected } after dynamic property name")?;
-                    left = Expr::DynamicProperty(Box::new(left), Box::new(property));
+                    if self.eat(&TokenKind::Lp) {
+                        let mut arguments = Vec::new();
+                        if !self.eat(&TokenKind::Rp) {
+                            loop {
+                                arguments.push(self.call_argument()?);
+                                if self.eat(&TokenKind::Rp) {
+                                    break;
+                                }
+                                self.expect(TokenKind::Comma, "Expected , or ) in method arguments")?;
+                                if self.eat(&TokenKind::Rp) {
+                                    break;
+                                }
+                            }
+                        }
+                        left = if nullsafe {
+                            Expr::NullsafeDynamicMethodCall(
+                                Box::new(left),
+                                Box::new(property),
+                                arguments,
+                            )
+                        } else {
+                            Expr::DynamicMethodCall(
+                                Box::new(left),
+                                Box::new(property),
+                                arguments,
+                            )
+                        };
+                    } else {
+                        left = if nullsafe {
+                            Expr::NullsafeDynamicProperty(Box::new(left), Box::new(property))
+                        } else {
+                            Expr::DynamicProperty(Box::new(left), Box::new(property))
+                        };
+                    }
                     continue;
                 }
                 let member_offset = self.peek_offset();
@@ -1598,10 +1631,12 @@ impl Parser<'_> {
                     TokenKind::Word(name) => name,
                     TokenKind::Var(name) => {
                         if self.peek() != &TokenKind::Lp {
-                            left = Expr::DynamicProperty(
-                                Box::new(left),
-                                Box::new(Expr::Variable(name)),
-                            );
+                            let property = Box::new(Expr::Variable(name));
+                            left = if nullsafe {
+                                Expr::NullsafeDynamicProperty(Box::new(left), property)
+                            } else {
+                                Expr::DynamicProperty(Box::new(left), property)
+                            };
                             continue;
                         }
                         self.expect(TokenKind::Lp, "Expected ( after dynamic method name")?;
@@ -1621,11 +1656,12 @@ impl Parser<'_> {
                                 }
                             }
                         }
-                        left = Expr::DynamicMethodCall(
-                            Box::new(left),
-                            Box::new(Expr::Variable(name)),
-                            arguments,
-                        );
+                        let method = Box::new(Expr::Variable(name));
+                        left = if nullsafe {
+                            Expr::NullsafeDynamicMethodCall(Box::new(left), method, arguments)
+                        } else {
+                            Expr::DynamicMethodCall(Box::new(left), method, arguments)
+                        };
                         continue;
                     }
                     token => {

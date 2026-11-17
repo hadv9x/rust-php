@@ -2083,6 +2083,27 @@ fn nullsafe_property_access_skips_null_receivers_and_chains() {
 }
 
 #[test]
+fn nullsafe_dynamic_members_skip_names_and_arguments_for_null_receivers() {
+    let source = r#"<?php
+        class DynamicTarget { public $label = 'ready'; public function echoValue($value) { return $value; } }
+        $calls = 0;
+        function dynamicName() { global $calls; $calls++; return 'label'; }
+        function dynamicArgument() { global $calls; $calls++; return 'argument'; }
+        $target = new DynamicTarget();
+        $missing = null;
+        $method = 'echoValue';
+        echo $missing?->{$method}(dynamicArgument()) ?? 'empty';
+        echo ':', $missing?->{dynamicName()} ?? 'empty', ':', $calls;
+        echo ':', $target?->{$method}(dynamicArgument());
+        echo ':', $target?->{dynamicName()}, ':', $calls;
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "empty:empty:0:argument:ready:2"
+    );
+}
+
+#[test]
 fn composer_autoload_ignores_classes_with_absent_optional_namespaced_parents() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(

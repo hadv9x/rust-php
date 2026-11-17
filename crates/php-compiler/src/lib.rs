@@ -795,6 +795,17 @@ fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
             }
         }
         Expr::NullsafeProperty(receiver, _) => resolve_magic_constants(receiver, current_file),
+        Expr::NullsafeDynamicMethodCall(receiver, method, arguments) => {
+            resolve_magic_constants(receiver, current_file);
+            resolve_magic_constants(method, current_file);
+            for argument in arguments {
+                resolve_magic_constants(argument, current_file);
+            }
+        }
+        Expr::NullsafeDynamicProperty(receiver, property) => {
+            resolve_magic_constants(receiver, current_file);
+            resolve_magic_constants(property, current_file);
+        }
         Expr::Index(array, offset) | Expr::Coalesce(array, offset) => {
             resolve_magic_constants(array, current_file);
             resolve_magic_constants(offset, current_file);
@@ -1549,6 +1560,20 @@ fn expand_include_expression(
             )?),
             property,
         )),
+        Expr::NullsafeDynamicProperty(receiver, property) => Ok(Expr::NullsafeDynamicProperty(
+            Box::new(expand_include_expression(*receiver, current_file, combined, state)?),
+            Box::new(expand_include_expression(*property, current_file, combined, state)?),
+        )),
+        Expr::NullsafeDynamicMethodCall(receiver, method, arguments) => {
+            Ok(Expr::NullsafeDynamicMethodCall(
+                Box::new(expand_include_expression(*receiver, current_file, combined, state)?),
+                Box::new(expand_include_expression(*method, current_file, combined, state)?),
+                arguments
+                    .into_iter()
+                    .map(|argument| expand_include_expression(argument, current_file, combined, state))
+                    .collect::<Result<_, _>>()?,
+            ))
+        }
         Expr::Property(receiver, property) => Ok(Expr::Property(
             Box::new(expand_include_expression(
                 *receiver,

@@ -1249,6 +1249,26 @@ impl CodeGenerator<'_> {
                     self.strict_types,
                 ));
             }
+            Expr::NullsafeDynamicMethodCall(object, method, arguments) => {
+                self.expression(object);
+                let null_receiver = self.instructions.len();
+                self.instructions.push(Op::JumpIfNull(0));
+                self.expression(method);
+                let (references, argument_names, unpack) =
+                    argument_metadata(arguments, self.current_class.clone());
+                self.call_arguments(arguments);
+                self.instructions.push(Op::CallMethod(
+                    "\0dynamic".into(),
+                    arguments.len(),
+                    references,
+                    argument_names,
+                    unpack,
+                    self.current_class.clone(),
+                    self.strict_types,
+                ));
+                let end = self.instructions.len();
+                self.instructions[null_receiver] = Op::JumpIfNull(end);
+            }
             Expr::ParentMethodCall(method, arguments) => {
                 if self.parent_class.as_deref().is_some_and(|class| {
                     method_passes_whole_globals_by_reference(class, method, arguments, self.program)
@@ -1370,6 +1390,16 @@ impl CodeGenerator<'_> {
                 self.expression(property);
                 self.instructions
                     .push(Op::GetDynamicProperty(self.current_class.clone()));
+            }
+            Expr::NullsafeDynamicProperty(receiver, property) => {
+                self.expression(receiver);
+                let null_receiver = self.instructions.len();
+                self.instructions.push(Op::JumpIfNull(0));
+                self.expression(property);
+                self.instructions
+                    .push(Op::GetDynamicProperty(self.current_class.clone()));
+                let end = self.instructions.len();
+                self.instructions[null_receiver] = Op::JumpIfNull(end);
             }
             Expr::ErrorSuppress(value) => {
                 let start = self.instructions.len();
