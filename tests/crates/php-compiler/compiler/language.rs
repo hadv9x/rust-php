@@ -1982,6 +1982,53 @@ fn composer_autoload_supports_classmap_and_psr0_directories() {
 }
 
 #[test]
+fn composer_autoload_array_access_dispatches_through_parent_interface() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let directory = std::env::temp_dir().join(format!(
+        "rust_php_composer_array_access_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(directory.join("vendor")).unwrap();
+    std::fs::create_dir_all(directory.join("src/Illuminate/Container")).unwrap();
+    std::fs::create_dir_all(directory.join("src/Illuminate/Foundation")).unwrap();
+    std::fs::write(
+        directory.join("composer.json"),
+        r#"{"autoload":{"psr-4":{"Illuminate\\":"src/Illuminate/"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(directory.join("vendor/autoload.php"), "<?php // Composer entry point").unwrap();
+    std::fs::write(
+        directory.join("src/Illuminate/Container/Container.php"),
+        r#"<?php namespace Illuminate\Container; use ArrayAccess; class Container implements ArrayAccess {
+            private $items = ['request' => 'resolved'];
+            public function offsetExists($offset) { return isset($this->items[$offset]); }
+            public function offsetGet($offset) { return $this->items[$offset]; }
+            public function offsetSet($offset, $value) { $this->items[$offset] = $value; }
+            public function offsetUnset($offset) { unset($this->items[$offset]); }
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("src/Illuminate/Foundation/Application.php"),
+        r#"<?php namespace Illuminate\Foundation; class Application extends \Illuminate\Container\Container {}"#,
+    )
+    .unwrap();
+    let entry = directory.join("entry.php");
+    std::fs::write(
+        &entry,
+        r#"<?php require __DIR__ . '/vendor/autoload.php'; $app = new \Illuminate\Foundation\Application(); echo $app['request'];"#,
+    )
+    .unwrap();
+    let output = compile_file(&entry).unwrap().execute().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output, "resolved");
+}
+
+#[test]
 fn composer_autoload_ignores_classes_with_absent_optional_namespaced_parents() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = std::env::temp_dir().join(format!(
