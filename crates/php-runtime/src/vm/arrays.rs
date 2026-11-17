@@ -164,6 +164,22 @@ pub(super) fn execute_instruction(
         Op::ArrayGet | Op::ArrayGetSilent | Op::ArrayGetIsset => {
             let raw_key = stack.pop().ok_or("Invalid bytecode stack")?;
             let array = stack.pop().ok_or("Invalid bytecode stack")?;
+            let mut active_classes = classes.clone();
+            active_classes.extend(globals.dynamic_classes.clone());
+            if let Some(value) = super::objects::array_access_get(
+                &array,
+                raw_key.clone(),
+                matches!(instruction, Op::ArrayGetIsset),
+                functions,
+                &active_classes,
+                static_properties,
+                globals,
+                output,
+                steps,
+            )? {
+                stack.push(value);
+                return Ok(true);
+            }
             let key = if matches!(instruction, Op::ArrayGetIsset) {
                 match array_key_for_isset(raw_key.clone()) {
                     Ok(key) => key,
@@ -189,7 +205,17 @@ pub(super) fn execute_instruction(
             if matches!(instruction, Op::ArrayGet) {
                 super::warn_undefined_array_key(&array, std::slice::from_ref(&key), globals);
             }
-            stack.push(array.array_get(&key)?);
+            let value = array.array_get(&key).map_err(|error| {
+                let trace = globals
+                    .active_trace_frames
+                    .iter()
+                    .rev()
+                    .map(|frame| format!("{}:{} ({})", frame.file, frame.line, frame.function))
+                    .collect::<Vec<_>>()
+                    .join(" <- ");
+                format!("{error} while reading {:?} from {} ({}) at {trace}", key, array.type_name(), array.show())
+            })?;
+            stack.push(value);
         }
         Op::AssignArrayPath(variable, key_count) => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?.dereference();
@@ -372,11 +398,29 @@ pub(super) fn execute_instruction(
                 return Err("Invalid bytecode stack".into());
             }
             let raw_keys = stack.split_off(stack.len() - key_count);
+            let array = stack.pop().ok_or("Invalid bytecode stack")?;
+            if matches!(instruction, Op::ArraySetPath(_)) && *key_count == 1 {
+                let mut active_classes = classes.clone();
+                active_classes.extend(globals.dynamic_classes.clone());
+                if super::objects::array_access_set(
+                    &array,
+                    raw_keys[0].clone(),
+                    value.clone(),
+                    functions,
+                    &active_classes,
+                    static_properties,
+                    globals,
+                    output,
+                    steps,
+                )? {
+                    stack.push(array);
+                    return Ok(true);
+                }
+            }
             let keys = raw_keys
                 .into_iter()
                 .map(|key| array_key_with_diagnostic(key, globals))
                 .collect::<Result<Vec<_>, _>>()?;
-            let array = stack.pop().ok_or("Invalid bytecode stack")?;
             let result = if matches!(instruction, Op::ArraySetPath(_)) {
                 array.array_set_path(&keys, value)?
             } else {
@@ -456,6 +500,21 @@ pub(super) fn execute_instruction(
         Op::ArrayAppend => {
             let value = stack.pop().ok_or("Invalid bytecode stack")?.dereference();
             let array = stack.pop().ok_or("Invalid bytecode stack")?;
+            let mut active_classes = classes.clone();
+            active_classes.extend(globals.dynamic_classes.clone());
+            if super::objects::array_access_append(
+                &array,
+                value.clone(),
+                functions,
+                &active_classes,
+                static_properties,
+                globals,
+                output,
+                steps,
+            )? {
+                stack.push(array);
+                return Ok(true);
+            }
             stack.push(array.array_append(value)?);
         }
         Op::UnsetArrayPath(name, key_count) => {
@@ -464,6 +523,22 @@ pub(super) fn execute_instruction(
             }
             let raw_keys = stack.split_off(stack.len() - key_count);
             let current = read_variable(name, variables, bindings, globals, global_scope);
+            if *key_count == 1 {
+                let mut active_classes = classes.clone();
+                active_classes.extend(globals.dynamic_classes.clone());
+                if super::objects::array_access_unset(
+                    &current,
+                    raw_keys[0].clone(),
+                    functions,
+                    &active_classes,
+                    static_properties,
+                    globals,
+                    output,
+                    steps,
+                )? {
+                    return Ok(true);
+                }
+            }
             let keys = raw_keys
                 .into_iter()
                 .map(|key| unset_array_key(key, &current))

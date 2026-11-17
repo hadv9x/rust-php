@@ -16,6 +16,7 @@ Anonymous classes support constructor arguments, properties, methods, `extends`,
 
 ## Implemented subset
 
+- User classes implementing `ArrayAccess` dispatch direct indexed reads, `isset()`, direct indexed writes, append writes, and `unset()` to `offsetGet()`, `offsetExists()`, `offsetSet()`, and `offsetUnset()`. Methods inherited from a parent are found, and the original offset value is passed through. Nested offset paths and complete interface contract validation remain incomplete; see [`examples/array-access.php`](../examples/array-access.php).
 - Classes, single class inheritance, `new`, constructors, instance/static methods, `self::`, `parent::`, and late-static `static::` for method/property/constant lookup and `new static()`.
 - `new stdClass()` creates an empty standard object that accepts dynamic properties; constructor arguments are rejected.
 - Anonymous classes with constructor arguments, properties, methods, one parent, and implemented interfaces.

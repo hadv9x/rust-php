@@ -448,7 +448,7 @@ impl Value {
                     .ok_or("Uninitialized string offset")?;
                 Ok(Self::String(char::from(byte).to_string()))
             }
-            _ => Err("Cannot access an array offset on a non-array value".into()),
+            value => Err(format!("Cannot access an array offset on a non-array value ({})", value.show())),
         }
     }
 

@@ -2819,6 +2819,58 @@ fn arrayaccess_is_available_as_a_builtin_interface() {
 }
 
 #[test]
+fn array_access_offsets_dispatch_to_inherited_interface_methods() {
+    let source = r#"<?php
+        class BaseArrayAccess implements ArrayAccess {
+            public function offsetExists($offset) { return $offset === 'service'; }
+            public function offsetGet($offset) { return 'resolved:' . $offset; }
+            public function offsetSet($offset, $value) {}
+            public function offsetUnset($offset) {}
+        }
+        class ApplicationLike extends BaseArrayAccess {}
+        $application = new ApplicationLike();
+        echo $application['service'], ':', isset($application['service']) ? 'yes' : 'no', "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "resolved:service:yes\n"
+    );
+}
+
+#[test]
+fn array_access_receives_the_original_offset_value() {
+    let source = r#"<?php
+        class RawOffsetArray implements ArrayAccess {
+            public function offsetExists($offset) { return is_array($offset); }
+            public function offsetGet($offset) { return is_array($offset) ? 'array-offset' : gettype($offset); }
+            public function offsetSet($offset, $value) {}
+            public function offsetUnset($offset) {}
+        }
+        $value = new RawOffsetArray();
+        echo $value[[]], ':', isset($value[[]]) ? 'yes' : 'no';
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "array-offset:yes");
+}
+
+#[test]
+fn array_access_dispatches_direct_writes_appends_and_unsets() {
+    let source = r#"<?php
+        class DispatchArrayAccess implements ArrayAccess {
+            public function offsetExists($offset) { return true; }
+            public function offsetGet($offset) { return 'R'; }
+            public function offsetSet($offset, $value) { echo $offset === null ? 'A' : 'S'; }
+            public function offsetUnset($offset) { echo 'U'; }
+        }
+        $value = new DispatchArrayAccess();
+        $value['key'] = 1;
+        $value[] = 2;
+        unset($value['key']);
+        echo $value['key'], isset($value['key']) ? '1' : '0';
+    "#;
+    assert_eq!(compile_source(source).unwrap().execute().unwrap(), "SAUR1");
+}
+
+#[test]
 fn stringable_accepts_legacy_untyped_tostring_method() {
     let source = r#"<?php class LegacyStringValue implements Stringable { public function __toString() { return 'value'; } } echo (string) new LegacyStringValue();"#;
     assert_eq!(compile_source(source).unwrap().execute().unwrap(), "value");

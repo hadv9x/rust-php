@@ -4348,7 +4348,7 @@ fn finish_object_frame(
 
 /// Invoke a public instance magic method with checked arguments and return type.
 /// Call a magic property hook with the receiver in `$this` and checked argument types.
-fn call_magic(
+pub(super) fn call_magic(
     receiver: &Value,
     function: &BytecodeFunction,
     arguments: Vec<Value>,
@@ -4432,6 +4432,173 @@ fn call_magic(
         steps,
     )?;
     Ok(result)
+}
+
+/// Read an offset from an object implementing ArrayAccess.
+fn array_access_class_name(
+    receiver: &Value,
+    classes: &HashMap<String, BytecodeClass>,
+) -> Option<String> {
+    let Value::Object(object) = receiver.dereference() else {
+        return None;
+    };
+    fn implements(
+        name: &str,
+        classes: &HashMap<String, BytecodeClass>,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        let name = name.to_ascii_lowercase();
+        if !visited.insert(name.clone()) {
+            return false;
+        }
+        let Some(class) = classes.get(&name) else {
+            return false;
+        };
+        class.interfaces.iter().any(|interface| {
+            interface.trim_start_matches('\\').eq_ignore_ascii_case("ArrayAccess")
+                || implements(interface, classes, visited)
+        }) || class
+            .parent
+            .as_deref()
+            .is_some_and(|parent| implements(parent, classes, visited))
+    }
+    let name = object.borrow().class_name.to_ascii_lowercase();
+    implements(&name, classes, &mut Default::default()).then_some(name)
+}
+
+pub(super) fn array_access_get(
+    receiver: &Value,
+    key: Value,
+    exists_only: bool,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<Option<Value>, String> {
+    let Some(class_name) = array_access_class_name(receiver, classes) else {
+        return Ok(None);
+    };
+    let Some(exists_method) = find_method(&class_name, "offsetexists", classes) else {
+        return Err(format!("Class {class_name} must implement ArrayAccess::offsetExists()"));
+    };
+    if exists_only {
+        return call_magic(
+            receiver,
+            exists_method,
+            vec![key],
+            functions,
+            classes,
+            static_properties,
+            global_variables,
+            output,
+            steps,
+        )
+        .map(|value| Some(Value::Bool(value.truthy())));
+    }
+    let Some(get_method) = find_method(&class_name, "offsetget", classes) else {
+        return Err(format!("Class {class_name} must implement ArrayAccess::offsetGet()"));
+    };
+    call_magic(
+        receiver,
+        get_method,
+        vec![key],
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )
+    .map(Some)
+}
+
+/// Dispatch an indexed write to `ArrayAccess::offsetSet()` when applicable.
+pub(super) fn array_access_set(
+    receiver: &Value,
+    key: Value,
+    value: Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<bool, String> {
+    let Some(class_name) = array_access_class_name(receiver, classes) else {
+        return Ok(false);
+    };
+    let Some(method) = find_method(&class_name, "offsetset", classes) else {
+        return Err(format!("Class {class_name} must implement ArrayAccess::offsetSet()"));
+    };
+    call_magic(
+        receiver,
+        method,
+        vec![key, value],
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )?;
+    Ok(true)
+}
+
+/// Dispatch an append to `ArrayAccess::offsetSet(null, $value)` when applicable.
+pub(super) fn array_access_append(
+    receiver: &Value,
+    value: Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<bool, String> {
+    array_access_set(
+        receiver,
+        Value::Null,
+        value,
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )
+}
+
+/// Dispatch an indexed removal to `ArrayAccess::offsetUnset()` when applicable.
+pub(super) fn array_access_unset(
+    receiver: &Value,
+    key: Value,
+    functions: &HashMap<String, BytecodeFunction>,
+    classes: &HashMap<String, BytecodeClass>,
+    static_properties: &mut StaticProperties,
+    global_variables: &mut GlobalVariables,
+    output: &mut String,
+    steps: &mut u64,
+) -> Result<bool, String> {
+    let Some(class_name) = array_access_class_name(receiver, classes) else {
+        return Ok(false);
+    };
+    let Some(method) = find_method(&class_name, "offsetunset", classes) else {
+        return Err(format!("Class {class_name} must implement ArrayAccess::offsetUnset()"));
+    };
+    call_magic(
+        receiver,
+        method,
+        vec![key],
+        functions,
+        classes,
+        static_properties,
+        global_variables,
+        output,
+        steps,
+    )?;
+    Ok(true)
 }
 
 /// Resolve `static::` against the called class stored in the current VM frame.
