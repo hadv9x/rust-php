@@ -65,6 +65,7 @@ pub enum Expr {
     /// Evaluate an expression with PHP's `empty()` semantics.
     Empty(Box<Expr>),
     MethodCall(Box<Expr>, String, Vec<Expr>),
+    NullsafeMethodCall(Box<Expr>, String, Vec<Expr>),
     DynamicMethodCall(Box<Expr>, Box<Expr>, Vec<Expr>),
     ParentMethodCall(String, Vec<Expr>),
     StaticCall(String, String, Vec<Expr>),

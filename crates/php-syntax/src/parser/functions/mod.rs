@@ -774,7 +774,8 @@ fn collect_arrow_captures(
             | Expr::YieldFrom(value)
             | Expr::DeprecatedInterpolation(value, _) => visit(value, parameters, captures),
             Expr::Cast(_, value) => visit(value, parameters, captures),
-            Expr::MethodCall(object, _, arguments) => {
+            Expr::MethodCall(object, _, arguments)
+            | Expr::NullsafeMethodCall(object, _, arguments) => {
                 visit(object, parameters, captures);
                 for argument in arguments {
                     visit(argument, parameters, captures);

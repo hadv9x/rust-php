@@ -1163,6 +1163,39 @@ impl CodeGenerator<'_> {
                     self.strict_types,
                 ));
             }
+            Expr::NullsafeMethodCall(object, method, arguments) => {
+                let class = statically_known_receiver_class(
+                    object,
+                    self.current_class.as_deref(),
+                    &self.variable_types,
+                );
+                if class.as_deref().is_some_and(|class| {
+                    method_passes_whole_globals_by_reference(class, method, arguments, self.program)
+                        || internal_method_passes_whole_globals_by_reference(
+                            class, method, arguments,
+                        )
+                }) {
+                    self.errors.push("Cannot re-assign $GLOBALS".into());
+                    return;
+                }
+                self.expression(object);
+                let null_receiver = self.instructions.len();
+                self.instructions.push(Op::JumpIfNull(0));
+                let (references, argument_names, unpack) =
+                    argument_metadata(arguments, self.current_class.clone());
+                self.call_arguments(arguments);
+                self.instructions.push(Op::CallMethod(
+                    method.clone(),
+                    arguments.len(),
+                    references,
+                    argument_names,
+                    unpack,
+                    self.current_class.clone(),
+                    self.strict_types,
+                ));
+                let end = self.instructions.len();
+                self.instructions[null_receiver] = Op::JumpIfNull(end);
+            }
             Expr::DynamicMethodCall(object, method, arguments) => {
                 let class = statically_known_receiver_class(
                     object,

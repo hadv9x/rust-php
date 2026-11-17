@@ -787,6 +787,7 @@ fn resolve_magic_constants(expression: &mut Expr, current_file: &Path) {
             }
         }
         Expr::MethodCall(receiver, _, arguments)
+        | Expr::NullsafeMethodCall(receiver, _, arguments)
         | Expr::DynamicStaticCall(receiver, _, arguments) => {
             resolve_magic_constants(receiver, current_file);
             for argument in arguments {
@@ -1513,6 +1514,19 @@ fn expand_include_expression(
             )?),
         )),
         Expr::MethodCall(receiver, method, arguments) => Ok(Expr::MethodCall(
+            Box::new(expand_include_expression(
+                *receiver,
+                current_file,
+                combined,
+                state,
+            )?),
+            method,
+            arguments
+                .into_iter()
+                .map(|argument| expand_include_expression(argument, current_file, combined, state))
+                .collect::<Result<_, _>>()?,
+        )),
+        Expr::NullsafeMethodCall(receiver, method, arguments) => Ok(Expr::NullsafeMethodCall(
             Box::new(expand_include_expression(
                 *receiver,
                 current_file,

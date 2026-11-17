@@ -1580,7 +1580,13 @@ impl Parser<'_> {
                 } else {
                     left = Expr::DynamicClassConstant(Box::new(left), member);
                 }
-            } else if self.eat(&TokenKind::ObjectArrow) || self.eat(&TokenKind::NullsafeArrow) {
+            } else if self.peek() == &TokenKind::ObjectArrow
+                || self.peek() == &TokenKind::NullsafeArrow
+            {
+                let nullsafe = self.eat(&TokenKind::NullsafeArrow);
+                if !nullsafe {
+                    self.eat(&TokenKind::ObjectArrow);
+                }
                 if self.eat(&TokenKind::Lb) {
                     let property = self.grouped_expression(0)?;
                     self.expect(TokenKind::Rb, "Expected } after dynamic property name")?;
@@ -1651,11 +1657,19 @@ impl Parser<'_> {
                             }
                         }
                     }
-                    left = Expr::MethodCall(
-                        Box::new(left),
-                        self.source_word(member_offset),
-                        arguments,
-                    );
+                    left = if nullsafe {
+                        Expr::NullsafeMethodCall(
+                            Box::new(left),
+                            self.source_word(member_offset),
+                            arguments,
+                        )
+                    } else {
+                        Expr::MethodCall(
+                            Box::new(left),
+                            self.source_word(member_offset),
+                            arguments,
+                        )
+                    };
                 } else {
                     left = Expr::Property(Box::new(left), self.source_word(member_offset));
                 }

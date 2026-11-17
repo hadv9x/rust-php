@@ -364,6 +364,8 @@ pub enum Op {
         Option<String>,
         bool,
     ),
+    /// Leave a null receiver on the stack and skip the rest of a nullsafe call.
+    JumpIfNull(usize),
     CallParentMethod(
         String,
         String,

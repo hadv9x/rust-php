@@ -690,6 +690,12 @@ pub(super) fn execute_instruction(
                 *program_counter = *target;
             }
         }
+        Op::JumpIfNull(target) => {
+            let value = stack.last().ok_or("Invalid bytecode stack")?;
+            if matches!(value.dereference(), Value::Null) {
+                *program_counter = *target;
+            }
+        }
         _ => return Ok(false),
     }
     Ok(true)

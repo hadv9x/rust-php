@@ -3073,3 +3073,26 @@ fn enum_declarations_reject_invalid_cases_and_members() {
         );
     }
 }
+
+#[test]
+fn nullsafe_method_calls_skip_invocation_on_null_receivers() {
+    let source = r#"<?php
+        class FactoryClock { public function getFactory() { return 'factory'; } }
+        $calls = 0;
+        function nextFactoryArgument() { global $calls; $calls++; return 'argument'; }
+        class ArgumentClock { public function getFactory($argument) { return $argument; } }
+        class ClockHolder {
+            private $clock;
+            public function __construct($clock) { $this->clock = $clock; }
+            public function factory() { return $this->clock?->getFactory() ?? 'default'; }
+            public function factoryWithArgument() { return $this->clock?->getFactory(nextFactoryArgument()) ?? 'default'; }
+        }
+        echo (new ClockHolder(null))->factory(), ':', (new ClockHolder(new FactoryClock()))->factory();
+        echo ':', (new ClockHolder(null))->factoryWithArgument(), ':', $calls;
+        echo ':', (new ClockHolder(new ArgumentClock()))->factoryWithArgument(), ':', $calls;
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "default:factory:default:0:argument:1"
+    );
+}
