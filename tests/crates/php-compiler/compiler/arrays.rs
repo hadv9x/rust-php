@@ -1698,6 +1698,30 @@ fn range_null_boundaries_deprecate_and_coerce_to_zero() {
 }
 
 #[test]
+fn range_null_step_deprecates_before_zero_step_value_error() {
+    let source = r#"<?php
+        try { range(1, 2, null); }
+        catch (ValueError $error) { echo $error->getMessage(); }
+    "#;
+    let result = compile_source(source)
+        .unwrap()
+        .execute_with_globals(Default::default())
+        .unwrap();
+    assert_eq!(
+        result.output,
+        "range(): Argument #3 ($step) must not be 0"
+    );
+    assert_eq!(result.diagnostics.len(), 1);
+    assert_eq!(
+        result.diagnostics[0].level,
+        php_runtime::DiagnosticLevel::Deprecated
+    );
+    assert!(result.diagnostics[0]
+        .message
+        .contains("Passing null to parameter #3 ($step) of type int|float is deprecated"));
+}
+
+#[test]
 fn range_dereferences_numeric_string_and_character_boundaries() {
     let source = r#"<?php
         $decimalStart = '1.5';

@@ -265,7 +265,16 @@ pub(super) fn range(
     }
     let default_step = Value::Integer(1);
     let step = args.get(2).unwrap_or(&default_step);
-    if !matches!(step.dereference(), Value::Integer(_) | Value::Number(_)) {
+    if matches!(step.dereference(), Value::Null) {
+        diagnostics.push(RuntimeDiagnostic {
+            level: DiagnosticLevel::Deprecated,
+            message: "range(): Passing null to parameter #3 ($step) of type int|float is deprecated"
+                .into(),
+            source_file: None,
+            source_line: None,
+            output_offset: 0,
+        });
+    } else if !matches!(step.dereference(), Value::Integer(_) | Value::Number(_)) {
         return Err(format!(
             "range(): Argument #3 ($step) must be of type int|float, {} given",
             range_type_name(step)

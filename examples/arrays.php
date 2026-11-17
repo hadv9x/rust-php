@@ -74,6 +74,11 @@ array_walk($copyArray, function (&$value) { $value += 10; });
 echo $sourceArray["plain"], ":", $copyArray["plain"], ":", $sharedValue, "\n";
 echo count(range('', '2')), ':', count(range('ab', 'd')), ':', count(range(1, 'x')), ':', count(range('a', 'c', 1.0)), "\n";
 echo implode(',', range(null, 2)), '|', implode(',', range(1, null)), "\n";
+try {
+    range(1, 2, null);
+} catch (ValueError $error) {
+    echo get_class($error), ':', $error->getMessage(), "\n";
+}
 echo "non-ascii-byte-range:", count(range('é', 'ê')), "\n";
 $rangeStart = '1.5'; $rangeEnd = '3.5'; $letterStart = 'a'; $letterEnd = 'c';
 echo implode(',', range($rangeStart, $rangeEnd)), '|', implode(',', range($letterStart, $letterEnd)), "\n";
