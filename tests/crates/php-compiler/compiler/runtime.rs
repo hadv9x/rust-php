@@ -1274,6 +1274,29 @@ fn strtotime_parses_iso_timestamps_and_common_relative_words() {
 }
 
 #[test]
+fn strtotime_parses_textual_relative_units_from_the_base_timestamp() {
+    let source = r#"<?php
+        echo gmdate('Y-m-d', strtotime('next week', 0)), ':';
+        echo gmdate('Y-m-d', strtotime('last week', 0)), ':';
+        echo gmdate('Y-m-d', strtotime('previous year', 0)), ':';
+        echo gmdate('Y-m-d', strtotime('this day', 0)), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1970-01-08:1969-12-25:1969-01-01:1970-01-01\n"
+    );
+    let source = r#"<?php
+        echo gmdate('Y-m-d', strtotime('+1 week 2 days', 0)), ':';
+        echo gmdate('Y-m-d', strtotime('2 days ago', 0)), ':';
+        echo gmdate('Y-m-d', strtotime('2 months 5 days ago', 0)), "\n";
+    "#;
+    assert_eq!(
+        compile_source(source).unwrap().execute().unwrap(),
+        "1970-01-10:1969-12-30:1969-10-27\n"
+    );
+}
+
+#[test]
 fn random_int_uses_named_bounds_and_throws_for_invalid_bounds() {
     let source = r#"<?php
         $value = random_int(max: 11, min: -7);

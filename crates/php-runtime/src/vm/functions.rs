@@ -12341,23 +12341,53 @@ fn parse_php_strtotime(source: &str, base: i64) -> Option<i64> {
         }
         _ => {}
     }
-    if let Some((amount, unit)) = input.split_once(char::is_whitespace) {
-        let amount = amount.parse::<i64>().ok()?;
-        if !matches!(unit.trim().split_whitespace().count(), 1) {
-            return None;
+    let relative_tokens = input.split_whitespace().collect::<Vec<_>>();
+    let ago = relative_tokens
+        .last()
+        .is_some_and(|token| token.eq_ignore_ascii_case("ago"));
+    let relative_end = relative_tokens.len() - usize::from(ago);
+    if relative_end >= 2 && relative_end % 2 == 0 {
+        let mut relative_items = Vec::new();
+        let mut valid = true;
+        for pair in relative_tokens[..relative_end].chunks_exact(2) {
+            let amount = match pair[0].to_ascii_lowercase().as_str() {
+                "next" => Some(1),
+                "last" | "previous" => Some(-1),
+                "this" => Some(0),
+                _ => pair[0].parse::<i64>().ok(),
+            };
+            let unit = pair[1].trim_end_matches('s').to_ascii_lowercase();
+            let Some(amount) = amount else {
+                valid = false;
+                break;
+            };
+            if !matches!(
+                unit.as_str(),
+                "second" | "minute" | "hour" | "day" | "week" | "fortnight" | "month" | "year"
+            ) {
+                valid = false;
+                break;
+            }
+            relative_items.push((amount, unit));
         }
-        let unit = unit.trim().trim_end_matches('s').to_ascii_lowercase();
-        match unit.as_str() {
-            "second" => parts[2] = parts[2].checked_add(amount)?,
-            "minute" => parts[1] = parts[1].checked_add(amount)?,
-            "hour" => parts[0] = parts[0].checked_add(amount)?,
-            "day" => parts[4] = parts[4].checked_add(amount)?,
-            "week" => parts[4] = parts[4].checked_add(amount.checked_mul(7)?)?,
-            "month" => parts[3] = parts[3].checked_add(amount)?,
-            "year" => parts[5] = parts[5].checked_add(amount)?,
-            _ => return None,
+        if valid {
+            let direction = if ago { -1 } else { 1 };
+            for (amount, unit) in relative_items {
+                let amount = amount.checked_mul(direction)?;
+                match unit.as_str() {
+                    "second" => parts[2] = parts[2].checked_add(amount)?,
+                    "minute" => parts[1] = parts[1].checked_add(amount)?,
+                    "hour" => parts[0] = parts[0].checked_add(amount)?,
+                    "day" => parts[4] = parts[4].checked_add(amount)?,
+                    "week" => parts[4] = parts[4].checked_add(amount.checked_mul(7)?)?,
+                    "fortnight" => parts[4] = parts[4].checked_add(amount.checked_mul(14)?)?,
+                    "month" => parts[3] = parts[3].checked_add(amount)?,
+                    "year" => parts[5] = parts[5].checked_add(amount)?,
+                    _ => unreachable!("validated relative unit"),
+                }
+            }
+            return make_date_timestamp(parts, false);
         }
-        return make_date_timestamp(parts, false);
     }
 
     let (date_part, time_part) =
